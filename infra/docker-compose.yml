@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: chessarena
+      POSTGRES_PASSWORD: chessarena
+      POSTGRES_DB: chessarena
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # le schéma est appliqué par le game-server (MIGRATE_ON_START=1) : migrations tracées et vérifiées
+
+  redis:
+    image: redis:7
+    # BullMQ : persistance AOF (les tâches survivent à un redémarrage) et aucune éviction de clés
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports: ["6379:6379"]
+    volumes:
+      - redisdata:/data
+
+  game-server:
+    image: node:22
+    working_dir: /app
+    command: sh -c "npm ci && npm run start -w @chessarena/game-server"
+    environment:
+      DATABASE_URL: postgres://chessarena:chessarena@postgres:5432/chessarena
+      REDIS_URL: redis://redis:6379
+      DEV_AUTH: "1"
+      MIGRATE_ON_START: "1"
+      REAL_MONEY_ENABLED: "0"
+    volumes: ["..:/app"]
+    ports: ["4000:4000"]
+    depends_on: [postgres, redis]
+
+  # API du service d'analyse (sans worker : RUN_WORKER=0)
+  analysis-api:
+    build:
+      context: ..
+      dockerfile: infra/analysis.Dockerfile
+    environment:
+      DATABASE_URL: postgres://chessarena:chessarena@postgres:5432/chessarena
+      REDIS_URL: redis://redis:6379
+      RUN_WORKER: "0"
+    ports: ["4100:4100"]
+    depends_on: [postgres, redis, game-server]
+
+  # Workers d'analyse : 1 processus Stockfish par cœur alloué (ENGINE_POOL), réplicables
+  analysis-worker:
+    build:
+      context: ..
+      dockerfile: infra/analysis.Dockerfile
+    command: ["npm", "run", "worker", "-w", "@chessarena/analysis"]
+    environment:
+      DATABASE_URL: postgres://chessarena:chessarena@postgres:5432/chessarena
+      REDIS_URL: redis://redis:6379
+      DEPTH_TRIAGE: "12"
+      DEPTH_FULL: "18"
+    deploy:
+      replicas: 1
+    depends_on: [postgres, redis, game-server]
+
+volumes:
+  pgdata:
+  redisdata:

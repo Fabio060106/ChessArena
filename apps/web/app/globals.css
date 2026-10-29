@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+/* ─── Graphiques du back-office (rôles, pas de couleurs en dur dans les composants) ── */
+.viz-root {
+  --viz-surface: #fcfcfb;
+  --viz-text: #0b0b0b;
+  --viz-muted: #52514e;
+  --viz-grid: #d9d8d3;
+  --viz-series: #2a78d6;
+  --viz-bar: #8a8984;
+  --viz-time: #b9c9e8;
+  --viz-warning: #eda100;
+  --viz-critical: #e34948;
+  --viz-white-side: #ecebe6;
+  --viz-black-side: #3a3936;
+  --viz-excluded: rgba(128, 128, 128, 0.18);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    --viz-surface: #1a1a19;
+    --viz-text: #f0efec;
+    --viz-muted: #c3c2b7;
+    --viz-grid: #3b3a37;
+    --viz-series: #3987e5;
+    --viz-bar: #8f8e88;
+    --viz-time: #3d5a8a;
+    --viz-warning: #c98500;
+    --viz-critical: #e66767;
+    --viz-white-side: #d9d8d3;
+    --viz-black-side: #2a2927;
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@chessarena/analysis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "test": "vitest run",
+    "worker": "tsx src/worker.ts",
+    "calibrate": "tsx scripts/calibrate.ts"
+  },
+  "dependencies": {
+    "@chessarena/shared": "*",
+    "bullmq": "^5.81.5",
+    "chess.js": "^1.0.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@chessarena/testkit": "^0.1.0",
+    "@types/pg": "^8.23.1",
+    "stockfish": "^19.0.1",
+    "vitest": "^5.0.5"
+  }
+}

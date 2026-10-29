@@ -1,0 +1,13 @@
+{
+  "name": "@chessarena/testkit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Infrastructure de test partagée : PostgreSQL et Redis jetables, bases migrées.",
+  "exports": {
+    "./pgSetup": "./src/pgSetup.ts",
+    "./redisSetup": "./src/redisSetup.ts",
+    "./testDb": "./src/testDb.ts",
+    "./redis": "./src/redis.ts"
+  }
+}

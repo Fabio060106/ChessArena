@@ -1,0 +1,23 @@
+{
+  "name": "chessarena",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/game-server",
+    "services/analysis"
+  ],
+  "scripts": {
+    "dev:game": "npm run dev -w @chessarena/game-server",
+    "dev:analysis": "npm run dev -w @chessarena/analysis",
+    "typecheck": "tsc -p apps/game-server --noEmit && tsc -p services/analysis --noEmit && npm run typecheck --prefix apps/web",
+    "test": "npm test -w @chessarena/game-server && npm test -w @chessarena/analysis && npm test --prefix apps/web",
+    "loadtest": "npm run loadtest -w @chessarena/game-server",
+    "db:migrate": "npm run db:migrate -w @chessarena/game-server"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

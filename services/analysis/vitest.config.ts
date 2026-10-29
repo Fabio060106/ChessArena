@@ -1,0 +1,9 @@
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    globalSetup: ["../../packages/testkit/src/pgSetup.ts", "../../packages/testkit/src/redisSetup.ts"],
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
+  },
+});
