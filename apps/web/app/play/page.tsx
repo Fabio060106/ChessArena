@@ -77,12 +77,27 @@ function Play() {
         </header>
 
         {(view.phase === "idle" || view.phase === "queued" || view.phase === "connecting") && (
+      <>
+    <div className="mb-4 rounded-lg border border-neutral-300 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900">
+      <p className="mb-2 text-sm font-semibold">Tester à 2 joueurs immédiatement :</p>
+      <button 
+        className="w-full rounded-md bg-blue-600 p-2 font-semibold text-white hover:bg-blue-700"
+        onClick={() => {
+          const opponentUrl = `${window.location.origin}/play?u=bob`;
+          navigator.clipboard.writeText(opponentUrl);
+          alert(`Lien d'adversaire copié !\n\nOuvrez ce lien dans une fenêtre privée ou envoyez-le à votre ami :\n${opponentUrl}`);
+        }}
+      >
+        📋 Copier le lien pour l'adversaire (Bob)
+      </button>
+    </div>
           <Lobby
             queued={view.queue?.timeControl ?? null}
             disabled={!view.connected}
             onJoin={(timeControl, buyInCents) => joinQueue({ timeControl, stake: { currency: "PLAY", buyInCents } })}
             onLeave={leaveQueue}
           />
+        </>
         )}
 
         {playing && (
