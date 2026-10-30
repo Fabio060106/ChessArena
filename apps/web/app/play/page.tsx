@@ -1,6 +1,6 @@
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { Color } from "@chessarena/shared";
 import { useDisplayedClocks, useGameSocket } from "../../hooks/useGameSocket";
 import { ERROR_MESSAGES, isMyTurn, sessionBanner, START_FEN } from "../../lib/gameReducer";
@@ -22,14 +22,31 @@ export default function PlayPage() {
   );
 }
 
+/**
+ * Identité du joueur : session bêta (cookie posé par la page d'accueil : pseudo + code d'invitation).
+ * En développement uniquement, `?u=alice` reste possible (jeton signé par /api/dev-token).
+ */
 function Play() {
-  // Sprint 1 : identité de dev via ?u=alice (jeton signé par /api/dev-token).
-  // Sprint 2 : remplacé par la session NextAuth.
-  const userId = useSearchParams().get("u") ?? "guest";
+  const params = useSearchParams();
+  const router = useRouter();
+  const devUser = process.env.NODE_ENV !== "production" ? params.get("u") : null;
+  const [me, setMe] = useState<string | null>(devUser);
+  useEffect(() => {
+    if (devUser) return;
+    fetch("/api/session", { cache: "no-store" })
+      .then(async (r) => (r.ok ? setMe(((await r.json()) as { userId: string }).userId) : router.replace("/")))
+      .catch(() => router.replace("/"));
+  }, [devUser, router]);
+  if (!me) return <main className="grid min-h-dvh place-items-center text-sm text-neutral-500">Chargement…</main>;
+  return <Arena userId={me} dev={!!devUser} />;
+}
+
+function Arena({ userId, dev }: { userId: string; dev: boolean }) {
   const getAuth = useCallback(async () => {
-    const r = await fetch(`/api/dev-token?u=${encodeURIComponent(userId)}`, { cache: "no-store" });
+    const url = dev ? `/api/dev-token?u=${encodeURIComponent(userId)}` : "/api/token";
+    const r = await fetch(url, { cache: "no-store" });
     return r.ok ? { token: ((await r.json()) as { token: string }).token } : {};
-  }, [userId]);
+  }, [userId, dev]);
 
   const { view, offsetRef, joinQueue, leaveQueue, playOrPremove, cancelPremove, resign } = useGameSocket(userId, getAuth);
   const playing = view.phase === "playing";
@@ -78,17 +95,22 @@ function Play() {
 
         {(view.phase === "idle" || view.phase === "queued" || view.phase === "connecting") && (
       <>
-    <div className="mb-4 rounded-lg border border-neutral-300 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900">
-      <p className="mb-2 text-sm font-semibold">Tester à 2 joueurs immédiatement :</p>
-      <button 
-        className="w-full rounded-md bg-blue-600 p-2 font-semibold text-white hover:bg-blue-700"
-        onClick={() => {
-          const opponentUrl = `${window.location.origin}/play?u=bob`;
-          navigator.clipboard.writeText(opponentUrl);
-          alert(`Lien d'adversaire copié !\n\nOuvrez ce lien dans une fenêtre privée ou envoyez-le à votre ami :\n${opponentUrl}`);
-        }}
+    <div className="mb-4 rounded-lg border border-neutral-300 bg-neutral-50 p-4 text-sm dark:border-neutral-700 dark:bg-neutral-900">
+      <p className="font-semibold">Jouer à 2 :</p>
+      <p className="mt-1 text-neutral-600 dark:text-neutral-400">
+        Envoie l'adresse du site et le code d'invitation à ton adversaire. Choisissez tous les deux la même mise et la même cadence.
+      </p>
+      <button
+        className="mt-3 w-full rounded-md bg-blue-600 p-2 font-semibold text-white hover:bg-blue-700"
+        onClick={() => void navigator.clipboard.writeText(window.location.origin)}
       >
-        📋 Copier le lien pour l'adversaire (Bob)
+        📋 Copier l'adresse du site
+      </button>
+      <button
+        className="mt-2 w-full rounded-md border border-neutral-300 p-2 text-neutral-600 dark:border-neutral-700"
+        onClick={() => void fetch("/api/session", { method: "DELETE" }).finally(() => { window.location.href = "/"; })}
+      >
+        Changer de pseudo
       </button>
     </div>
           <Lobby
