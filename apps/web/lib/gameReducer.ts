@@ -1,7 +1,7 @@
 import type {
   Color, ErrorCode, GameOverEvent, GameStartEvent, GameStateEvent, PresenceEvent, SessionModeEvent, Stake, TimeControlId,
 } from "@chessarena/shared";
-import type { Premove } from "./moves";
+import { tryLocalMove, type Premove } from "./moves";
 
 /**
  * Machine à états de la partie côté client. Pure → testée sans React ni socket.
@@ -31,6 +31,10 @@ export interface GameView {
   myColor: Color;
   pending: PendingMove | null;
   premove: Premove | null;
+  /** coups joués (notation SAN) ; null = coup manqué (reconnexion) */
+  moves: Array<string | null>;
+  /** proposition de nulle en cours */
+  drawOffer: Color | null;
   opponentPresence: PresenceEvent | null;
   over: GameOverEvent | null;
   error: ErrorCode | null;
@@ -42,7 +46,7 @@ export const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0
 
 export const initialView: GameView = {
   phase: "connecting", connected: false, queue: null, start: null, server: null,
-  displayFen: START_FEN, lastMove: null, myColor: "w", pending: null, premove: null,
+  displayFen: START_FEN, lastMove: null, myColor: "w", pending: null, premove: null, moves: [], drawOffer: null,
   opponentPresence: null, over: null, error: null, session: null,
 };
 
@@ -57,6 +61,7 @@ export type GameAction =
   | { type: "move_rejected"; code: ErrorCode }
   | { type: "move_acked"; ply: number }
   | { type: "set_premove"; premove: Premove | null }
+  | { type: "draw"; gameId: string; offeredBy: Color | null }
   | { type: "presence"; presence: PresenceEvent; userId: string }
   | { type: "over"; over: GameOverEvent }
   | { type: "error"; code: ErrorCode }
@@ -83,13 +88,15 @@ export function gameReducer(s: GameView, a: GameAction): GameView {
         displayFen: sameGame ? s.displayFen : a.start.fen,
         lastMove: sameGame ? s.lastMove : null,
         pending: null, premove: sameGame ? s.premove : null, opponentPresence: null,
+        moves: sameGame ? s.moves : [], drawOffer: sameGame ? s.drawOffer : null,
       };
     }
     case "state": {
       if (!s.start || a.state.gameId !== s.start.gameId) return s;
       if (s.server && a.state.ply < s.server.ply) return s; // état périmé arrivé en retard
       // L'état serveur fait foi : s'il confirme le coup en attente, l'affichage ne bouge pas.
-      return { ...s, server: a.state, displayFen: a.state.fen, lastMove: a.state.lastMoveUci, pending: null };
+      return { ...s, server: a.state, displayFen: a.state.fen, lastMove: a.state.lastMoveUci, pending: null,
+        moves: nextHistory(s.moves, s.server, a.state) };
     }
     case "optimistic_move":
       return { ...s, pending: a.pending, displayFen: a.pending.fen, lastMove: a.pending.uci, premove: null };
@@ -103,11 +110,13 @@ export function gameReducer(s: GameView, a: GameAction): GameView {
       return s.pending && a.ply === s.pending.ply + 1 ? { ...s, pending: null } : s;
     case "set_premove":
       return { ...s, premove: a.premove };
+    case "draw":
+      return s.start && s.start.gameId === a.gameId && s.phase === "playing" ? { ...s, drawOffer: a.offeredBy } : s;
     case "presence":
       return a.presence.userId === a.userId ? s : { ...s, opponentPresence: a.presence.connected ? null : a.presence };
     case "over":
       if (!s.start || a.over.gameId !== s.start.gameId) return s;
-      return { ...s, phase: "over", over: a.over, pending: null, premove: null, opponentPresence: null };
+      return { ...s, phase: "over", over: a.over, pending: null, premove: null, opponentPresence: null, drawOffer: null };
     case "error":
       return { ...s, error: a.code, phase: s.phase === "queued" && isQueueError(a.code) ? "idle" : s.phase };
     case "session_mode":
@@ -115,6 +124,20 @@ export function gameReducer(s: GameView, a: GameAction): GameView {
     case "clear_error":
       return { ...s, error: null };
   }
+}
+
+/** Historique SAN : un coup de plus si l'état suit le précédent, sinon des trous (null). */
+export function nextHistory(moves: Array<string | null>, prev: GameStateEvent | null, next: GameStateEvent): Array<string | null> {
+  if (next.ply === 0) return [];
+  if (prev && next.ply === prev.ply) return moves;
+  if (prev && next.ply === prev.ply + 1 && next.lastMoveUci) {
+    const u = next.lastMoveUci;
+    const m = tryLocalMove(prev.fen, u.slice(0, 2), u.slice(2, 4), (u[4] as "q" | "r" | "b" | "n" | undefined) || undefined);
+    return [...moves.slice(0, prev.ply), m?.san ?? null];
+  }
+  const out = moves.slice(0, next.ply);
+  while (out.length < next.ply) out.push(null);
+  return out;
 }
 
 function isQueueError(c: ErrorCode): boolean {
