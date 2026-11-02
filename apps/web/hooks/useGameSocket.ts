@@ -32,12 +32,13 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
     socket.on("game:state", (state) => dispatch({ type: "state", state }));
     socket.on("game:presence", (presence) => dispatch({ type: "presence", presence, userId }));
     socket.on("game:over", (over) => dispatch({ type: "over", over }));
+    socket.on("game:draw", (d) => dispatch({ type: "draw", gameId: d.gameId, offeredBy: d.offeredBy }));
     socket.on("error", (e) => dispatch({ type: "error", code: e.code }));
     socket.on("session:mode", (session) => dispatch({ type: "session_mode", session }));
     if (socket.connected) onConnect();
     return () => {
       for (const ev of ["connect", "disconnect", "queue:joined", "queue:left", "game:start", "game:state",
-        "game:presence", "game:over", "error", "session:mode"] as const) socket.off(ev);
+        "game:presence", "game:over", "game:draw", "error", "session:mode"] as const) socket.off(ev);
     };
   }, [socket, userId]);
 
@@ -118,8 +119,10 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
   }, [socket, view.phase, view.start]);
 
   // ─── Actions ─────────────────────────────────────────────────────────────
+  /** Rejoint une file ; si l'on attendait déjà dans une AUTRE file (cadence ou mise), on la quitte d'abord. */
   const joinQueue = useCallback((p: QueueJoinPayload) => {
     dispatch({ type: "clear_error" });
+    if (viewRef.current.phase === "queued") socket.emit("queue:leave");
     socket.emit("queue:join", p);
   }, [socket]);
   const leaveQueue = useCallback(() => socket.emit("queue:leave"), [socket]);
@@ -128,7 +131,13 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
     if (id) socket.emit("game:resign", { gameId: id });
   }, [socket]);
 
-  return { view, offsetRef, joinQueue, leaveQueue, playOrPremove, cancelPremove, resign };
+  /** Nulle : proposer (ou accepter si l'adversaire propose déjà), accepter, refuser. */
+  const draw = useCallback((action: "offer" | "accept" | "decline") => {
+    const id = viewRef.current.start?.gameId;
+    if (id) socket.emit("game:draw", { gameId: id, action });
+  }, [socket]);
+
+  return { view, offsetRef, joinQueue, leaveQueue, playOrPremove, cancelPremove, resign, draw };
 }
 
 /**
