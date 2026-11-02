@@ -32,6 +32,11 @@ export function parseGameRef(p: unknown): { gameId: string } | null {
   return isObj(p) && isId(p.gameId) ? { gameId: p.gameId } : null;
 }
 
+export function parseDrawAction(p: unknown): { gameId: string; action: "offer" | "accept" | "decline" } | null {
+  if (!isObj(p) || !isId(p.gameId)) return null;
+  return p.action === "offer" || p.action === "accept" || p.action === "decline" ? { gameId: p.gameId, action: p.action } : null;
+}
+
 export function parseSignal(p: unknown): ClientSignalPayload | null {
   if (!isObj(p) || !isId(p.gameId)) return null;
   if (p.kind !== "focus_lost" && p.kind !== "focus_regained") return null;

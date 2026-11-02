@@ -5,7 +5,7 @@ import pg from "pg";
 import type { ClientToServerEvents, ErrorCode, ServerToClientEvents, SessionModeEvent, SngAck } from "@chessarena/shared";
 import type { GameServerConfig } from "./config.js";
 import { authenticate, canPlay, type AuthUser } from "./auth.js";
-import { parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
+import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
 import { Matchmaker } from "./matchmaking/Matchmaker.js";
 import { GameManager, userRoom } from "./game/GameManager.js";
 import { InMemoryLedger, PgLedger, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
@@ -330,6 +330,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
           timeControl: room.timeControl, stake: room.stake, fen: room.fen,
         });
         socket.emit("game:state", room.state());
+        if (room.drawOffer) socket.emit("game:draw", { gameId: room.id, offeredBy: room.drawOffer });
       },
     );
     // … et de ses tournois en cours.
@@ -390,6 +391,15 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         reply?.({ ok: true, ply: room!.ply });
       }
       metrics.moveHandling.record(performance.now() - t0);
+    }));
+
+    socket.on("game:draw", guard(socket, (raw: unknown) => {
+      const p = parseDrawAction(raw);
+      if (!p) return fail(socket, "BAD_PAYLOAD");
+      const room = games.get(p.gameId);
+      if (!room) return fail(socket, "NO_GAME");
+      const err = room.draw(user.userId, p.action);
+      if (err && err !== "RATE_LIMITED") fail(socket, err);
     }));
 
     socket.on("game:resign", guard(socket, (raw: unknown) => {
