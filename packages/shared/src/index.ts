@@ -105,6 +105,14 @@ export interface PresenceEvent {
   graceMs: number;
 }
 
+/** Proposition de nulle en cours (null = aucune). Diffusée aux deux joueurs. */
+export interface DrawOfferEvent {
+  gameId: string;
+  offeredBy: Color | null;
+}
+
+export type DrawAction = "offer" | "accept" | "decline";
+
 /** Codes d'erreur stables : le front les traduit, ne JAMAIS afficher le message brut. */
 export type ErrorCode =
   | "UNAUTHORIZED" | "BAD_PAYLOAD" | "RATE_LIMITED"
@@ -228,6 +236,7 @@ export interface ServerToClientEvents {
   "game:state": (p: GameStateEvent) => void;
   "game:over": (p: GameOverEvent) => void;
   "game:presence": (p: PresenceEvent) => void;
+  "game:draw": (p: DrawOfferEvent) => void;
   /**
    * Sonde de latence initiée par le SERVEUR (ADR-8). Le RTT est mesuré côté serveur :
    * un client ne peut pas déclarer lui-même un faux lag pour gagner du temps.
@@ -245,6 +254,7 @@ export interface ClientToServerEvents {
   /** ack optionnel : permet l'UI optimiste avec rollback si le serveur refuse. */
   "game:move": (p: MovePayload, ack?: (r: MoveAck) => void) => void;
   "game:resign": (p: { gameId: string }) => void;
+  "game:draw": (p: { gameId: string; action: DrawAction }) => void;
   "game:signal": (p: ClientSignalPayload) => void;
   /** synchro d'horloge pour l'AFFICHAGE (offset client↔serveur), sans effet sur l'arbitrage. */
   "time:ping": (clientTs: number, ack: (serverTs: number) => void) => void;
