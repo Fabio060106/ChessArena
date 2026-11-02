@@ -293,3 +293,57 @@ describe("GameRoom — déconnexion et grâce de 30 s", () => {
     expect(finished[0]!.focusLoss).toEqual({ w: 0, b: 2 });
   });
 });
+
+describe("GameRoom — nulle par accord", () => {
+  const withOffers = () => {
+    const s = setup();
+    const offers: Array<"w" | "b" | null> = [];
+    (s.room as unknown as { hooks: { onDrawOffer: (p: { offeredBy: "w" | "b" | null }) => void } }).hooks.onDrawOffer = (p) => offers.push(p.offeredBy);
+    return { ...s, offers };
+  };
+
+  it("proposer puis accepter : nulle 1/2-1/2 « agreement », comptée au classement", () => {
+    const { room, finished, offers, playAll } = withOffers();
+    playAll(["e2e4", "e7e5"]);
+    expect(room.draw("W", "offer")).toBeNull();
+    expect(room.drawOffer).toBe("w");
+    expect(offers).toEqual(["w"]);
+    expect(room.draw("B", "accept")).toBeNull();
+    expect(finished[0]).toMatchObject({ result: "1/2-1/2", termination: "agreement", aborted: false, rated: true });
+  });
+
+  it("deux propositions croisées = accord ; « offer » de l'adversaire vaut acceptation", () => {
+    const { room, finished, playAll } = withOffers();
+    playAll(["e2e4", "e7e5"]);
+    room.draw("B", "offer");
+    room.draw("W", "offer");
+    expect(finished[0]?.termination).toBe("agreement");
+  });
+
+  it("refuser, ou jouer un coup, retire la proposition ; la partie continue", () => {
+    const { room, finished, offers, playAll } = withOffers();
+    playAll(["e2e4", "e7e5"]);
+    room.draw("W", "offer");
+    room.draw("B", "decline");
+    expect(room.drawOffer).toBeNull();
+    playAll(["g1f3"]);
+    room.draw("W", "offer"); // trop tôt après la précédente (anti-harcèlement)
+    expect(room.drawOffer).toBeNull();
+    playAll(["b8c6", "f1c4"]);
+    expect(room.draw("W", "offer")).toBeNull();
+    playAll(["g8f6"]); // les Noirs jouent au lieu de répondre = refus
+    expect(room.drawOffer).toBeNull();
+    expect(offers).toEqual(["w", null, "w", null]);
+    expect(finished).toHaveLength(0);
+  });
+
+  it("garde-fous : pas avant le 1er coup de chaque camp, rien à accepter, non-joueur, partie finie", () => {
+    const { room, playAll } = withOffers();
+    expect(room.draw("W", "offer")).toBe("BAD_PAYLOAD");
+    playAll(["e2e4", "e7e5"]);
+    expect(room.draw("B", "accept")).toBe("BAD_PAYLOAD");
+    expect(room.draw("X", "offer")).toBe("NOT_A_PLAYER");
+    room.resign("W");
+    expect(room.draw("B", "offer")).toBe("GAME_OVER");
+  });
+});

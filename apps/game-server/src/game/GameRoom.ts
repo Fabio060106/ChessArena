@@ -1,7 +1,7 @@
 import { Chess } from "chess.js";
 import { randomUUID } from "node:crypto";
 import type {
-  Color, ErrorCode, GameResult, GameStateEvent, PresenceEvent, Stake, Termination, TimeControl,
+  Color, DrawOfferEvent, ErrorCode, GameResult, GameStateEvent, PresenceEvent, Stake, Termination, TimeControl,
 } from "@chessarena/shared";
 import { ServerClock } from "./clock.js";
 
@@ -43,6 +43,8 @@ export interface RoomHooks {
   onState(state: GameStateEvent): void;
   onMove(gameId: string, ply: number, uci: string, san: string, chargedMs: number): void;
   onPresence(p: PresenceEvent): void;
+  /** proposition de nulle posée, retirée ou refusée */
+  onDrawOffer?(p: DrawOfferEvent): void;
   onFinish(game: FinishedGame): void;
 }
 
@@ -96,6 +98,10 @@ export class GameRoom {
   private focusLoss: Record<Color, number> = { w: 0, b: 0 };
   private finished = false;
   private lastMoveUci: string | null = null;
+  /** camp qui propose la nulle, en attente de réponse */
+  private drawOfferBy: Color | null = null;
+  /** demi-coup de la dernière proposition de chaque camp (anti-harcèlement) */
+  private lastDrawOfferPly: Record<Color, number> = { w: -10, b: -10 };
   private abortTimer: ReturnType<typeof setTimeout> | null = null;
   private graceTimers: Partial<Record<Color, { timer: ReturnType<typeof setTimeout>; deadline: number }>> = {};
 
@@ -203,6 +209,9 @@ export class GameRoom {
 
     this.moveTimes.push(charged);
     this.lastMoveUci = uci;
+    // Jouer un coup alors que l'adversaire propose la nulle = refuser (comme sur Lichess).
+    // Le camp qui propose garde sa proposition s'il joue lui-même.
+    if (this.drawOfferBy && this.drawOfferBy !== color) this.setDrawOffer(null);
     this.hooks.onMove(this.id, this.ply, uci, san, charged);
 
     const end = this.detectBoardEnd();
@@ -216,6 +225,46 @@ export class GameRoom {
     if (!c || this.finished) return;
     if (this.ply < ABORT_PLY_THRESHOLD) return this.finish("1/2-1/2", "aborted", c);
     this.finish(c === "w" ? "0-1" : "1-0", "resignation");
+  }
+
+  // ─── Nulle par accord ──────────────────────────────────────────────────────
+  /**
+   * offer  : propose la nulle (ou ACCEPTE si l'adversaire la propose déjà) ;
+   * accept : accepte la proposition adverse ;
+   * decline: refuse la proposition adverse.
+   * Pas de nulle avant que chaque camp ait joué (la partie s'annule alors).
+   * Une nouvelle proposition n'est possible qu'après 2 demi-coups (pas de harcèlement).
+   */
+  draw(userId: string, action: "offer" | "accept" | "decline"): ErrorCode | null {
+    const c = this.colorOf(userId);
+    if (!c) return "NOT_A_PLAYER";
+    if (this.finished) return "GAME_OVER";
+    const opp: Color = c === "w" ? "b" : "w";
+    if (action === "decline") {
+      if (this.drawOfferBy === opp) this.setDrawOffer(null);
+      return null;
+    }
+    if (this.drawOfferBy === opp) {
+      this.finish("1/2-1/2", "agreement");
+      return null;
+    }
+    if (action === "accept") return "BAD_PAYLOAD"; // rien à accepter
+    if (this.ply < ABORT_PLY_THRESHOLD) return "BAD_PAYLOAD";
+    if (this.drawOfferBy === c) return null; // déjà proposée
+    if (this.ply - this.lastDrawOfferPly[c] < 2) return "RATE_LIMITED";
+    this.lastDrawOfferPly[c] = this.ply;
+    this.setDrawOffer(c);
+    return null;
+  }
+
+  get drawOffer(): Color | null {
+    return this.drawOfferBy;
+  }
+
+  private setDrawOffer(by: Color | null): void {
+    if (this.drawOfferBy === by) return;
+    this.drawOfferBy = by;
+    this.hooks.onDrawOffer?.({ gameId: this.id, offeredBy: by });
   }
 
   recordFocusLoss(userId: string): void {

@@ -80,9 +80,25 @@ export class GameManager {
     this.onFinishedListeners.push(fn);
   }
 
+  /** Dernière couleur jouée par joueur (mémoire du processus) : sert à alterner. */
+  private readonly lastColor = new Map<string, "w" | "b">();
+
+  /**
+   * Attribution des couleurs : chacun reçoit de préférence la couleur qu'il n'a PAS eue
+   * à sa partie précédente. Deux joueurs qui enchaînent les parties alternent donc
+   * Blancs / Noirs. À égalité (deux nouveaux, ou deux qui sortent des Blancs) : tirage au sort.
+   */
+  pickColors<T extends { userId: string }>(a: T, b: T, rnd: () => number = Math.random): [T, T] {
+    const wantsWhite = (u: string) => (this.lastColor.get(u) === "b" ? 1 : this.lastColor.get(u) === "w" ? -1 : 0);
+    const d = wantsWhite(a.userId) - wantsWhite(b.userId);
+    if (d > 0) return [a, b];
+    if (d < 0) return [b, a];
+    return rnd() < 0.5 ? [a, b] : [b, a];
+  }
+
   /** Duel issu du matchmaking : bloque les mises puis crée la partie. */
   async createFromMatch(a: QueueTicket, b: QueueTicket): Promise<GameRoom | null> {
-    const [white, black] = Math.random() < 0.5 ? [a, b] : [b, a];
+    const [white, black] = this.pickColors(a, b);
     const gameId = randomUUID();
     if (a.stake.buyInCents > 0) {
       try {
@@ -119,12 +135,15 @@ export class GameManager {
         onState: (s) => this.io.to(gameId).emit("game:state", s),
         onMove: (id, ply, uci, san, chargedMs) => this.audit.append("game.move", { gameId: id, ply, uci, san, chargedMs }),
         onPresence: (p) => this.io.to(gameId).emit("game:presence", p),
+        onDrawOffer: (p) => this.io.to(gameId).emit("game:draw", p),
         // Règlement hors du chemin chaud : le handler du coup final rend la main tout de suite.
         onFinish: (g) => setImmediate(() => void this.onFinish(g).catch((e) => console.error("[game] fin de partie en échec", g.gameId, e))),
       },
     });
 
     this.rooms.set(gameId, room);
+    this.lastColor.set(o.white.userId, "w");
+    this.lastColor.set(o.black.userId, "b");
     this.activeByUser.set(o.white.userId, gameId);
     this.activeByUser.set(o.black.userId, gameId);
     this.io.in(userRoom(o.white.userId)).socketsJoin(gameId);
