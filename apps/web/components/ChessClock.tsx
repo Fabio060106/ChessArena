@@ -7,9 +7,11 @@ interface Props {
   label: string;
   rating?: number;
   disconnectedGraceMs?: number | null;
+  /** pièces prises par ce joueur et son avance matérielle (+1, +3…) */
+  material?: { captured: string; plus: number };
 }
 
-export function ChessClock({ ms, active, label, rating, disconnectedGraceMs }: Props) {
+export function ChessClock({ ms, active, label, rating, disconnectedGraceMs, material }: Props) {
   const low = ms < 20_000;
   return (
     <div className="flex items-center justify-between gap-3 py-2">
@@ -17,6 +19,12 @@ export function ChessClock({ ms, active, label, rating, disconnectedGraceMs }: P
         <p className="truncate font-semibold">{label}</p>
         <p className="text-sm text-neutral-500">
           {rating !== undefined && <span>{rating}</span>}
+          {material && (material.captured || material.plus > 0) && (
+            <span className="ml-2 tracking-tight text-neutral-600 dark:text-neutral-400" aria-label={`Avance matérielle : ${material.plus}`}>
+              {material.captured}
+              {material.plus > 0 && <span className="ml-1 font-semibold text-neutral-800 dark:text-neutral-200">+{material.plus}</span>}
+            </span>
+          )}
           {disconnectedGraceMs != null && (
             <span className="ml-2 text-amber-600">déconnecté — forfait dans {Math.ceil(disconnectedGraceMs / 1000)} s</span>
           )}
