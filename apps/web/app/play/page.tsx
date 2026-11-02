@@ -7,11 +7,13 @@ import { ERROR_MESSAGES, isMyTurn, sessionBanner, START_FEN } from "../../lib/ga
 import { GameBoard } from "../../components/GameBoard";
 import { ChessClock } from "../../components/ChessClock";
 import { Lobby } from "../../components/Lobby";
+import { MoveList } from "../../components/MoveList";
+import { material } from "../../lib/material";
 
 const RESULT_LABEL: Record<string, string> = {
   checkmate: "échec et mat", resignation: "abandon", timeout: "temps écoulé", abandon: "forfait (déconnexion)",
   stalemate: "pat", repetition: "triple répétition", insufficient_material: "matériel insuffisant",
-  fifty_moves: "règle des 50 coups", aborted: "partie annulée", timeout_vs_insufficient_material: "temps écoulé, matériel insuffisant",
+  fifty_moves: "règle des 50 coups", agreement: "nulle par accord mutuel", aborted: "partie annulée", timeout_vs_insufficient_material: "temps écoulé, matériel insuffisant",
 };
 
 export default function PlayPage() {
@@ -48,7 +50,7 @@ function Arena({ userId, dev }: { userId: string; dev: boolean }) {
     return r.ok ? { token: ((await r.json()) as { token: string }).token } : {};
   }, [userId, dev]);
 
-  const { view, offsetRef, joinQueue, leaveQueue, playOrPremove, cancelPremove, resign } = useGameSocket(userId, getAuth);
+  const { view, offsetRef, joinQueue, leaveQueue, playOrPremove, cancelPremove, resign, draw } = useGameSocket(userId, getAuth);
   const playing = view.phase === "playing";
   const clocks = useDisplayedClocks(view.server, offsetRef, !playing);
   const graceLeft = useCountdown(view.opponentPresence?.graceMs ?? null, view.opponentPresence);
@@ -60,6 +62,17 @@ function Arena({ userId, dev }: { userId: string; dev: boolean }) {
   const seat = (c: Color) => (c === "w" ? view.start?.white : view.start?.black);
   const running = playing && view.server && view.server.ply >= 2 ? view.server.turn : null;
   const myPayout = view.over ? view.over.payouts[userId] : undefined;
+  const mat = useMemo(() => material(view.start ? view.displayFen : START_FEN), [view.start, view.displayFen]);
+  const lobby = (
+    <Lobby
+      queued={view.queue?.timeControl ?? null}
+      queuedStake={view.queue?.stake.buyInCents ?? null}
+      defaultStake={view.queue?.stake.buyInCents ?? view.start?.stake.buyInCents}
+      disabled={!view.connected}
+      onJoin={(timeControl, buyInCents) => joinQueue({ timeControl, stake: { currency: "PLAY", buyInCents } })}
+      onLeave={leaveQueue}
+    />
+  );
   const iWon = useMemo(() => {
     if (!view.over || view.over.result === "1/2-1/2") return null;
     return (view.over.result === "1-0") === (me === "w");
@@ -69,7 +82,8 @@ function Arena({ userId, dev }: { userId: string; dev: boolean }) {
     <main className="mx-auto flex min-h-dvh max-w-6xl flex-col gap-6 px-4 py-6 lg:flex-row lg:items-start">
       <section className="w-full lg:max-w-[min(80vh,640px)]">
         <ChessClock ms={view.start ? clocks[opp] : 0} active={running === opp}
-          label={seat(opp)?.userId ?? "Adversaire"} rating={seat(opp)?.rating} disconnectedGraceMs={graceLeft} />
+          label={seat(opp)?.userId ?? "Adversaire"} rating={seat(opp)?.rating} disconnectedGraceMs={graceLeft}
+          material={view.start ? mat[opp] : undefined} />
         <GameBoard
           fen={view.start ? view.displayFen : START_FEN}
           serverFen={view.server?.fen ?? view.displayFen}
@@ -82,7 +96,7 @@ function Arena({ userId, dev }: { userId: string; dev: boolean }) {
           onCancelPremove={cancelPremove}
         />
         <ChessClock ms={view.start ? clocks[me] : 0} active={running === me}
-          label={`${userId} (vous)`} rating={seat(me)?.rating} />
+          label={`${userId} (vous)`} rating={seat(me)?.rating} material={view.start ? mat[me] : undefined} />
       </section>
 
       <aside className="flex w-full flex-col gap-4 lg:max-w-sm">
@@ -113,12 +127,7 @@ function Arena({ userId, dev }: { userId: string; dev: boolean }) {
         Changer de pseudo
       </button>
     </div>
-          <Lobby
-            queued={view.queue?.timeControl ?? null}
-            disabled={!view.connected}
-            onJoin={(timeControl, buyInCents) => joinQueue({ timeControl, stake: { currency: "PLAY", buyInCents } })}
-            onLeave={leaveQueue}
-          />
+          {lobby}
         </>
         )}
 
@@ -129,6 +138,21 @@ function Arena({ userId, dev }: { userId: string; dev: boolean }) {
                 ? `Jouez votre premier coup dans les 20 s, sinon la partie est annulée.`
                 : isMyTurn(view) ? "À vous de jouer." : view.premove ? "Pré-move enregistré (clic droit pour annuler)." : "L'adversaire réfléchit…"}
             </p>
+            {view.drawOffer && view.drawOffer !== me && (
+              <div role="alert" className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm dark:bg-amber-950">
+                <p className="font-semibold text-amber-900 dark:text-amber-200">Ton adversaire propose la nulle</p>
+                <div className="mt-2 flex gap-2">
+                  <button className="flex-1 rounded-md bg-emerald-600 p-2 font-semibold text-white" onClick={() => draw("accept")}>Accepter</button>
+                  <button className="flex-1 rounded-md border border-neutral-300 p-2 dark:border-neutral-700" onClick={() => draw("decline")}>Refuser</button>
+                </div>
+              </div>
+            )}
+            {view.server && view.server.ply >= 2 && !(view.drawOffer && view.drawOffer !== me) && (
+              <button className="rounded-md border border-neutral-300 p-2 disabled:opacity-50 dark:border-neutral-700"
+                disabled={view.drawOffer === me} onClick={() => draw("offer")}>
+                {view.drawOffer === me ? "Nulle proposée… (en attente de réponse)" : "½ Proposer la nulle"}
+              </button>
+            )}
             {confirmResign ? (
               <div className="flex gap-2">
                 <button className="flex-1 rounded-md bg-red-600 p-2 font-semibold text-white" onClick={resign}>Confirmer l'abandon</button>
@@ -166,8 +190,17 @@ function Arena({ userId, dev }: { userId: string; dev: boolean }) {
             )}
             <button className="mt-3 w-full rounded-md bg-emerald-600 p-2 font-semibold text-white"
               onClick={() => joinQueue({ timeControl: view.start!.timeControl.id, stake: view.start!.stake })}>
-              Rejouer
+              Rejouer ({view.start ? ({ bullet_1_0: "Bullet 1+0", blitz_3_0: "Blitz 3+0", blitz_3_2: "Blitz 3+2", rapid_5_0: "Rapide 5+0" } as const)[view.start.timeControl.id] : ""})
             </button>
+            <p className="mb-2 mt-4 text-sm text-neutral-500">…ou change de cadence :</p>
+            {lobby}
+          </div>
+        )}
+
+        {(playing || view.phase === "over") && view.start && (
+          <div className="rounded-lg border border-neutral-300 p-3 dark:border-neutral-700">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">Coups</h2>
+            <MoveList moves={view.moves} />
           </div>
         )}
 
