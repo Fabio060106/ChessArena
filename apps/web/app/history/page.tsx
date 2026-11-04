@@ -67,7 +67,8 @@ export default function HistoryPage() {
       <header className="mx-auto flex h-13 max-w-[1400px] items-center gap-3 px-3 lg:px-6">
         <a href="/play" className="font-display text-lg font-bold tracking-tight">Chess<span className="text-neon">Arena</span></a>
         <span className="text-sm text-muted">· Mes parties</span>
-        <a href="/play" className="neon-btn ml-auto rounded-lg px-3 py-1.5 text-sm font-semibold">Jouer</a>
+        <a href="/repertoire" className="ml-auto rounded-lg bg-surface-2 px-2 py-1.5 text-xs text-muted hover:text-text">Répertoire</a>
+        <a href="/play" className="neon-btn rounded-lg px-3 py-1.5 text-sm font-semibold">Jouer</a>
       </header>
 
       <div className="mx-auto grid max-w-[1400px] gap-4 px-2 pb-8 sm:px-3 lg:grid-cols-[380px_minmax(0,1fr)] lg:px-6">

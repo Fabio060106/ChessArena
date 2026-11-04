@@ -11,7 +11,7 @@ const flagEmoji = (c: string) => (c ? String.fromCodePoint(...[...c].map((x) => 
 function nextPath(): string {
   if (typeof window === "undefined") return "/play";
   const n = new URLSearchParams(window.location.search).get("next") ?? "";
-  return /^\/(play|history)(\?[\w=&%-]*)?$/.test(n) ? n : "/play";
+  return /^\/(play|history|repertoire)(\?[\w=&%-]*)?$/.test(n) ? n : "/play";
 }
 
 export default function Home() {

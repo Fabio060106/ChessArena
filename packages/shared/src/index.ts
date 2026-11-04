@@ -242,6 +242,24 @@ export interface GameHistoryItem {
   plies: number;
 }
 
+/** Partie utilisée pour construire le répertoire d'ouvertures (PGN complet, vu par le joueur). */
+export interface RepertoireGame {
+  gameId: string;
+  endedAt: string;
+  color: Color;
+  opponent: string;
+  outcome: "win" | "loss" | "draw";
+  timeControl: TimeControlId;
+  pgn: string;
+}
+
+/** GET /account/repertoire : les parties + le document de répertoire enregistré (null au départ). */
+export interface RepertoireResponse {
+  games: RepertoireGame[];
+  data: unknown;
+  updatedAt: string | null;
+}
+
 export interface GameHistoryDetail extends GameHistoryItem {
   pgn: string;
   /** temps facturé par demi-coup (ms) */

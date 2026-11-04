@@ -153,6 +153,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
         </span>
         <div className="ml-auto flex items-center gap-1.5">
           <a href="/history" className="rounded-lg bg-surface-2 px-2 py-1.5 text-xs text-muted hover:text-text">Mes parties</a>
+          <a href="/repertoire" className="rounded-lg bg-surface-2 px-2 py-1.5 text-xs text-muted hover:text-text">Répertoire</a>
           {!dev && (
             <button type="button" title="Se déconnecter"
               onClick={() => void fetch("/api/session", { method: "DELETE" }).finally(() => { window.location.href = "/"; })}

@@ -99,4 +99,20 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect(await repo.getGame("hist-c", g1.gameId)).toBeNull();
     expect(await repo.getGame("hist-a", "pas-un-uuid")).toBeNull();
   });
+
+  it("répertoire : parties non annulées avec PGN, document JSON enregistré puis remplacé", async () => {
+    const g1 = game("rep-a", "rep-b", "1-0", { pgn: "1. e4 Nf6 2. e5 Nd5" });
+    const g2 = game("rep-b", "rep-a", "0-1", { pgn: "1. d4 d5" });
+    const g3 = game("rep-a", "rep-c", "0-1", { aborted: true, abortedBy: "w", rated: false, termination: "aborted" });
+    for (const g of [g1, g2, g3]) { await repo.recordGame(g); await new Promise((r) => setTimeout(r, 15)); }
+    const games = await repo.listRepertoireGames("rep-a", 50);
+    expect(games.map((x) => x.gameId)).toEqual([g2.gameId, g1.gameId]);
+    expect(games[1]).toMatchObject({ color: "w", outcome: "win", opponent: "rep-b", pgn: "1. e4 Nf6 2. e5 Nd5" });
+    expect(games[0]).toMatchObject({ color: "b", outcome: "win" });
+    expect(await repo.getRepertoire("rep-a")).toBeNull();
+    await repo.saveRepertoire("rep-a", { v: 1, choices: { x: "e2e4" } });
+    await repo.saveRepertoire("rep-a", { v: 1, choices: { x: "d2d4" } });
+    expect((await repo.getRepertoire("rep-a"))!.data).toEqual({ v: 1, choices: { x: "d2d4" } });
+    expect(await repo.getRepertoire("rep-b")).toBeNull();
+  });
 });

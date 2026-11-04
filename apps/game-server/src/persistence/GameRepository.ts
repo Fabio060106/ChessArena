@@ -1,6 +1,6 @@
 import type pg from "pg";
 import {
-  DEFAULT_RATING, TIME_CONTROLS, type AccountState, type GameHistoryDetail, type GameHistoryItem, type TimeControlId,
+  DEFAULT_RATING, TIME_CONTROLS, type AccountState, type GameHistoryDetail, type GameHistoryItem, type RepertoireGame, type TimeControlId,
 } from "@chessarena/shared";
 import type { FinishedGame } from "../game/GameRoom.js";
 import { withTx } from "../db/tx.js";
@@ -34,6 +34,18 @@ export interface GameRepository {
   listGames(userId: string, limit: number, before?: string): Promise<GameHistoryItem[]>;
   /** Détail d'une partie (PGN) — null si elle n'existe pas ou si le joueur n'y a pas pris part. */
   getGame(userId: string, gameId: string): Promise<GameHistoryDetail | null>;
+  /** Parties terminées (hors annulées), plus récentes d'abord, pour le répertoire. */
+  listRepertoireGames(userId: string, limit: number): Promise<RepertoireGame[]>;
+  getRepertoire(userId: string): Promise<{ data: unknown; updatedAt: string } | null>;
+  saveRepertoire(userId: string, data: unknown): Promise<{ updatedAt: string }>;
+}
+
+/** Taille maximale du document de répertoire (octets JSON). */
+export const REPERTOIRE_MAX_BYTES = 1_048_576;
+
+function toRepertoireGame(row: GameRow, userId: string): RepertoireGame {
+  const h = toHistoryItem(row, userId);
+  return { gameId: h.gameId, endedAt: h.endedAt, color: h.color, opponent: h.opponent, outcome: h.outcome as RepertoireGame["outcome"], timeControl: h.timeControl, pgn: row.pgn };
 }
 
 interface GameRow {
@@ -193,6 +205,36 @@ export class PgGameRepository implements GameRepository {
     const row = r.rows[0];
     return row ? { ...toHistoryItem(row, userId), pgn: row.pgn, moveTimesMs: row.move_times_ms ?? [] } : null;
   }
+
+  async listRepertoireGames(userId: string, limit: number): Promise<RepertoireGame[]> {
+    const n = Math.min(Math.max(1, Math.floor(limit)), 1000);
+    const cols = `${HISTORY_COLS}, pgn`;
+    const r = await this.pool.query<GameRow>(
+      `SELECT ${cols} FROM (
+         (SELECT ${cols} FROM games WHERE white_id = $1 AND termination <> 'aborted' ORDER BY ended_at DESC LIMIT $2)
+         UNION ALL
+         (SELECT ${cols} FROM games WHERE black_id = $1 AND termination <> 'aborted' ORDER BY ended_at DESC LIMIT $2)
+       ) g ORDER BY ended_at DESC LIMIT $2`,
+      [userId, n],
+    );
+    return r.rows.map((row) => toRepertoireGame(row, userId));
+  }
+
+  async getRepertoire(userId: string): Promise<{ data: unknown; updatedAt: string } | null> {
+    const r = await this.pool.query<{ data: unknown; updated_at: Date }>("SELECT data, updated_at FROM user_repertoire WHERE user_id = $1", [userId]);
+    const row = r.rows[0];
+    return row ? { data: row.data, updatedAt: row.updated_at.toISOString() } : null;
+  }
+
+  async saveRepertoire(userId: string, data: unknown): Promise<{ updatedAt: string }> {
+    await this.ensureUser(userId);
+    const r = await this.pool.query<{ updated_at: Date }>(
+      `INSERT INTO user_repertoire (user_id, data) VALUES ($1, $2::jsonb)
+       ON CONFLICT (user_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now() RETURNING updated_at`,
+      [userId, JSON.stringify(data)],
+    );
+    return { updatedAt: r.rows[0]!.updated_at.toISOString() };
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -257,5 +299,24 @@ export class InMemoryGameRepository implements GameRepository {
     if (!e || (e.game.white.userId !== userId && e.game.black.userId !== userId)) return null;
     const r = this.row(e);
     return { ...toHistoryItem(r, userId), pgn: r.pgn, moveTimesMs: r.move_times_ms };
+  }
+
+  async listRepertoireGames(userId: string, limit: number): Promise<RepertoireGame[]> {
+    return [...this.games.values()]
+      .filter((e) => (e.game.white.userId === userId || e.game.black.userId === userId) && e.game.termination !== "aborted")
+      .map((e) => this.row(e))
+      .sort((a, b) => +new Date(b.ended_at) - +new Date(a.ended_at))
+      .slice(0, Math.min(Math.max(1, limit), 1000))
+      .map((r) => toRepertoireGame(r, userId));
+  }
+
+  private repertoires = new Map<string, { data: unknown; updatedAt: string }>();
+  async getRepertoire(userId: string): Promise<{ data: unknown; updatedAt: string } | null> {
+    return this.repertoires.get(userId) ?? null;
+  }
+  async saveRepertoire(userId: string, data: unknown): Promise<{ updatedAt: string }> {
+    const updatedAt = new Date().toISOString();
+    this.repertoires.set(userId, { data: JSON.parse(JSON.stringify(data)), updatedAt });
+    return { updatedAt };
   }
 }

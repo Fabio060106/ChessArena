@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import jwt from "jsonwebtoken";
 import type pg from "pg";
-import type { GameRepository } from "../persistence/GameRepository.js";
+import { REPERTOIRE_MAX_BYTES, type GameRepository } from "../persistence/GameRepository.js";
 import type { ArenaJwtClaims, DecisionRequest, RgLimitKind } from "@chessarena/shared";
 import type { GameServerConfig } from "../config.js";
 import { CaseAlreadyResolvedError, CaseNotFoundError, type ModerationService } from "../fairplay/ModerationService.js";
@@ -87,10 +87,10 @@ async function rawBody(req: IncomingMessage, limit = 16 * 1024): Promise<string>
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function body(req: IncomingMessage, limit?: number): Promise<Record<string, unknown>> {
   const ct = req.headers["content-type"] ?? "";
   if (req.method !== "GET" && !ct.startsWith("application/json")) throw new HttpError(415, "UNSUPPORTED_MEDIA_TYPE");
-  const raw = await rawBody(req);
+  const raw = await rawBody(req, limit);
   try {
     const v = JSON.parse(raw || "{}") as unknown;
     if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error();
@@ -254,6 +254,21 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       const g = await need(d.repo).getGame(claims.sub, gm[1]!);
       if (!g) throw new HttpError(404, "NOT_FOUND");
       send(200, g);
+      return true;
+    }
+
+    // ─── Compte joueur : répertoire d'ouvertures et exercices ───────────────────
+    if (url.pathname === "/account/repertoire" && req.method === "GET") {
+      const repo = need(d.repo);
+      const [games, saved] = await Promise.all([repo.listRepertoireGames(claims.sub, 500), repo.getRepertoire(claims.sub)]);
+      send(200, { games, data: saved?.data ?? null, updatedAt: saved?.updatedAt ?? null });
+      return true;
+    }
+    if (url.pathname === "/account/repertoire" && req.method === "PUT") {
+      const b = await body(req, REPERTOIRE_MAX_BYTES + 1024);
+      if (!b.data || typeof b.data !== "object" || Array.isArray(b.data)) throw new HttpError(400, "BAD_PAYLOAD");
+      if (Buffer.byteLength(JSON.stringify(b.data)) > REPERTOIRE_MAX_BYTES) throw new HttpError(413, "TOO_LARGE");
+      send(200, await need(d.repo).saveRepertoire(claims.sub, b.data));
       return true;
     }
 
