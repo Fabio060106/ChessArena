@@ -148,10 +148,17 @@ export const GameBoard = memo(function GameBoard(p: Props) {
     if (selected !== sq) setSelected(sq);
   };
 
+  /** Le plateau peut bouger pendant le geste (défilement de la page au début d'une partie) : on relit sa position. */
+  const refresh = (d: Drag) => {
+    const r = boardRef.current?.getBoundingClientRect();
+    if (r && r.width > 0) { d.rect = r; d.size = r.width / 8; }
+  };
+
   const paint = () => {
     const d = drag.current;
     if (!d) return;
     d.raf = 0;
+    refresh(d);
     const lift = d.touch ? d.size * 0.55 : 0;
     const px = d.lastX - d.rect.left - d.size / 2;
     const py = d.lastY - d.rect.top - d.size / 2 - lift;
@@ -190,6 +197,7 @@ export const GameBoard = memo(function GameBoard(p: Props) {
       return;
     }
     el?.classList.remove("dragging", "touch");
+    refresh(d);
     const lift = d.touch ? d.size * 0.55 : 0;
     const to = cancelled ? null : locate(d.rect, d.size, e.clientX, e.clientY - lift);
     const restore = (sq: string) => {

@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Color } from "@chessarena/shared";
 import { useClockTicker, useGameSocket } from "../../hooks/useGameSocket";
@@ -89,7 +89,14 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
   useEffect(() => { setConfirmResign(false); setShowResult(true); }, [view.phase]);
   // nouvelle partie (tournoi qui démarre pendant qu'on lit le classement, sur mobile) : on remonte au plateau
   const gameId = view.start?.gameId;
-  useEffect(() => { if (gameId) window.scrollTo({ top: 0, behavior: "smooth" }); setBrowse(null); }, [gameId]);
+  // Défilement INSTANTANÉ (et seulement si le plateau n'est pas entièrement visible) : un défilement animé
+  // déplaçait l'échiquier sous le doigt pendant le premier coup.
+  const boardBox = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setBrowse(null);
+    const r = boardBox.current?.getBoundingClientRect();
+    if (gameId && r && (r.top < 0 || r.bottom > window.innerHeight)) window.scrollTo({ top: 0, behavior: "instant" });
+  }, [gameId]);
   useEffect(() => { if (sng.current && !playing) setTab("tournament"); }, [sng.current, playing]);
 
   // le contexte audio ne peut démarrer que sur un geste : premier clic n'importe où
@@ -183,7 +190,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
             materialAdvantage={view.start ? materialAdvantage(fen, opp) : 0} captured={view.start ? mat[opp].captured : undefined}
             clock={<ChessClock color={opp} subscribe={subscribe} active={running === opp} initialMs={initialMs} alert={false} />}
           />
-          <div className="relative" onPointerDownCapture={(e) => {
+          <div ref={boardBox} className="relative" onPointerDownCapture={(e) => {
             // en navigation, un clic sur le plateau ramène au direct SANS jouer : on ne joue jamais depuis une position passée
             if (browsing) { e.stopPropagation(); e.preventDefault(); setBrowse(null); }
           }}>
