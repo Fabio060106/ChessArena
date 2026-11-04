@@ -1,45 +1,56 @@
 "use client";
-import { formatClock } from "../lib/clock";
+import { memo, useEffect, useRef } from "react";
+import type { Color } from "@chessarena/shared";
+import { LOW_TIME_MS, formatClock } from "../lib/clock";
+import { sound } from "../lib/sound";
+
+type Subscribe = (fn: (c: Record<Color, number>) => void) => () => void;
 
 interface Props {
-  ms: number;
+  color: Color;
+  subscribe: Subscribe;
+  /** pendule de ce camp en marche */
   active: boolean;
-  label: string;
-  rating?: number;
-  disconnectedGraceMs?: number | null;
-  /** pièces prises par ce joueur et son avance matérielle (+1, +3…) */
-  material?: { captured: string; plus: number };
+  /** temps initial de la cadence (barre de progression) */
+  initialMs: number;
+  /** alerte sonore « temps faible » : seulement pour la pendule du joueur */
+  alert: boolean;
 }
 
-export function ChessClock({ ms, active, label, rating, disconnectedGraceMs, material }: Props) {
-  const low = ms < 20_000;
+/**
+ * Pendule e-sport. Les valeurs arrivent à chaque frame (rAF, base de temps monotone synchronisée
+ * sur le serveur) et sont écrites DIRECTEMENT dans le DOM : zéro rendu React par seconde, aucune
+ * dérive entre les deux pendules. Sous 10 s : affichage au centième, pulsation, alerte sonore.
+ */
+export const ChessClock = memo(function ChessClock({ color, subscribe, active, initialMs, alert }: Props) {
+  const box = useRef<HTMLDivElement>(null);
+  const text = useRef<HTMLSpanElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const prev = useRef<{ label: string; low: boolean; ms: number }>({ label: "", low: false, ms: Infinity });
+
+  useEffect(() => subscribe((c) => {
+    const ms = c[color];
+    const label = initialMs > 0 ? formatClock(ms) : "–:––"; // pas de partie : pas de temps à afficher
+    const low = initialMs > 0 && ms < LOW_TIME_MS;
+    const p = prev.current;
+    if (label !== p.label && text.current) text.current.textContent = label;
+    if (low !== p.low) box.current?.classList.toggle("low", low);
+    // franchissement du seuil en jeu (pas au chargement d'une partie déjà sous 10 s)
+    if (alert && active && low && p.ms >= LOW_TIME_MS && p.ms !== Infinity) sound.play("lowTime");
+    if (bar.current && initialMs > 0) bar.current.style.transform = `scaleX(${Math.max(0, Math.min(1, ms / initialMs))})`;
+    prev.current = { label, low, ms };
+  }), [subscribe, color, alert, active, initialMs]);
+
   return (
-    <div className="flex items-center justify-between gap-3 py-2">
-      <div className="min-w-0">
-        <p className="truncate font-semibold">{label}</p>
-        <p className="text-sm text-neutral-500">
-          {rating !== undefined && <span>{rating}</span>}
-          {material && (material.captured || material.plus > 0) && (
-            <span className="ml-2 tracking-tight text-neutral-600 dark:text-neutral-400" aria-label={`Avance matérielle : ${material.plus}`}>
-              {material.captured}
-              {material.plus > 0 && <span className="ml-1 font-semibold text-neutral-800 dark:text-neutral-200">+{material.plus}</span>}
-            </span>
-          )}
-          {disconnectedGraceMs != null && (
-            <span className="ml-2 text-amber-600">déconnecté — forfait dans {Math.ceil(disconnectedGraceMs / 1000)} s</span>
-          )}
-        </p>
-      </div>
-      <time
-        aria-live={active && low ? "polite" : "off"}
-        className={[
-          "rounded-md px-3 py-1.5 font-mono text-2xl tabular-nums transition-colors",
-          active ? (low ? "bg-red-600 text-white" : "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900")
-            : "bg-neutral-200 text-neutral-500 dark:bg-neutral-800",
-        ].join(" ")}
-      >
-        {formatClock(ms)}
-      </time>
+    <div
+      ref={box}
+      className={`clock relative overflow-hidden rounded-lg px-3 py-1.5 text-2xl font-semibold sm:px-4 sm:text-3xl ${active ? "active" : "idle"}`}
+      role="timer"
+      aria-live="off"
+      aria-label={`Pendule des ${color === "w" ? "blancs" : "noirs"}`}
+    >
+      <span ref={text} className="relative z-10 block min-w-[4.2ch] text-right">{" "}</span>
+      <div ref={bar} className="clock-bar absolute inset-x-0 bottom-0 h-[3px] bg-current opacity-30" />
     </div>
   );
-}
+});

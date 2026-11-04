@@ -24,7 +24,9 @@ describe("horloge client", () => {
     expect(formatClock(61_999)).toBe("1:01");
     expect(formatClock(20_000)).toBe("0:20");
     expect(formatClock(19_950)).toBe("19.9");
-    expect(formatClock(-5)).toBe("0.0");
+    expect(formatClock(10_000)).toBe("10.0");
+    expect(formatClock(9_876)).toBe("9.87"); // centièmes sous 10 s
+    expect(formatClock(-5)).toBe("0.00");
   });
 });
 
@@ -87,11 +89,14 @@ describe("gameReducer", () => {
     expect(v.displayFen).toBe("x");
   });
 
-  it("resynchro après reconnexion : même partie, pré-move conservé", () => {
-    let v = run({ type: "start", start, userId: "op" }, { type: "set_premove", premove: { from: "e7", to: "e5" } });
+  it("resynchro après reconnexion : même partie, file de pré-moves conservée", () => {
+    const queue = [{ from: "e7", to: "e5" }, { from: "g8", to: "f6" }];
+    let v = run({ type: "start", start, userId: "op" }, { type: "set_premoves", premoves: queue });
     v = gameReducer(v, { type: "disconnected" });
     v = gameReducer(v, { type: "start", start, userId: "op" });
-    expect(v.premove).toEqual({ from: "e7", to: "e5" });
+    expect(v.premoves).toEqual(queue);
+    v = gameReducer(v, { type: "start", start: { ...start, gameId: "autre" }, userId: "op" });
+    expect(v.premoves).toEqual([]);
   });
 
   it("présence : seule celle de l'adversaire est affichée", () => {

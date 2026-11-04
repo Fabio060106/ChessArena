@@ -45,3 +45,19 @@ describe("liste des coups", () => {
     expect(nextHistory(moves, prev, st(5, START_FEN, "b8c6"))).toEqual(["e4", "e5", "Nf3", null, null]);
   });
 });
+
+describe("relecture d'une partie", () => {
+  it("positions successives depuis le PGN, dates relatives, temps de réflexion", async () => {
+    const { replayFromPgn, relativeDate, formatThink } = await import("./replay");
+    const steps = replayFromPgn('[Event "x"]\n\n1. f3 e5 2. g4 Qh4# 0-1');
+    expect(steps).toHaveLength(5);
+    expect(steps[0]!.san).toBeNull();
+    expect(steps.map((s) => s.san)).toEqual([null, "f3", "e5", "g4", "Qh4#"]);
+    expect(steps[4]!.uci).toBe("d8h4");
+    const now = Date.parse("2026-11-04T12:00:00Z");
+    expect(relativeDate("2026-11-04T11:58:00Z", now)).toBe("il y a 2 min");
+    expect(relativeDate("2026-11-03T10:00:00Z", now)).toBe("hier");
+    expect(formatThink(2400)).toBe("2,4 s");
+    expect(formatThink(42_000)).toBe("42 s");
+  });
+});

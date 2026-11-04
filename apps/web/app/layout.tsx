@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "Compétition d'échecs en temps réel",
 };
 
-export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#0a0a0a" };
+export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#0B0E14" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

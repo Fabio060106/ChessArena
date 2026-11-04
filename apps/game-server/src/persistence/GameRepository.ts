@@ -1,5 +1,7 @@
 import type pg from "pg";
-import { DEFAULT_RATING, TIME_CONTROLS, type AccountState, type TimeControlId } from "@chessarena/shared";
+import {
+  DEFAULT_RATING, TIME_CONTROLS, type AccountState, type GameHistoryDetail, type GameHistoryItem, type TimeControlId,
+} from "@chessarena/shared";
 import type { FinishedGame } from "../game/GameRoom.js";
 import { withTx } from "../db/tx.js";
 import {
@@ -28,7 +30,46 @@ export interface GameRepository {
   getAccountState(userId: string): Promise<AccountState>;
   getRatings(userId: string): Promise<Record<TimeControlId, RatingState>>;
   recordGame(g: FinishedGame): Promise<RecordedGame>;
+  /** Historique d'un joueur, du plus récent au plus ancien (pagination par date). */
+  listGames(userId: string, limit: number, before?: string): Promise<GameHistoryItem[]>;
+  /** Détail d'une partie (PGN) — null si elle n'existe pas ou si le joueur n'y a pas pris part. */
+  getGame(userId: string, gameId: string): Promise<GameHistoryDetail | null>;
 }
+
+interface GameRow {
+  id: string; ended_at: Date | string; time_control: TimeControlId; currency: GameHistoryItem["currency"]; buy_in_cents: string | number;
+  rated: boolean; white_id: string; black_id: string; result: GameHistoryItem["result"]; termination: GameHistoryItem["termination"];
+  white_rating_before: number | null; white_rating_after: number | null; black_rating_before: number | null; black_rating_after: number | null;
+  tournament_id: string | null; move_times_ms: number[]; pgn: string;
+}
+
+/** Une ligne de la table games, vue par l'un des deux joueurs. */
+export function toHistoryItem(row: GameRow, userId: string): GameHistoryItem {
+  const color = row.white_id === userId ? "w" : "b";
+  const outcome: GameHistoryItem["outcome"] = row.termination === "aborted" ? "aborted"
+    : row.result === "1/2-1/2" ? "draw" : (row.result === "1-0") === (color === "w") ? "win" : "loss";
+  return {
+    gameId: row.id,
+    endedAt: new Date(row.ended_at).toISOString(),
+    timeControl: row.time_control,
+    currency: row.currency,
+    buyInCents: Number(row.buy_in_cents),
+    rated: row.rated,
+    color,
+    opponent: color === "w" ? row.black_id : row.white_id,
+    result: row.result,
+    outcome,
+    termination: row.termination,
+    ratingBefore: color === "w" ? row.white_rating_before : row.black_rating_before,
+    ratingAfter: color === "w" ? row.white_rating_after : row.black_rating_after,
+    opponentRating: color === "w" ? row.black_rating_before : row.white_rating_before,
+    tournamentId: row.tournament_id,
+    plies: row.move_times_ms?.length ?? 0,
+  };
+}
+
+const HISTORY_COLS = `id, ended_at, time_control, currency, buy_in_cents, rated, white_id, black_id, result, termination,
+  white_rating_before, white_rating_after, black_rating_before, black_rating_after, tournament_id, move_times_ms`;
 
 const fresh = (): RatingState => ({ rating: DEFAULT_RATING, games: 0, peak: DEFAULT_RATING });
 const TCS = Object.keys(TIME_CONTROLS) as TimeControlId[];
@@ -129,11 +170,34 @@ export class PgGameRepository implements GameRepository {
       return { gameId: g.gameId, rated: g.rated, changes, duplicate: false };
     });
   }
+
+  async listGames(userId: string, limit: number, before?: string): Promise<GameHistoryItem[]> {
+    const n = Math.min(Math.max(1, Math.floor(limit)), 100);
+    const r = await this.pool.query<GameRow>(
+      // deux index (white_id, ended_at) et (black_id, ended_at) : une sous-requête par couleur
+      `SELECT ${HISTORY_COLS} FROM (
+         (SELECT ${HISTORY_COLS} FROM games WHERE white_id = $1 AND ($3::timestamptz IS NULL OR ended_at < $3) ORDER BY ended_at DESC LIMIT $2)
+         UNION ALL
+         (SELECT ${HISTORY_COLS} FROM games WHERE black_id = $1 AND ($3::timestamptz IS NULL OR ended_at < $3) ORDER BY ended_at DESC LIMIT $2)
+       ) g ORDER BY ended_at DESC LIMIT $2`,
+      [userId, n, before ?? null],
+    );
+    return r.rows.map((row) => toHistoryItem(row, userId));
+  }
+
+  async getGame(userId: string, gameId: string): Promise<GameHistoryDetail | null> {
+    if (!/^[0-9a-f-]{36}$/i.test(gameId)) return null;
+    const r = await this.pool.query<GameRow>(
+      `SELECT ${HISTORY_COLS}, pgn FROM games WHERE id = $1 AND (white_id = $2 OR black_id = $2)`, [gameId, userId],
+    );
+    const row = r.rows[0];
+    return row ? { ...toHistoryItem(row, userId), pgn: row.pgn, moveTimesMs: row.move_times_ms ?? [] } : null;
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
 export class InMemoryGameRepository implements GameRepository {
-  readonly games = new Map<string, { game: FinishedGame; recorded: RecordedGame }>();
+  readonly games = new Map<string, { game: FinishedGame; recorded: RecordedGame; endedAt?: Date }>();
   private ratings = new Map<string, RatingState>();
 
   async ensureUser(): Promise<void> {}
@@ -161,7 +225,37 @@ export class InMemoryGameRepository implements GameRepository {
       changes = { [g.white.userId]: res.white, [g.black.userId]: res.black };
     }
     const recorded: RecordedGame = { gameId: g.gameId, rated: g.rated, changes, duplicate: false };
-    this.games.set(g.gameId, { game: g, recorded });
+    this.games.set(g.gameId, { game: g, recorded, endedAt: new Date() });
     return recorded;
+  }
+
+  private row(e: { game: FinishedGame; recorded: RecordedGame; endedAt?: Date }): GameRow {
+    const g = e.game;
+    const ch = e.recorded.changes;
+    return {
+      id: g.gameId, ended_at: e.endedAt ?? new Date(), time_control: g.timeControl.id, currency: g.stake.currency,
+      buy_in_cents: g.stake.buyInCents, rated: g.rated, white_id: g.white.userId, black_id: g.black.userId,
+      result: g.result, termination: g.termination,
+      white_rating_before: ch?.[g.white.userId]?.before ?? null, white_rating_after: ch?.[g.white.userId]?.after ?? null,
+      black_rating_before: ch?.[g.black.userId]?.before ?? null, black_rating_after: ch?.[g.black.userId]?.after ?? null,
+      tournament_id: g.tournament?.tournamentId ?? null, move_times_ms: g.moveTimesMs, pgn: g.pgn,
+    };
+  }
+
+  async listGames(userId: string, limit: number, before?: string): Promise<GameHistoryItem[]> {
+    return [...this.games.values()]
+      .filter((e) => e.game.white.userId === userId || e.game.black.userId === userId)
+      .map((e) => this.row(e))
+      .filter((r) => !before || new Date(r.ended_at) < new Date(before))
+      .sort((a, b) => +new Date(b.ended_at) - +new Date(a.ended_at))
+      .slice(0, Math.min(Math.max(1, limit), 100))
+      .map((r) => toHistoryItem(r, userId));
+  }
+
+  async getGame(userId: string, gameId: string): Promise<GameHistoryDetail | null> {
+    const e = this.games.get(gameId);
+    if (!e || (e.game.white.userId !== userId && e.game.black.userId !== userId)) return null;
+    const r = this.row(e);
+    return { ...toHistoryItem(r, userId), pgn: r.pgn, moveTimesMs: r.move_times_ms };
   }
 }

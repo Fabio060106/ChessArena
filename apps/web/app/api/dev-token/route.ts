@@ -12,7 +12,9 @@ export async function GET(req: NextRequest) {
   if (!secret) return NextResponse.json({ error: "JWT_SECRET manquant côté web" }, { status: 500 });
   const u = req.nextUrl.searchParams.get("u") ?? "";
   if (!/^[\w-]{1,32}$/.test(u)) return NextResponse.json({ error: "identifiant invalide" }, { status: 400 });
-  const token = jwt.sign({ sub: u, state: "active", kyc: false, country: "FR" }, secret, {
+  // drapeau d'affichage (profil) : facultatif, jamais déduit de la résidence
+  const flag = req.nextUrl.searchParams.get("flag") ?? "";
+  const token = jwt.sign({ sub: u, state: "active", kyc: false, country: "FR", ...(/^[A-Za-z]{2}$/.test(flag) ? { flag: flag.toUpperCase() } : {}) }, secret, {
     algorithm: "HS256",
     expiresIn: "15m",
   });

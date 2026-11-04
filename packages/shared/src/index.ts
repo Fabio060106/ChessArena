@@ -64,10 +64,18 @@ export interface ClientSignalPayload {
   clientTs: number;
 }
 
+/** Siège d'un joueur tel que vu par les deux camps. */
+export interface SeatView {
+  userId: string;
+  rating: number;
+  /** drapeau d'affichage choisi par le joueur (ISO 3166-1 alpha-2) — jamais la résidence KYC */
+  flag?: string;
+}
+
 export interface GameStartEvent {
   gameId: string;
-  white: { userId: string; rating: number };
-  black: { userId: string; rating: number };
+  white: SeatView;
+  black: SeatView;
   timeControl: TimeControl;
   stake: Stake;
   fen: string;
@@ -103,6 +111,15 @@ export interface PresenceEvent {
   connected: boolean;
   /** si déconnecté : ms restantes avant défaite par forfait */
   graceMs: number;
+}
+
+/**
+ * Qualité réseau des deux joueurs, mesurée par le SERVEUR (sonde lag:probe), diffusée
+ * à la room de la partie toutes les ~2 s. null = pas encore de mesure.
+ */
+export interface GameNetEvent {
+  gameId: string;
+  rttMs: Record<Color, number | null>;
 }
 
 /** Proposition de nulle en cours (null = aucune). Diffusée aux deux joueurs. */
@@ -171,6 +188,10 @@ export interface SngPlayerView {
 export interface SngSnapshot {
   id: string;
   formatId: string;
+  /** tournoi créé par un joueur (null/absent = table permanente du lobby) */
+  createdBy?: string | null;
+  /** nom donné par le créateur */
+  name?: string | null;
   size: SngSize;
   timeControl: TimeControlId;
   currency: Currency;
@@ -189,6 +210,42 @@ export interface SngSnapshot {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+}
+
+/** Création d'un tournoi par un joueur (bêta : jetons PLAY uniquement). */
+export interface SngCreatePayload {
+  size: SngSize;
+  timeControl: TimeControlId;
+  buyInCents: Cents;
+  name?: string;
+}
+
+/** Partie terminée, telle qu'affichée dans l'historique d'un joueur. */
+export interface GameHistoryItem {
+  gameId: string;
+  endedAt: string;
+  timeControl: TimeControlId;
+  currency: Currency;
+  buyInCents: Cents;
+  rated: boolean;
+  color: Color;
+  opponent: string;
+  result: GameResult;
+  /** du point de vue du joueur */
+  outcome: "win" | "loss" | "draw" | "aborted";
+  termination: Termination;
+  ratingBefore: number | null;
+  ratingAfter: number | null;
+  opponentRating: number | null;
+  tournamentId: string | null;
+  /** nombre de demi-coups */
+  plies: number;
+}
+
+export interface GameHistoryDetail extends GameHistoryItem {
+  pgn: string;
+  /** temps facturé par demi-coup (ms) */
+  moveTimesMs: number[];
 }
 
 export type SngAck = { ok: true; snapshot: SngSnapshot } | { ok: false; code: string };
@@ -237,6 +294,7 @@ export interface ServerToClientEvents {
   "game:over": (p: GameOverEvent) => void;
   "game:presence": (p: PresenceEvent) => void;
   "game:draw": (p: DrawOfferEvent) => void;
+  "game:net": (p: GameNetEvent) => void;
   /**
    * Sonde de latence initiée par le SERVEUR (ADR-8). Le RTT est mesuré côté serveur :
    * un client ne peut pas déclarer lui-même un faux lag pour gagner du temps.
@@ -261,6 +319,12 @@ export interface ClientToServerEvents {
   "sng:list": (ack: (tables: SngSnapshot[]) => void) => void;
   "sng:register": (p: { formatId: string }, ack: (r: SngAck) => void) => void;
   "sng:unregister": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
+  /** crée un tournoi (le créateur y est inscrit d'office) */
+  "sng:create": (p: SngCreatePayload, ack: (r: SngAck) => void) => void;
+  /** rejoint un tournoi précis (lien d'invitation) */
+  "sng:join": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
+  /** état d'un tournoi (page d'invitation, avant inscription) */
+  "sng:get": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
 }
 
 /** Claims du JWT émis par l'API d'auth (le game-server ne fait que vérifier). */
@@ -269,6 +333,8 @@ export interface ArenaJwtClaims {
   /** Elo par cadence ; 1500 par défaut si absent */
   ratings?: Partial<Record<TimeControlId, number>>;
   country?: string;
+  /** drapeau d'affichage public, choisi par le joueur (ISO alpha-2) */
+  flag?: string;
   /** "active" | "withdrawal_hold" | "suspended" | "self_excluded" | "closed" */
   state?: AccountState;
   /** true si KYC vérifié (condition nécessaire à l'argent réel) */

@@ -2,7 +2,7 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { performance } from "node:perf_hooks";
 import { Server, type Socket } from "socket.io";
 import pg from "pg";
-import type { ClientToServerEvents, ErrorCode, ServerToClientEvents, SessionModeEvent, SngAck } from "@chessarena/shared";
+import { TIME_CONTROLS, type ClientToServerEvents, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "./config.js";
 import { authenticate, canPlay, type AuthUser } from "./auth.js";
 import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
@@ -12,7 +12,7 @@ import { InMemoryLedger, PgLedger, refundOrphanedEscrows, type Ledger } from "./
 import { FileAuditLog, PgAuditLog, type AuditSink } from "./audit/auditLog.js";
 import { InMemoryGameRepository, PgGameRepository, type GameRepository } from "./persistence/GameRepository.js";
 import { InMemoryTournamentStore, PgTournamentStore, type TournamentStore } from "./tournaments/TournamentStore.js";
-import { TournamentManager } from "./tournaments/TournamentManager.js";
+import { CustomTournamentError, TournamentManager } from "./tournaments/TournamentManager.js";
 import { SngError } from "./tournaments/SitAndGo.js";
 import { migrate } from "./db/migrate.js";
 import { makeAnalysisClient } from "./anticheat/analysisClient.js";
@@ -132,7 +132,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool });
+      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo });
       return;
     }
     if (req.url === "/health") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
@@ -183,6 +183,12 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     emitLobby: (tables) => io.emit("sng:lobby", tables),
   });
   games.onGameFinished((g) => tournaments.onGameFinished(g));
+  // Drapeau d'affichage : dernier connu par joueur (profil porté par le JWT).
+  const flags = new Map<string, string>();
+  games.setProfileLookup((userId) => {
+    const flag = flags.get(userId);
+    return flag ? { flag } : {};
+  });
 
   // ─── Authentification au handshake ────────────────────────────────────────
   io.use(async (socket, next) => {
@@ -303,8 +309,29 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         if (!err) s.data.lag.addRtt(performance.now() - t0);
       });
     }
+    broadcastNet();
   }, cfg.lagProbeIntervalMs);
   probeTimer.unref();
+
+  /**
+   * Ping affiché dans le HUD : meilleur RTT récent de chaque joueur (tous ses sockets),
+   * mesuré par le serveur ; au plus ~2 s de retard.
+   */
+  function broadcastNet(): void {
+    const rooms = games.list();
+    if (rooms.length === 0) return;
+    const best = new Map<string, number>();
+    for (const s of io.of("/").sockets.values()) {
+      const rtt = s.data.user ? s.data.lag.rttMs : null;
+      if (rtt === null) continue;
+      const prev = best.get(s.data.user.userId);
+      if (prev === undefined || rtt < prev) best.set(s.data.user.userId, rtt);
+    }
+    for (const room of rooms) {
+      const at = (u: string) => { const v = best.get(u); return v === undefined ? null : Math.round(v); };
+      io.to(room.id).emit("game:net", { gameId: room.id, rttMs: { w: at(room.white.userId), b: at(room.black.userId) } });
+    }
+  }
 
   const welcomeFaucet = async (userId: string) => {
     if (cfg.playFaucetCents <= 0) return;
@@ -316,6 +343,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   io.on("connection", (socket) => {
     const user = socket.data.user;
+    if (user.flag) flags.set(user.userId, user.flag);
     void socket.join(userRoom(user.userId));
     socket.emit("session:mode", socket.data.mode);
     void welcomeFaucet(user.userId).catch((e) => console.error("[faucet]", e));
@@ -447,6 +475,64 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       } catch (e) {
         reply(sngError(e));
       }
+    }));
+
+    /** Contrôles communs avant toute inscription PLAY (création ou lien d'invitation). */
+    const canJoinTournament = (): string | null => {
+      const gate = canPlay(user, "PLAY", socket.data.mode);
+      if (!gate.ok) return gate.code;
+      if (games.activeGameOf(user.userId)) return "IN_GAME";
+      if (matchmaker.isQueued(user.userId)) return "ALREADY_QUEUED";
+      if (tournaments.isBusy(user.userId)) return "IN_TOURNAMENT";
+      return null;
+    };
+    const customError = (e: unknown): SngAck =>
+      e instanceof CustomTournamentError ? { ok: false, code: e.code }
+        : (e as Error).message === "UNKNOWN_TOURNAMENT" ? { ok: false, code: "UNKNOWN_TOURNAMENT" } : sngError(e);
+
+    socket.on("sng:create", guard(socket, async (raw: unknown, ack: unknown) => {
+      const reply = sngReply(ack);
+      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown } | null;
+      if (!p || typeof p !== "object" || typeof p.timeControl !== "string" || !(p.timeControl in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const blocked = canJoinTournament();
+      if (blocked) return reply({ ok: false, code: blocked });
+      const timeControl = p.timeControl as TimeControlId;
+      const rating = (await repo.getRatings(user.userId))[timeControl].rating;
+      try {
+        const snapshot = await tournaments.createCustom(
+          { size: p.size as 4 | 6 | 8, timeControl, buyInCents: p.buyInCents as number, name: typeof p.name === "string" ? p.name : undefined },
+          user.userId, rating,
+        );
+        io.in(userRoom(user.userId)).socketsJoin(tournamentRoom(snapshot.id));
+        reply({ ok: true, snapshot });
+      } catch (e) {
+        reply(customError(e));
+      }
+    }));
+
+    socket.on("sng:join", guard(socket, async (raw: unknown, ack: unknown) => {
+      const reply = sngReply(ack);
+      const tid = (raw as { tournamentId?: unknown } | null)?.tournamentId;
+      const t = typeof tid === "string" ? tournaments.get(tid) : undefined;
+      if (!t) return reply({ ok: false, code: "UNKNOWN_TOURNAMENT" });
+      const snap = t.snapshot();
+      if (snap.currency !== "PLAY") return reply({ ok: false, code: "BAD_PAYLOAD" }); // l'argent réel passe par les tables officielles
+      const blocked = canJoinTournament();
+      if (blocked) return reply({ ok: false, code: blocked });
+      const rating = (await repo.getRatings(user.userId))[snap.timeControl].rating;
+      try {
+        io.in(userRoom(user.userId)).socketsJoin(tournamentRoom(snap.id));
+        reply({ ok: true, snapshot: await tournaments.registerById(snap.id, user.userId, rating) });
+      } catch (e) {
+        reply(customError(e));
+      }
+    }));
+
+    socket.on("sng:get", guard(socket, (raw: unknown, ack: unknown) => {
+      const reply = sngReply(ack);
+      const tid = (raw as { tournamentId?: unknown } | null)?.tournamentId;
+      const t = typeof tid === "string" ? tournaments.get(tid) : undefined;
+      reply(t ? { ok: true, snapshot: t.snapshot() } : { ok: false, code: "UNKNOWN_TOURNAMENT" });
     }));
 
     socket.on("sng:unregister", guard(socket, async (raw: unknown, ack: unknown) => {

@@ -1,99 +1,158 @@
 "use client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { Color, QueueJoinPayload } from "@chessarena/shared";
+import type { Color, GameStartEvent, GameStateEvent, QueueJoinPayload } from "@chessarena/shared";
 import { getSocket, type AuthProvider } from "../lib/socket";
-import { gameReducer, initialView, isMyTurn } from "../lib/gameReducer";
-import { bestSample, displayedClocks, offsetFromPing, type OffsetSample } from "../lib/clock";
-import { resolvePremove, tryLocalMove, type Premove, type PromotionPiece } from "../lib/moves";
+import { gameReducer, initialView, type PendingMove } from "../lib/gameReducer";
+import { ClockSync, displayedClocks } from "../lib/clock";
+import { enqueuePremove, takeNextPremove, tryLocalMove, type Premove, type PromotionPiece } from "../lib/moves";
+import { moveSound, sound } from "../lib/sound";
 
 /**
  * Hook de partie temps réel.
- *  - synchronisation d'horloge (offset serveur) et extrapolation locale de la pendule ;
+ *
+ *  - synchro d'horloge haute précision (base monotone, rafale de pings à la connexion) ;
  *  - coups optimistes avec rollback sur refus serveur (ack) ;
- *  - pré-moves (1 en attente, exécuté dès que le trait revient) ;
+ *  - file de pré-moves ILLIMITÉE, exécutée DANS le gestionnaire de `game:state` :
+ *    le coup part dans le même tick que la réception de la position, sans attendre
+ *    un rendu React (0 frame de latence côté client) ;
+ *  - sons (coup, prise, roque, échec, début et fin de partie) ;
  *  - signaux de focus (visibilitychange / blur), dédupliqués.
+ *
+ * L'état « chaud » (position serveur, coup en attente, file de pré-moves) vit dans des refs
+ * mises à jour de façon synchrone : deux messages reçus dans le même tick voient un état cohérent.
  */
 export function useGameSocket(userId: string, getAuth: AuthProvider) {
   const socket = getSocket(getAuth);
   const [view, dispatch] = useReducer(gameReducer, initialView);
-  const viewRef = useRef(view);
-  viewRef.current = view;
-  const offsetRef = useRef(0);
+  const syncRef = useRef(new ClockSync());
+
+  const hot = useRef<{
+    start: GameStartEvent | null;
+    server: GameStateEvent | null;
+    pending: PendingMove | null;
+    premoves: Premove[];
+    myColor: Color;
+    playing: boolean;
+  }>({ start: null, server: null, pending: null, premoves: [], myColor: "w", playing: false });
+
+  const setPremoves = useCallback((premoves: Premove[]) => {
+    hot.current.premoves = premoves;
+    dispatch({ type: "set_premoves", premoves });
+  }, []);
+
+  /** Envoi immédiat d'un coup déjà validé localement. */
+  const emitMove = useCallback((uci: string, fen: string, ply: number) => {
+    const h = hot.current;
+    if (!h.start) return;
+    const pending = { uci, ply, fen };
+    h.pending = pending;
+    dispatch({ type: "optimistic_move", pending });
+    socket.emit("game:move", { gameId: h.start.gameId, uci, ply }, (ack) => {
+      if (ack.ok) {
+        if (hot.current.pending?.ply === ack.ply - 1) hot.current.pending = null;
+        dispatch({ type: "move_acked", ply: ack.ply });
+      } else {
+        hot.current.pending = null;
+        setPremoves([]); // la position a divergé : la suite prévue n'a plus de sens
+        dispatch({ type: "move_rejected", code: ack.code });
+      }
+    });
+  }, [socket, setPremoves]);
+
+  const myTurnNow = () => {
+    const h = hot.current;
+    return h.playing && !!h.server && h.server.turn === h.myColor && !h.pending;
+  };
+
+  /** Exécute la tête de la file de pré-moves si c'est au joueur de jouer. */
+  const firePremove = useCallback(() => {
+    const h = hot.current;
+    if (!myTurnNow() || h.premoves.length === 0 || !h.server) return;
+    const { move, rest } = takeNextPremove(h.server.fen, h.premoves);
+    setPremoves(rest);
+    if (!move) return;
+    sound.play(moveSound(move));
+    emitMove(move.uci, move.fen, h.server.ply);
+  }, [emitMove, setPremoves]);
 
   // ─── Connexion & événements serveur ──────────────────────────────────────
   useEffect(() => {
     const onConnect = () => dispatch({ type: "connected" });
-    const onDisconnect = () => dispatch({ type: "disconnected" });
+    const onDisconnect = () => { hot.current.pending = null; dispatch({ type: "disconnected" }); };
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("queue:joined", (p) => dispatch({ type: "queued", timeControl: p.timeControl, stake: p.stake }));
     socket.on("queue:left", () => dispatch({ type: "queue_left" }));
-    socket.on("game:start", (start) => dispatch({ type: "start", start, userId }));
-    socket.on("game:state", (state) => dispatch({ type: "state", state }));
+    socket.on("game:start", (start) => {
+      const h = hot.current;
+      const same = h.start?.gameId === start.gameId;
+      h.start = start;
+      h.myColor = start.black.userId === userId ? "b" : "w";
+      h.playing = true;
+      h.pending = null;
+      if (!same) { h.server = null; h.premoves = []; sound.play("start"); }
+      dispatch({ type: "start", start, userId });
+    });
+    socket.on("game:state", (state) => {
+      const h = hot.current;
+      if (!h.start || state.gameId !== h.start.gameId) return;
+      if (h.server && state.ply < h.server.ply) return;
+      const prev = h.server;
+      const mine = h.pending && state.ply === h.pending.ply + 1 && state.lastMoveUci === h.pending.uci;
+      if (prev && state.ply === prev.ply + 1 && state.lastMoveUci && !mine) {
+        const u = state.lastMoveUci;
+        const m = tryLocalMove(prev.fen, u.slice(0, 2), u.slice(2, 4), (u[4] as PromotionPiece | undefined) || undefined);
+        if (m) sound.play(moveSound(m));
+      }
+      h.server = state;
+      h.pending = null;
+      dispatch({ type: "state", state });
+      firePremove(); // même tick : 0 frame de latence perçue
+    });
     socket.on("game:presence", (presence) => dispatch({ type: "presence", presence, userId }));
-    socket.on("game:over", (over) => dispatch({ type: "over", over }));
+    socket.on("game:net", (net) => dispatch({ type: "net", net }));
     socket.on("game:draw", (d) => dispatch({ type: "draw", gameId: d.gameId, offeredBy: d.offeredBy }));
+    socket.on("game:over", (over) => {
+      const h = hot.current;
+      if (h.start?.gameId === over.gameId) {
+        h.playing = false;
+        h.premoves = [];
+        h.pending = null;
+        if (over.termination !== "aborted") {
+          const won = over.result === "1/2-1/2" ? null : (over.result === "1-0") === (h.myColor === "w");
+          sound.play(won === null ? "draw" : won ? "win" : "loss");
+        }
+      }
+      dispatch({ type: "over", over });
+    });
     socket.on("error", (e) => dispatch({ type: "error", code: e.code }));
     socket.on("session:mode", (session) => dispatch({ type: "session_mode", session }));
     if (socket.connected) onConnect();
     return () => {
       for (const ev of ["connect", "disconnect", "queue:joined", "queue:left", "game:start", "game:state",
-        "game:presence", "game:over", "game:draw", "error", "session:mode"] as const) socket.off(ev);
+        "game:presence", "game:net", "game:draw", "game:over", "error", "session:mode"] as const) socket.off(ev);
     };
-  }, [socket, userId]);
+  }, [socket, userId, firePremove]);
 
-  // ─── Synchronisation d'horloge (affichage) ───────────────────────────────
+  // ─── Synchronisation d'horloge ───────────────────────────────────────────
+  const [localRtt, setLocalRtt] = useState<number | null>(null);
   useEffect(() => {
-    const samples: OffsetSample[] = [];
+    const sync = syncRef.current;
     const ping = () => {
       if (!socket.connected) return;
-      const t0 = Date.now();
-      socket.emit("time:ping", t0, (serverTs) => {
-        samples.push(offsetFromPing(t0, Date.now(), serverTs));
-        if (samples.length > 8) samples.shift();
-        offsetRef.current = bestSample(samples)?.offsetMs ?? 0;
+      const t0 = performance.now();
+      socket.emit("time:ping", Date.now(), (serverTs) => {
+        sync.add(t0, performance.now(), serverTs);
+        setLocalRtt(sync.rttMs === null ? null : Math.round(sync.rttMs));
       });
     };
-    ping();
-    const id = setInterval(ping, 5_000);
-    socket.on("connect", ping);
-    return () => { clearInterval(id); socket.off("connect", ping); };
+    // rafale à la connexion (le meilleur des 6 échantillons fixe l'offset), puis entretien
+    const burst = () => { for (let i = 0; i < 6; i++) setTimeout(ping, i * 120); };
+    burst();
+    const id = setInterval(ping, 3_000);
+    socket.on("connect", burst);
+    return () => { clearInterval(id); socket.off("connect", burst); };
   }, [socket]);
-
-  // ─── Envoi d'un coup (optimiste) ─────────────────────────────────────────
-  const sendMove = useCallback((from: string, to: string, promotion?: PromotionPiece): boolean => {
-    const v = viewRef.current;
-    if (!v.start || !v.server || !isMyTurn(v)) return false;
-    const local = tryLocalMove(v.server.fen, from, to, promotion);
-    if (!local) return false;
-    const ply = v.server.ply;
-    dispatch({ type: "optimistic_move", pending: { uci: local.uci, ply, fen: local.fen } });
-    socket.emit("game:move", { gameId: v.start.gameId, uci: local.uci, ply }, (ack) => {
-      if (ack.ok) dispatch({ type: "move_acked", ply: ack.ply });
-      else dispatch({ type: "move_rejected", code: ack.code });
-    });
-    return true;
-  }, [socket]);
-
-  /** Coup joué par l'utilisateur : coup immédiat si c'est son tour, sinon pré-move. */
-  const playOrPremove = useCallback((from: string, to: string, promotion?: PromotionPiece): boolean => {
-    const v = viewRef.current;
-    if (v.phase !== "playing") return false;
-    if (isMyTurn(v)) return sendMove(from, to, promotion);
-    dispatch({ type: "set_premove", premove: { from, to, promotion } });
-    return false; // la pièce revient à sa case ; le pré-move est surligné
-  }, [sendMove]);
-
-  const cancelPremove = useCallback(() => dispatch({ type: "set_premove", premove: null }), []);
-
-  // ─── Exécution du pré-move dès que le trait revient ──────────────────────
-  useEffect(() => {
-    const pm: Premove | null = view.premove;
-    if (!pm || !view.server || !isMyTurn(view)) return;
-    const resolved = resolvePremove(view.server.fen, pm);
-    if (!resolved) return void dispatch({ type: "set_premove", premove: null });
-    sendMove(pm.from, pm.to, (resolved.uci[4] as PromotionPiece | undefined) ?? undefined);
-  }, [view, sendMove]);
 
   // ─── Signaux de focus (signal faible anti-triche, jamais une preuve) ─────
   useEffect(() => {
@@ -119,49 +178,78 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
   }, [socket, view.phase, view.start]);
 
   // ─── Actions ─────────────────────────────────────────────────────────────
-  /** Rejoint une file ; si l'on attendait déjà dans une AUTRE file (cadence ou mise), on la quitte d'abord. */
+  /** Coup de l'utilisateur : joué tout de suite si c'est son tour, sinon ajouté à la file de pré-moves. */
+  const playOrPremove = useCallback((from: string, to: string, promotion?: PromotionPiece): boolean => {
+    const h = hot.current;
+    if (!h.playing || !h.server) return false;
+    if (myTurnNow() && h.premoves.length === 0) {
+      const local = tryLocalMove(h.server.fen, from, to, promotion);
+      if (!local) return false;
+      sound.play(moveSound(local));
+      emitMove(local.uci, local.fen, h.server.ply);
+      return true;
+    }
+    const base = h.pending?.fen ?? h.server.fen;
+    const next = enqueuePremove(base, h.premoves, { from, to, promotion }, h.myColor);
+    if (!next) return false;
+    sound.play("premove");
+    setPremoves(next);
+    firePremove(); // cas limite : le trait est revenu pendant que la file n'était pas vide
+    return true;
+  }, [emitMove, setPremoves, firePremove]);
+
+  const cancelPremoves = useCallback(() => {
+    if (hot.current.premoves.length) setPremoves([]);
+  }, [setPremoves]);
+
   const joinQueue = useCallback((p: QueueJoinPayload) => {
     dispatch({ type: "clear_error" });
-    if (viewRef.current.phase === "queued") socket.emit("queue:leave");
     socket.emit("queue:join", p);
   }, [socket]);
   const leaveQueue = useCallback(() => socket.emit("queue:leave"), [socket]);
   const resign = useCallback(() => {
-    const id = viewRef.current.start?.gameId;
+    const id = hot.current.start?.gameId;
     if (id) socket.emit("game:resign", { gameId: id });
   }, [socket]);
 
-  /** Nulle : proposer (ou accepter si l'adversaire propose déjà), accepter, refuser. */
+  /** Nulle : proposer (ou accepter si l'adversaire la propose déjà), accepter, refuser. */
   const draw = useCallback((action: "offer" | "accept" | "decline") => {
-    const id = viewRef.current.start?.gameId;
+    const id = hot.current.start?.gameId;
     if (id) socket.emit("game:draw", { gameId: id, action });
   }, [socket]);
 
-  return { view, offsetRef, joinQueue, leaveQueue, playOrPremove, cancelPremove, resign, draw };
+  return { view, socket, sync: syncRef.current, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw };
 }
 
 /**
- * Pendules affichées, extrapolées à chaque frame. Ne re-rend que si la valeur
- * visible change (dixième de seconde) pour éviter 60 rendus/s inutiles.
+ * Pendules extrapolées. Ne provoque AUCUN rendu React par frame : `subscribe` reçoit
+ * les valeurs à chaque frame et les composants écrivent directement dans le DOM.
  */
-export function useDisplayedClocks(
-  state: { whiteMs: number; blackMs: number; turn: Color; ply: number; serverTs: number } | null,
-  offsetRef: React.RefObject<number>,
+export function useClockTicker(
+  state: Pick<GameStateEvent, "whiteMs" | "blackMs" | "turn" | "ply" | "serverTs"> | null,
+  sync: ClockSync,
   stopped: boolean,
-): Record<Color, number> {
-  const [clocks, setClocks] = useState<Record<Color, number>>({ w: state?.whiteMs ?? 0, b: state?.blackMs ?? 0 });
+) {
+  const listeners = useRef(new Set<(c: Record<Color, number>) => void>());
+  const latest = useRef<Record<Color, number>>({ w: state?.whiteMs ?? 0, b: state?.blackMs ?? 0 });
+
   useEffect(() => {
     if (!state) return;
     let raf = 0;
-    let last = "";
     const loop = () => {
-      const c = displayedClocks(state, offsetRef.current ?? 0, Date.now(), stopped);
-      const key = `${Math.floor(c.w / 100)}|${Math.floor(c.b / 100)}`;
-      if (key !== last) { last = key; setClocks(c); }
+      const now = performance.now();
+      const c = displayedClocks(state, sync.offsetMs, now, stopped);
+      latest.current = c;
+      for (const l of listeners.current) l(c);
       if (!stopped) raf = requestAnimationFrame(loop);
     };
     loop();
     return () => cancelAnimationFrame(raf);
-  }, [state, stopped, offsetRef]);
-  return clocks;
+  }, [state, stopped, sync]);
+
+  return useCallback((fn: (c: Record<Color, number>) => void) => {
+    listeners.current.add(fn);
+    fn(latest.current);
+    return () => { listeners.current.delete(fn); };
+  }, []);
 }

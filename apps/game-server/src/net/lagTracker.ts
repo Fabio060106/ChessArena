@@ -18,6 +18,11 @@ export class LagTracker {
     if (this.samples.length > this.window) this.samples.shift();
   }
 
+  /** Meilleur aller-retour récent (ms), null tant qu'aucune mesure. Affiché aux joueurs. */
+  get rttMs(): number | null {
+    return this.samples.length === 0 ? null : Math.min(...this.samples);
+  }
+
   /** Lag aller simple estimé (ms). 0 tant qu'aucune mesure. */
   get oneWayMs(): number {
     if (this.samples.length === 0) return 0;

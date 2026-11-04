@@ -1,0 +1,205 @@
+"use client";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { GameHistoryDetail, GameHistoryItem, TimeControlId } from "@chessarena/shared";
+import { GameBoard } from "../../components/GameBoard";
+import { MoveList } from "../../components/MoveList";
+import { PlayerCard } from "../../components/PlayerCard";
+import { useSettings } from "../../lib/settings";
+import { material } from "../../lib/material";
+import { materialAdvantage } from "../../lib/profile";
+import { formatThink, relativeDate, replayFromPgn } from "../../lib/replay";
+
+const TC: Record<TimeControlId, string> = { bullet_1_0: "Bullet 1+0", blitz_3_0: "Blitz 3+0", blitz_3_2: "Blitz 3+2", rapid_5_0: "Rapide 5+0" };
+const TERM: Record<string, string> = {
+  checkmate: "échec et mat", resignation: "abandon", timeout: "temps écoulé", abandon: "forfait", stalemate: "pat",
+  repetition: "répétition", insufficient_material: "matériel insuffisant", fifty_moves: "50 coups", aborted: "annulée",
+  agreement: "accord mutuel", timeout_vs_insufficient_material: "temps, matériel insuffisant",
+};
+const OUTCOME = {
+  win: { label: "Victoire", cls: "bg-win/15 text-win" },
+  loss: { label: "Défaite", cls: "bg-danger/15 text-danger" },
+  draw: { label: "Nulle", cls: "bg-surface-2 text-text" },
+  aborted: { label: "Annulée", cls: "bg-surface-2 text-muted" },
+} as const;
+
+/** Historique des parties du joueur connecté, avec relecture coup par coup. */
+export default function HistoryPage() {
+  const router = useRouter();
+  const [me, setMe] = useState<string | null>(null);
+  const [games, setGames] = useState<GameHistoryItem[] | null>(null);
+  const [more, setMore] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/session", { cache: "no-store" })
+      .then(async (r) => (r.ok ? setMe(((await r.json()) as { userId: string }).userId) : router.replace(`/?next=${encodeURIComponent(window.location.pathname + window.location.search)}`)))
+      .catch(() => router.replace(`/?next=${encodeURIComponent(window.location.pathname + window.location.search)}`));
+  }, [router]);
+
+  const load = useCallback(async (before?: string) => {
+    setError(null);
+    const r = await fetch(`/api/history${before ? `?before=${encodeURIComponent(before)}` : ""}`, { cache: "no-store" }).catch(() => null);
+    if (!r?.ok) {
+      setError(r?.status === 503 ? "L'historique nécessite la base de données du serveur." : "Impossible de charger l'historique (le serveur se réveille peut-être : réessaie dans une minute).");
+      setGames((g) => g ?? []);
+      return;
+    }
+    const page = ((await r.json()) as { games: GameHistoryItem[] }).games;
+    setGames((g) => [...(before ? g ?? [] : []), ...page]);
+    setMore(page.length === 30);
+    if (!before && page[0]) setSelected((s) => s ?? page[0]!.gameId);
+  }, []);
+  useEffect(() => { if (me) void load(); }, [me, load]);
+
+  const stats = useMemo(() => {
+    const played = (games ?? []).filter((g) => g.outcome !== "aborted");
+    return { n: played.length, w: played.filter((g) => g.outcome === "win").length, d: played.filter((g) => g.outcome === "draw").length, l: played.filter((g) => g.outcome === "loss").length };
+  }, [games]);
+
+  return (
+    <main className="arena-app">
+      <header className="mx-auto flex h-13 max-w-[1400px] items-center gap-3 px-3 lg:px-6">
+        <a href="/play" className="font-display text-lg font-bold tracking-tight">Chess<span className="text-neon">Arena</span></a>
+        <span className="text-sm text-muted">· Mes parties</span>
+        <a href="/play" className="neon-btn ml-auto rounded-lg px-3 py-1.5 text-sm font-semibold">Jouer</a>
+      </header>
+
+      <div className="mx-auto grid max-w-[1400px] gap-4 px-2 pb-8 sm:px-3 lg:grid-cols-[380px_minmax(0,1fr)] lg:px-6">
+        <section className="flex flex-col gap-3">
+          {stats.n > 0 && (
+            <div className="panel grid grid-cols-4 gap-2 p-3 text-center">
+              <Stat label="Parties" value={stats.n} />
+              <Stat label="Victoires" value={stats.w} cls="text-win" />
+              <Stat label="Nulles" value={stats.d} />
+              <Stat label="Défaites" value={stats.l} cls="text-danger" />
+            </div>
+          )}
+          {error && <p role="alert" className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{error}</p>}
+          {games === null && <p className="px-1 text-sm text-muted">Chargement…</p>}
+          {games?.length === 0 && !error && (
+            <div className="panel p-4 text-sm text-muted">Aucune partie pour l'instant. <a href="/play" className="text-neon underline">Joue ta première partie</a>.</div>
+          )}
+          <ul className="flex flex-col gap-1.5">
+            {games?.map((g) => (
+              <li key={g.gameId}>
+                <button type="button" onClick={() => setSelected(g.gameId)}
+                  className={`panel flex w-full items-center gap-3 p-3 text-left transition ${selected === g.gameId ? "border-neon/60 ring-1 ring-neon/30" : "hover:border-line"}`}>
+                  <span className={`w-20 shrink-0 rounded-md px-2 py-1 text-center text-xs font-semibold ${OUTCOME[g.outcome].cls}`}>{OUTCOME[g.outcome].label}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className={`inline-block size-2.5 rounded-sm border border-line ${g.color === "w" ? "bg-[#E7ECF3]" : "bg-[#1C2233]"}`} aria-label={g.color === "w" ? "Blancs" : "Noirs"} />
+                      <span className="truncate font-semibold">{g.opponent}</span>
+                      {g.opponentRating !== null && <span className="tabular text-xs text-muted">{g.opponentRating}</span>}
+                    </span>
+                    <span className="block text-xs text-muted">{TC[g.timeControl]} · {TERM[g.termination] ?? g.termination} · {Math.ceil(g.plies / 2)} coups{g.tournamentId ? " · tournoi" : ""}</span>
+                  </span>
+                  <span className="shrink-0 text-right text-xs">
+                    {g.ratingBefore !== null && g.ratingAfter !== null && (
+                      <span className={`tabular block font-semibold ${g.ratingAfter >= g.ratingBefore ? "text-win" : "text-danger"}`}>
+                        {g.ratingAfter >= g.ratingBefore ? "+" : ""}{g.ratingAfter - g.ratingBefore}
+                      </span>
+                    )}
+                    <span className="text-muted">{relativeDate(g.endedAt)}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {games && games.length > 0 && more && (
+            <button type="button" onClick={() => void load(games[games.length - 1]!.endedAt)} className="rounded-lg border border-line px-3 py-2 text-sm text-muted hover:text-text">
+              Parties plus anciennes
+            </button>
+          )}
+        </section>
+
+        <section>{selected && me ? <Replay key={selected} gameId={selected} me={me} /> : null}</section>
+      </div>
+    </main>
+  );
+}
+
+function Stat({ label, value, cls = "" }: { label: string; value: number; cls?: string }) {
+  return (
+    <div>
+      <p className={`tabular font-display text-xl font-bold ${cls}`}>{value}</p>
+      <p className="text-[11px] uppercase tracking-wider text-muted">{label}</p>
+    </div>
+  );
+}
+
+/** Relecture d'une partie : plateau, navigation ◀ ▶ (et flèches du clavier), liste des coups cliquable. */
+function Replay({ gameId, me }: { gameId: string; me: string }) {
+  const [g, setG] = useState<GameHistoryDetail | null>(null);
+  const [err, setErr] = useState(false);
+  const [ply, setPly] = useState(0);
+  const [settings] = useSettings();
+
+  useEffect(() => {
+    fetch(`/api/history/${gameId}`, { cache: "no-store" })
+      .then(async (r) => {
+        if (!r.ok) throw new Error();
+        const d = (await r.json()) as GameHistoryDetail;
+        setG(d);
+        setPly(replayFromPgn(d.pgn).length - 1); // on arrive sur la position finale
+      })
+      .catch(() => setErr(true));
+  }, [gameId]);
+
+  const steps = useMemo(() => (g ? replayFromPgn(g.pgn) : []), [g]);
+  const last = steps.length - 1;
+  const go = useCallback((p: number) => setPly(Math.max(0, Math.min(last, p))), [last]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") go(ply - 1);
+      else if (e.key === "ArrowRight") go(ply + 1);
+      else if (e.key === "ArrowUp" || e.key === "Home") go(0);
+      else if (e.key === "ArrowDown" || e.key === "End") go(last);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [go, ply, last]);
+
+  if (err) return <p className="panel p-4 text-sm text-danger">Impossible de charger cette partie.</p>;
+  if (!g) return <p className="panel p-4 text-sm text-muted">Chargement de la partie…</p>;
+
+  const step = steps[ply]!;
+  const mat = material(step.fen);
+  const opp = g.color === "w" ? "b" : "w";
+  const thinkOf = (p: number) => formatThink(g.moveTimesMs[p - 1]);
+  const btn = "flex-1 rounded-lg bg-surface-2 px-3 py-2 text-lg text-muted hover:text-text disabled:opacity-30";
+
+  return (
+    <div className="mx-auto flex w-full flex-col gap-1.5" style={{ maxWidth: "min(100%, max(320px, calc(100dvh - 220px)))" }}>
+      <PlayerCard userId={g.opponent} rating={g.opponentRating ?? undefined} 
+        materialAdvantage={materialAdvantage(step.fen, opp)} captured={mat[opp].captured}
+        clock={<span className="tabular text-xs text-muted">{ply > 0 && ply % 2 === (opp === "w" ? 1 : 0) ? thinkOf(ply) : ""}</span>} />
+      <GameBoard
+        fen={step.fen} serverFen={step.fen} orientation={g.color} myColor={g.color} interactive={false} myTurn={false}
+        lastMove={step.uci} premoves={[]} theme={settings.boardTheme} coordinates={settings.coordinates}
+        onMove={() => false} onCancelPremoves={() => {}}
+      />
+      <PlayerCard userId={me} isMe rating={g.ratingBefore ?? undefined} 
+        materialAdvantage={materialAdvantage(step.fen, g.color)} captured={mat[g.color].captured}
+        clock={<span className="tabular text-xs text-muted">{ply > 0 && ply % 2 === (g.color === "w" ? 1 : 0) ? thinkOf(ply) : ""}</span>} />
+      <div className="flex gap-1.5">
+        <button type="button" className={btn} onClick={() => go(0)} disabled={ply === 0} aria-label="Début">⏮</button>
+        <button type="button" className={btn} onClick={() => go(ply - 1)} disabled={ply === 0} aria-label="Coup précédent">◀</button>
+        <button type="button" className={btn} onClick={() => go(ply + 1)} disabled={ply === last} aria-label="Coup suivant">▶</button>
+        <button type="button" className={btn} onClick={() => go(last)} disabled={ply === last} aria-label="Fin">⏭</button>
+      </div>
+      <div className="panel p-3">
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <p className="text-sm font-semibold">{OUTCOME[g.outcome].label} · {g.result} <span className="font-normal text-muted">({TERM[g.termination] ?? g.termination})</span></p>
+          <p className="text-xs text-muted">{TC[g.timeControl]} · {new Date(g.endedAt).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })}</p>
+        </div>
+        <MoveList moves={steps.slice(1).map((s) => s.san)} active={ply - 1} onSelect={(p) => go(p + 1)} />
+        <p className="mt-2 text-[11px] text-muted">Flèches ← → du clavier pour avancer coup par coup.</p>
+      </div>
+    </div>
+  );
+}

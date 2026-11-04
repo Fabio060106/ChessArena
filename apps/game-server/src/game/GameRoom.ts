@@ -8,6 +8,8 @@ import { ServerClock } from "./clock.js";
 export interface Seat {
   userId: string;
   rating: number;
+  /** drapeau d'affichage (profil), facultatif */
+  flag?: string;
 }
 
 export interface FinishedGame {

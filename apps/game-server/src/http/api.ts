@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import jwt from "jsonwebtoken";
 import type pg from "pg";
+import type { GameRepository } from "../persistence/GameRepository.js";
 import type { ArenaJwtClaims, DecisionRequest, RgLimitKind } from "@chessarena/shared";
 import type { GameServerConfig } from "../config.js";
 import { CaseAlreadyResolvedError, CaseNotFoundError, type ModerationService } from "../fairplay/ModerationService.js";
@@ -52,6 +53,8 @@ export interface ApiDeps {
   geo?: GeoFilter;
   exporter?: RegulatoryExporter | null;
   pool?: pg.Pool | null;
+  /** historique des parties */
+  repo?: GameRepository | null;
 }
 
 class HttpError extends Error {
@@ -236,6 +239,22 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
         return true;
       }
       throw new HttpError(404, "NOT_FOUND");
+    }
+
+    // ─── Compte joueur : historique des parties ──────────────────────────────────
+    if (url.pathname === "/account/games" && req.method === "GET") {
+      const limit = Number(url.searchParams.get("limit") ?? 30);
+      const before = url.searchParams.get("before");
+      if (before !== null && Number.isNaN(Date.parse(before))) throw new HttpError(400, "BAD_CURSOR");
+      send(200, { games: await need(d.repo).listGames(claims.sub, Number.isFinite(limit) ? limit : 30, before ?? undefined) });
+      return true;
+    }
+    const gm = url.pathname.match(/^\/account\/games\/([0-9a-f-]{36})$/i);
+    if (gm && req.method === "GET") {
+      const g = await need(d.repo).getGame(claims.sub, gm[1]!);
+      if (!g) throw new HttpError(404, "NOT_FOUND");
+      send(200, g);
+      return true;
     }
 
     // ─── Compte joueur : jeu responsable ─────────────────────────────────────────

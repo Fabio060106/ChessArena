@@ -47,6 +47,9 @@ export interface SitAndGoConfig {
   rakeBps: number;
   payoutBps: number[];
   sponsorAddedCents?: Cents;
+  /** tournoi créé par un joueur : son identifiant, et le nom choisi */
+  createdBy?: string | null;
+  name?: string | null;
 }
 
 export interface StartGameRequest {
@@ -148,7 +151,7 @@ export class SitAndGo {
     if (cfg.payoutBps.reduce((a, b) => a + b, 0) !== 10_000) throw new SngError("INVALID_CONFIG", "structure de gains ≠ 100 %");
     if (cfg.payoutBps.length > 2) throw new SngError("INVALID_CONFIG", "KO sans petite finale : 2 places payées au plus");
     this.id = cfg.id;
-    this.cfg = { sponsorAddedCents: 0, ...cfg };
+    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, ...cfg };
     this.ports = ports;
     this.now = ports.now ?? (() => Date.now());
     this.random = ports.random ?? Math.random;
@@ -450,7 +453,8 @@ export class SitAndGo {
   snapshot(): SngSnapshot {
     const rake = this.status === "finished" ? this.rakeCents : computeRake(this.cfg.buyInCents * this.cfg.size, this.cfg.rakeBps);
     return {
-      id: this.id, formatId: this.cfg.formatId, size: this.cfg.size, timeControl: this.cfg.timeControl,
+      id: this.id, formatId: this.cfg.formatId, createdBy: this.cfg.createdBy, name: this.cfg.name,
+      size: this.cfg.size, timeControl: this.cfg.timeControl,
       currency: this.cfg.currency, buyInCents: this.cfg.buyInCents, sponsorAddedCents: this.cfg.sponsorAddedCents,
       rakeBps: this.cfg.rakeBps, payoutBps: [...this.cfg.payoutBps], status: this.status,
       players: [...this.entries.values()]

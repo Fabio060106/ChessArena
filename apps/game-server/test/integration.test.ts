@@ -9,7 +9,7 @@ import { join } from "node:path";
 import jwt from "jsonwebtoken";
 import { io as connect, type Socket } from "socket.io-client";
 import type {
-  ArenaJwtClaims, ClientToServerEvents, GameOverEvent, GameStartEvent, MoveAck, PresenceEvent, ServerToClientEvents,
+  ArenaJwtClaims, ClientToServerEvents, GameOverEvent, GameStartEvent, MoveAck, PresenceEvent, ServerToClientEvents, SngAck, SngSnapshot,
 } from "@chessarena/shared";
 import { createGameServer, type GameServer } from "../src/app.js";
 import { defaultConfig, type GameServerConfig } from "../src/config.js";
@@ -241,5 +241,86 @@ describe("partie complète", () => {
     expect(m.moveHandlingMs.count).toBeGreaterThan(0);
     expect(typeof m.moveHandlingMs.p99).toBe("number");
     expect(m).toHaveProperty("eventLoopDelayMs");
+  });
+});
+
+describe("tournois créés par les joueurs, historique, HUD", () => {
+  const sng = <E extends "sng:create" | "sng:join" | "sng:get">(c: Client, ev: E, p: Parameters<ClientToServerEvents[E]>[0]) =>
+    new Promise<SngAck>((res) => (c.emit as (e: string, p: unknown, cb: (r: SngAck) => void) => void)(ev, p, res));
+
+  it("créer un tournoi gratuit à 4, le rejoindre par son id ; il démarre quand il est complet", async () => {
+    const names = ["cr-ana", "cr-ben", "cr-cleo", "cr-dan"];
+    const cs = names.map((n) => client({ token: token({ sub: n, flag: "FR" }) }));
+    await Promise.all(cs.map(connected));
+    const created = await sng(cs[0]!, "sng:create", { size: 4, timeControl: "blitz_3_0", buyInCents: 0, name: "  Soirée   en famille " });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const t = created.snapshot;
+    expect(t).toMatchObject({ createdBy: "cr-ana", name: "Soirée en famille", size: 4, currency: "PLAY", buyInCents: 0, status: "registering" });
+    expect(t.formatId).toMatch(/^custom:/);
+    // second tournoi du même créateur refusé ; valeurs hors bornes refusées
+    expect(await sng(cs[0]!, "sng:create", { size: 4, timeControl: "blitz_3_0", buyInCents: 0 })).toMatchObject({ ok: false, code: "IN_TOURNAMENT" });
+    expect(await sng(cs[1]!, "sng:create", { size: 5 as 4, timeControl: "blitz_3_0", buyInCents: 0 })).toMatchObject({ ok: false, code: "BAD_PAYLOAD" });
+    expect(await sng(cs[1]!, "sng:create", { size: 4, timeControl: "blitz_3_0", buyInCents: 999_999 })).toMatchObject({ ok: false, code: "BAD_PAYLOAD" });
+    // page d'invitation : état lisible sans être inscrit
+    expect(await sng(cs[1]!, "sng:get", { tournamentId: t.id })).toMatchObject({ ok: true, snapshot: { id: t.id } });
+    expect(await sng(cs[1]!, "sng:get", { tournamentId: "inconnu" })).toMatchObject({ ok: false, code: "UNKNOWN_TOURNAMENT" });
+    // le lobby affiche le tournoi créé en premier
+    const lobby = await new Promise<SngSnapshot[]>((res) => cs[1]!.emit("sng:list", res));
+    expect(lobby[0]?.id).toBe(t.id);
+
+    const starts = cs.map((c) => once(c, "game:start", 5000));
+    for (const c of cs.slice(1)) expect((await sng(c, "sng:join", { tournamentId: t.id })).ok).toBe(true);
+    const games = (await Promise.all(starts)) as GameStartEvent[];
+    expect(new Set(games.map((g) => g.gameId)).size).toBe(2); // 2 demi-finales
+    expect(games[0]!.white.flag ?? games[0]!.black.flag).toBe("FR");
+    // la table a quitté le lobby
+    const after = await new Promise<SngSnapshot[]>((res) => cs[0]!.emit("sng:list", res));
+    expect(after.some((x) => x.id === t.id)).toBe(false);
+    for (const [i, c] of cs.entries()) c.emit("game:resign", { gameId: games[i]!.gameId });
+  });
+
+  it("le créateur qui quitte son tournoi vide l'annule", async () => {
+    const c = client({ token: token({ sub: "cr-solo" }) });
+    await connected(c);
+    const created = await sng(c, "sng:create", { size: 6, timeControl: "rapid_5_0", buyInCents: 100 });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const left = await new Promise<SngAck>((res) => c.emit("sng:unregister", { tournamentId: created.snapshot.id }, res));
+    expect(left).toMatchObject({ ok: true });
+    expect((await sng(c, "sng:get", { tournamentId: created.snapshot.id })) as { snapshot: SngSnapshot }).toMatchObject({ snapshot: { status: "cancelled" } });
+    // il peut en créer un autre
+    expect((await sng(c, "sng:create", { size: 4, timeControl: "bullet_1_0", buyInCents: 0 })).ok).toBe(true);
+  });
+
+  it("historique : la partie jouée apparaît, avec son PGN, pour les deux joueurs seulement", async () => {
+    const { start, white, black } = await pair("hist-w", "hist-b");
+    await move(white, start.gameId, "f2f3", 0);
+    await move(black, start.gameId, "e7e5", 1);
+    await move(white, start.gameId, "g2g4", 2);
+    const over = once(white, "game:over");
+    await move(black, start.gameId, "d8h4", 3); // mat du berger inversé
+    await over;
+    await new Promise((r) => setTimeout(r, 300)); // enregistrement asynchrone
+    const wId = start.white.userId;
+    const get = (path: string, sub: string) => fetch(`${url}${path}`, { headers: { authorization: `Bearer ${token({ sub })}` } });
+    const list = (await (await get("/account/games?limit=5", wId)).json()) as { games: Array<Record<string, unknown>> };
+    expect(list.games[0]).toMatchObject({ gameId: start.gameId, color: "w", outcome: "loss", result: "0-1", termination: "checkmate", plies: 4 });
+    const detail = (await (await get(`/account/games/${start.gameId}`, start.black.userId)).json()) as { pgn: string; outcome: string };
+    expect(detail.outcome).toBe("win");
+    expect(detail.pgn).toContain("Qh4#");
+    expect((await get(`/account/games/${start.gameId}`, "intrus")).status).toBe(404);
+    expect((await fetch(`${url}/account/games`)).status).toBe(401);
+  });
+
+  it("ping des deux joueurs diffusé pendant la partie", async () => {
+    const { start, white, black } = await pair("net-w", "net-b");
+    for (const c of [white, black]) c.on("lag:probe", (_ts, ack) => ack(Date.now()));
+    const net = await new Promise<{ rttMs: Record<"w" | "b", number | null> }>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("pas de game:net complet")), 3000);
+      white.on("game:net", (p) => { if (p.gameId === start.gameId && p.rttMs.w !== null && p.rttMs.b !== null) { clearTimeout(t); resolve(p); } });
+    });
+    expect(net.rttMs.w).toBeLessThan(1000);
+    white.emit("game:resign", { gameId: start.gameId });
   });
 });

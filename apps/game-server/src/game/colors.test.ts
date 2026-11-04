@@ -3,8 +3,8 @@ import { GameManager } from "./GameManager.js";
 
 /** Alternance des couleurs : on teste la règle seule, sans serveur. */
 describe("GameManager — alternance des couleurs", () => {
-  const gm = Object.create(GameManager.prototype) as GameManager & { lastColor: Map<string, "w" | "b"> };
-  (gm as unknown as { lastColor: Map<string, "w" | "b"> }).lastColor = new Map();
+  const gm = Object.create(GameManager.prototype) as unknown as Pick<GameManager, "pickColors"> & { lastColor: Map<string, "w" | "b"> };
+  gm.lastColor = new Map();
   const a = { userId: "fabio" };
   const b = { userId: "papa" };
   const play = (rnd = 0.1) => {

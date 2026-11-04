@@ -67,6 +67,11 @@ export class GameManager {
     return typeof gameId === "string" ? this.rooms.get(gameId) : undefined;
   }
 
+  /** Parties en cours. */
+  list(): GameRoom[] {
+    return [...this.rooms.values()];
+  }
+
   hasGame(gameId: string): boolean {
     return this.rooms.has(gameId);
   }
@@ -78,6 +83,20 @@ export class GameManager {
 
   onGameFinished(fn: (g: FinishedGame, rec: RecordedGame | null) => void | Promise<void>): void {
     this.onFinishedListeners.push(fn);
+  }
+
+  /** Profil d'affichage (drapeau) des joueurs connectés, renseigné par la couche socket. */
+  private profileOf: (userId: string) => { flag?: string } = () => ({});
+
+  setProfileLookup(fn: (userId: string) => { flag?: string }): void {
+    this.profileOf = fn;
+  }
+
+  /** Ajoute le drapeau d'affichage au siège (sans jamais écraser un siège déjà décoré). */
+  private decorate(seat: Seat): Seat {
+    if (seat.flag) return seat;
+    const flag = this.profileOf(seat.userId).flag;
+    return flag ? { ...seat, flag } : seat;
   }
 
   /** Dernière couleur jouée par joueur (mémoire du processus) : sert à alterner. */
@@ -123,8 +142,8 @@ export class GameManager {
     const tc = TIME_CONTROLS[o.timeControl];
     const room = new GameRoom({
       id: gameId,
-      white: o.white,
-      black: o.black,
+      white: this.decorate(o.white),
+      black: this.decorate(o.black),
       timeControl: tc,
       stake: o.stake,
       rated: o.rated ?? true,

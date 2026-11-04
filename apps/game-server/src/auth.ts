@@ -12,6 +12,8 @@ export interface AuthUser {
   country: string;
   state: AccountState;
   kycVerified: boolean;
+  /** drapeau d'affichage public choisi par le joueur (ISO alpha-2) ; absent = aucun */
+  flag?: string;
 }
 
 const ACCOUNT_STATES: readonly AccountState[] = ["active", "withdrawal_hold", "suspended", "self_excluded", "closed"];
@@ -61,6 +63,7 @@ export function authenticate(handshakeAuth: Record<string, unknown>, cfg: GameSe
     country: typeof claims.country === "string" ? claims.country.toUpperCase() : "",
     state: ACCOUNT_STATES.includes(claims.state as AccountState) ? (claims.state as AccountState) : "active",
     kycVerified: claims.kyc === true,
+    ...(typeof claims.flag === "string" && /^[A-Za-z]{2}$/.test(claims.flag) ? { flag: claims.flag.toUpperCase() } : {}),
   };
 }
 

@@ -79,4 +79,24 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     await expect(db.pool.query("UPDATE games SET result = '0-1'")).rejects.toThrow(/append-only/);
     await expect(db.pool.query("DELETE FROM rating_history")).rejects.toThrow(/append-only/);
   });
+
+  it("historique : du plus récent au plus ancien, vu de chaque camp, pagination, PGN réservé aux joueurs", async () => {
+    const g1 = game("hist-a", "hist-b", "1-0");
+    const g2 = game("hist-b", "hist-a", "1/2-1/2");
+    const g3 = game("hist-a", "hist-c", "0-1", { aborted: true, abortedBy: "w", rated: false, termination: "aborted" });
+    for (const g of [g1, g2, g3]) {
+      await repo.recordGame(g);
+      await new Promise((r) => setTimeout(r, 15)); // ended_at distincts
+    }
+    const a = await repo.listGames("hist-a", 10);
+    expect(a.map((x) => x.gameId)).toEqual([g3.gameId, g2.gameId, g1.gameId]);
+    expect(a[2]).toMatchObject({ color: "w", opponent: "hist-b", outcome: "win", ratingBefore: 1500, ratingAfter: 1520, opponentRating: 1500, plies: 3 });
+    expect(a[1]).toMatchObject({ color: "b", outcome: "draw", termination: "agreement" });
+    expect(a[0]).toMatchObject({ outcome: "aborted", ratingBefore: null });
+    const page2 = await repo.listGames("hist-a", 2, a[1]!.endedAt);
+    expect(page2.map((x) => x.gameId)).toEqual([g1.gameId]);
+    expect((await repo.getGame("hist-b", g1.gameId))).toMatchObject({ outcome: "loss", pgn: "1. e4 e5", moveTimesMs: [0, 0, 1235] });
+    expect(await repo.getGame("hist-c", g1.gameId)).toBeNull();
+    expect(await repo.getGame("hist-a", "pas-un-uuid")).toBeNull();
+  });
 });

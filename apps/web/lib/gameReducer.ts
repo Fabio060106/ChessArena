@@ -1,5 +1,5 @@
 import type {
-  Color, ErrorCode, GameOverEvent, GameStartEvent, GameStateEvent, PresenceEvent, SessionModeEvent, Stake, TimeControlId,
+  Color, ErrorCode, GameNetEvent, GameOverEvent, GameStartEvent, GameStateEvent, PresenceEvent, SessionModeEvent, Stake, TimeControlId,
 } from "@chessarena/shared";
 import { tryLocalMove, type Premove } from "./moves";
 
@@ -30,9 +30,12 @@ export interface GameView {
   lastMove: string | null;
   myColor: Color;
   pending: PendingMove | null;
-  premove: Premove | null;
-  /** coups joués (notation SAN) ; null = coup manqué (reconnexion) */
+  /** file de pré-moves (illimitée), exécutée dans l'ordre */
+  premoves: Premove[];
+  /** coups joués (SAN), reconstruits à partir des états serveur ; null = trou (reconnexion) */
   moves: Array<string | null>;
+  /** ping des deux joueurs mesuré par le serveur */
+  net: GameNetEvent | null;
   /** proposition de nulle en cours */
   drawOffer: Color | null;
   opponentPresence: PresenceEvent | null;
@@ -46,7 +49,7 @@ export const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0
 
 export const initialView: GameView = {
   phase: "connecting", connected: false, queue: null, start: null, server: null,
-  displayFen: START_FEN, lastMove: null, myColor: "w", pending: null, premove: null, moves: [], drawOffer: null,
+  displayFen: START_FEN, lastMove: null, myColor: "w", pending: null, premoves: [], moves: [], net: null, drawOffer: null,
   opponentPresence: null, over: null, error: null, session: null,
 };
 
@@ -60,8 +63,9 @@ export type GameAction =
   | { type: "optimistic_move"; pending: PendingMove }
   | { type: "move_rejected"; code: ErrorCode }
   | { type: "move_acked"; ply: number }
-  | { type: "set_premove"; premove: Premove | null }
+  | { type: "set_premoves"; premoves: Premove[] }
   | { type: "draw"; gameId: string; offeredBy: Color | null }
+  | { type: "net"; net: GameNetEvent }
   | { type: "presence"; presence: PresenceEvent; userId: string }
   | { type: "over"; over: GameOverEvent }
   | { type: "error"; code: ErrorCode }
@@ -87,19 +91,21 @@ export function gameReducer(s: GameView, a: GameAction): GameView {
         server: sameGame ? s.server : null,
         displayFen: sameGame ? s.displayFen : a.start.fen,
         lastMove: sameGame ? s.lastMove : null,
-        pending: null, premove: sameGame ? s.premove : null, opponentPresence: null,
-        moves: sameGame ? s.moves : [], drawOffer: sameGame ? s.drawOffer : null,
+        pending: null, premoves: sameGame ? s.premoves : [], opponentPresence: null,
+        moves: sameGame ? s.moves : [], net: sameGame ? s.net : null, drawOffer: sameGame ? s.drawOffer : null,
       };
     }
     case "state": {
       if (!s.start || a.state.gameId !== s.start.gameId) return s;
       if (s.server && a.state.ply < s.server.ply) return s; // état périmé arrivé en retard
       // L'état serveur fait foi : s'il confirme le coup en attente, l'affichage ne bouge pas.
-      return { ...s, server: a.state, displayFen: a.state.fen, lastMove: a.state.lastMoveUci, pending: null,
-        moves: nextHistory(s.moves, s.server, a.state) };
+      return {
+        ...s, server: a.state, displayFen: a.state.fen, lastMove: a.state.lastMoveUci, pending: null,
+        moves: nextHistory(s.moves, s.server, a.state),
+      };
     }
     case "optimistic_move":
-      return { ...s, pending: a.pending, displayFen: a.pending.fen, lastMove: a.pending.uci, premove: null };
+      return { ...s, pending: a.pending, displayFen: a.pending.fen, lastMove: a.pending.uci };
     case "move_rejected":
       // rollback vers la dernière vérité serveur
       return {
@@ -108,15 +114,17 @@ export function gameReducer(s: GameView, a: GameAction): GameView {
       };
     case "move_acked":
       return s.pending && a.ply === s.pending.ply + 1 ? { ...s, pending: null } : s;
-    case "set_premove":
-      return { ...s, premove: a.premove };
+    case "set_premoves":
+      return { ...s, premoves: a.premoves };
     case "draw":
       return s.start && s.start.gameId === a.gameId && s.phase === "playing" ? { ...s, drawOffer: a.offeredBy } : s;
+    case "net":
+      return s.start && a.net.gameId === s.start.gameId ? { ...s, net: a.net } : s;
     case "presence":
       return a.presence.userId === a.userId ? s : { ...s, opponentPresence: a.presence.connected ? null : a.presence };
     case "over":
       if (!s.start || a.over.gameId !== s.start.gameId) return s;
-      return { ...s, phase: "over", over: a.over, pending: null, premove: null, opponentPresence: null, drawOffer: null };
+      return { ...s, phase: "over", over: a.over, pending: null, premoves: [], opponentPresence: null, drawOffer: null };
     case "error":
       return { ...s, error: a.code, phase: s.phase === "queued" && isQueueError(a.code) ? "idle" : s.phase };
     case "session_mode":
@@ -126,7 +134,7 @@ export function gameReducer(s: GameView, a: GameAction): GameView {
   }
 }
 
-/** Historique SAN : un coup de plus si l'état suit le précédent, sinon des trous (null). */
+/** Historique SAN : un coup de plus si l'état suit le précédent, sinon un trou marqué null. */
 export function nextHistory(moves: Array<string | null>, prev: GameStateEvent | null, next: GameStateEvent): Array<string | null> {
   if (next.ply === 0) return [];
   if (prev && next.ply === prev.ply) return moves;

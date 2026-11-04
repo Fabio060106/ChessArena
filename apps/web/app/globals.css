@@ -2,6 +2,127 @@
 
 @custom-variant dark (@media (prefers-color-scheme: dark));
 
+/* ─── Charte « E-sport High-Stakes » ─────────────────────────────────────────
+   Fond profond #0B0E14, surfaces légèrement relevées, néons réservés aux actions
+   d'engagement (jouer, s'inscrire, horloge active) : jamais décoratifs. */
+@theme {
+  --color-ink: #0B0E14;
+  --color-surface: #11161F;
+  --color-surface-2: #161D29;
+  --color-line: #222B3A;
+  --color-text: #E7ECF3;
+  --color-muted: #8A96A8;
+  --color-neon: #00E5FF;
+  --color-neon-2: #FF2EB4;
+  --color-win: #3DDC97;
+  --color-danger: #FF3B5C;
+  --color-gold: #F5C542;
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.arena-app { background: #0B0E14; color: #E7ECF3; min-height: 100dvh; -webkit-tap-highlight-color: transparent; color-scheme: dark; }
+
+.neon-btn {
+  background: linear-gradient(180deg, rgba(0,229,255,.18), rgba(0,229,255,.06));
+  border: 1px solid rgba(0,229,255,.55);
+  color: #DFFBFF;
+  box-shadow: 0 0 0 1px rgba(0,229,255,.08), 0 0 18px -6px rgba(0,229,255,.7), inset 0 1px 0 rgba(255,255,255,.08);
+  transition: box-shadow .15s ease, transform .1s ease, background .15s ease;
+}
+.neon-btn:hover { box-shadow: 0 0 0 1px rgba(0,229,255,.2), 0 0 26px -4px rgba(0,229,255,.9), inset 0 1px 0 rgba(255,255,255,.1); }
+.neon-btn:active { transform: translateY(1px); }
+.neon-btn:disabled { opacity: .4; box-shadow: none; }
+.panel { background: #11161F; border: 1px solid #1E2634; border-radius: 14px; }
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* ─── Plateau ───────────────────────────────────────────────────────────────── */
+.arena-board {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;                  /* le geste appartient au plateau (pas de scroll pendant un drag) */
+  contain: layout paint;               /* rien à l'intérieur ne déclenche de mise en page à l'extérieur */
+  /* damier = un seul dégradé conique : a8 claire en haut à gauche, dans les deux orientations */
+  background: repeating-conic-gradient(var(--sq-dark) 0 25%, var(--sq-light) 0 50%) 0 0 / 25% 25%;
+  box-shadow: var(--board-ring);
+}
+.arena-board-overlay { position: absolute; inset: 0; background: var(--board-overlay); pointer-events: none; }
+
+.arena-hl, .arena-piece {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 12.5%;
+  height: 12.5%;
+  pointer-events: none;
+}
+.hl-last { background: var(--hl-last); box-shadow: var(--hl-last-ring); }
+.hl-selected { background: var(--hl-selected); }
+.hl-premove { background: var(--hl-premove); box-shadow: var(--hl-premove-ring); }
+.hl-check { background: var(--hl-check); }
+.hl-hover { box-shadow: var(--hl-hover); transition: opacity .08s linear; will-change: transform; }
+.hl-target { background: radial-gradient(circle, var(--dot-move) 0 17%, transparent 18%); }
+.hl-target.pre { background: radial-gradient(circle, var(--dot-premove) 0 15%, transparent 16%); }
+.hl-target.occupied { background: radial-gradient(circle, transparent 0 66%, var(--dot-move) 67% 76%, transparent 77%); }
+.hl-target.occupied.pre { background: radial-gradient(circle, transparent 0 66%, var(--dot-premove) 67% 76%, transparent 77%); }
+
+.arena-piece {
+  z-index: 2;
+  will-change: transform;              /* couche GPU dédiée : déplacements composités, sans repaint */
+  transition: transform 160ms cubic-bezier(.2, .75, .25, 1);
+}
+.arena-piece > svg { transition: transform 120ms ease, filter 120ms ease; transform-origin: 50% 60%; }
+.arena-piece.mine { cursor: grab; }
+.arena-piece.dragging { z-index: 30; cursor: grabbing; }
+.arena-piece.dragging > svg { transform: scale(1.12); filter: drop-shadow(0 10px 10px rgba(0,0,0,.45)); }
+.arena-piece.dragging.touch > svg { transform: scale(1.55); }
+.arena-fading { z-index: 1; animation: arena-fade 200ms ease-out forwards; }
+@keyframes arena-fade { to { opacity: 0; } }
+
+.arena-coords { position: absolute; inset: 0; pointer-events: none; z-index: 1; font: 600 clamp(8px, 1.6cqw, 12px)/1 var(--font-mono); }
+.arena-board { container-type: inline-size; }
+.coord { position: absolute; opacity: .95; }
+.coord.file { bottom: .3em; width: 12.5%; text-align: right; padding-right: .35em; }
+.coord.rank { left: .35em; height: 12.5%; padding-top: .3em; }
+.coord.on-light { color: var(--coord-light); }
+.coord.on-dark { color: var(--coord-dark); }
+
+.arena-promo-scrim { position: absolute; inset: 0; z-index: 40; background: rgba(5,8,14,.55); backdrop-filter: blur(2px); }
+.arena-promo {
+  position: absolute; width: 12.5%; height: 50%; display: flex;
+  background: #11161F; border: 1px solid rgba(0,229,255,.5); border-radius: 8px;
+  box-shadow: 0 0 24px -4px rgba(0,229,255,.6);
+}
+.arena-promo-btn { flex: 1; padding: 6%; border-radius: 6px; cursor: pointer; }
+.arena-promo-btn:hover { background: rgba(0,229,255,.12); }
+
+/* ─── Horloge ───────────────────────────────────────────────────────────────── */
+.clock {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+  transition: background-color .2s ease, color .2s ease, box-shadow .2s ease;
+}
+.clock.active { background: #E7ECF3; color: #0B0E14; box-shadow: 0 0 0 1px rgba(0,229,255,.6), 0 0 22px -6px rgba(0,229,255,.8); }
+.clock.idle { background: #161D29; color: #6E7A8D; }
+.clock.low.active { background: #FF3B5C; color: #fff; animation: clock-pulse 1s ease-in-out infinite; }
+.clock.low.idle { color: #FF8099; }
+@keyframes clock-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,92,.75), 0 0 18px -4px rgba(255,59,92,.9); transform: scale(1); }
+  50% { box-shadow: 0 0 0 6px rgba(255,59,92,0), 0 0 30px 0 rgba(255,59,92,.6); transform: scale(1.025); }
+}
+.clock-bar { transform-origin: left center; will-change: transform; }
+
+@media (prefers-reduced-motion: reduce) {
+  .arena-piece, .arena-piece > svg { transition: none; }
+  .clock.low.active { animation: none; }
+}
+
 /* ─── Graphiques du back-office (rôles, pas de couleurs en dur dans les composants) ── */
 .viz-root {
   --viz-surface: #fcfcfb;
