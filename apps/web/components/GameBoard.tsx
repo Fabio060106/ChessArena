@@ -26,6 +26,8 @@ interface Props {
   /** true = coup joué ou pré-move ajouté */
   onMove: (from: string, to: string, promotion?: PromotionPiece) => boolean;
   onCancelPremoves: () => void;
+  /** flèches d'analyse (relecture uniquement), ex. meilleur coup du moteur */
+  arrows?: ReadonlyArray<{ from: string; to: string; color?: string }>;
 }
 
 /** Une case = 12,5 % du plateau ; translate en % de l'élément lui-même → (x, y) cases. */
@@ -269,6 +271,8 @@ export const GameBoard = memo(function GameBoard(p: Props) {
         </div>
       ))}
 
+      {p.arrows && p.arrows.length > 0 && <Arrows arrows={p.arrows} orientation={p.orientation} />}
+
       {promo && (
         <PromotionPicker
           color={p.myColor}
@@ -284,6 +288,30 @@ export const GameBoard = memo(function GameBoard(p: Props) {
     </div>
   );
 });
+
+/** Flèches en SVG (unité = une case), au-dessus des pièces, ignorées par la souris. */
+function Arrows({ arrows, orientation }: { arrows: NonNullable<Props["arrows"]>; orientation: Color }) {
+  const c = (sq: string) => {
+    const f = FILES.indexOf(sq[0]!); const r = Number(sq[1]) - 1;
+    return orientation === "w" ? [f + 0.5, 7 - r + 0.5] : [7 - f + 0.5, r + 0.5];
+  };
+  return (
+    <svg className="pointer-events-none absolute inset-0 z-40 size-full" viewBox="0 0 8 8" aria-hidden>
+      {arrows.map(({ from, to, color = "#22d3ee" }, i) => {
+        const [x1, y1] = c(from); const [x2, y2] = c(to);
+        const dx = x2! - x1!; const dy = y2! - y1!; const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len; const uy = dy / len; const head = 0.42; const w = 0.14;
+        const bx = x2! - ux * head; const by = y2! - uy * head; // base de la pointe
+        const nx = -uy; const ny = ux;
+        const pts = [
+          [x1! + nx * w / 2, y1! + ny * w / 2], [bx + nx * w / 2, by + ny * w / 2], [bx + nx * head * 0.55, by + ny * head * 0.55],
+          [x2!, y2!], [bx - nx * head * 0.55, by - ny * head * 0.55], [bx - nx * w / 2, by - ny * w / 2], [x1! - nx * w / 2, y1! - ny * w / 2],
+        ].map(([x, y]) => `${x!.toFixed(3)},${y!.toFixed(3)}`).join(" ");
+        return <polygon key={i} points={pts} fill={color} opacity={0.78} />;
+      })}
+    </svg>
+  );
+}
 
 const Coordinates = memo(function Coordinates({ orientation }: { orientation: Color }) {
   const files = orientation === "w" ? FILES.split("") : FILES.split("").reverse();

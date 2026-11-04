@@ -162,6 +162,33 @@ describe("SitAndGo — tableau et déroulement", () => {
   });
 });
 
+describe("SitAndGo — appariement de la ronde suivante", () => {
+  it("n'apparie la ronde suivante que lorsque TOUTES les parties de la ronde sont finies (départages compris)", async () => {
+    const t = setup(8);
+    await t.fill(8);
+    const r1 = () => t.started.filter((r) => r.tournament!.round === 1);
+    const r2 = () => t.started.filter((r) => r.tournament!.round === 2);
+    expect(r1()).toHaveLength(4);
+    // 3 quarts sur 4 terminés : aucune demi-finale ne démarre
+    await t.win("u1"); await t.win("u4"); await t.win("u2");
+    expect(r2()).toHaveLength(0);
+    // le dernier quart (u3–u6) fait nulle → revanche : toujours pas de demi-finale
+    const last = r1().find((r) => [r.white.userId, r.black.userId].includes("u3"))!;
+    await t.finish(last, "1/2-1/2");
+    expect(r2()).toHaveLength(0);
+    expect(t.sng.snapshot().currentRound).toBe(1);
+    // la revanche se termine → les deux demi-finales partent en même temps
+    await t.win("u3");
+    expect(r2()).toHaveLength(2);
+    expect(t.sng.snapshot().currentRound).toBe(2);
+    // une demi finie : la finale attend l'autre
+    await t.win("u1");
+    expect(t.started.filter((r) => r.tournament!.round === 3)).toHaveLength(0);
+    await t.win("u2");
+    expect(t.started.filter((r) => r.tournament!.round === 3)).toHaveLength(1);
+  });
+});
+
 describe("SitAndGo — départages", () => {
   it("nulle → revanche couleurs inversées → Armageddon (meilleure tête de série aux Noirs, nulle qualificative, non classée)", async () => {
     const t = setup(4);

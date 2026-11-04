@@ -7,10 +7,14 @@ interface Props {
   active?: number;
   /** relecture : clic sur un coup → aller à la position après ce coup */
   onSelect?: (ply: number) => void;
+  /** annotations par demi-coup (analyse) : « ?! », « ? », « ?? » */
+  marks?: ReadonlyArray<"??" | "?" | "?!" | null | undefined>;
 }
 
+const MARK_CLS = { "??": "text-danger", "?": "text-[#fb923c]", "?!": "text-gold" } as const;
+
 /** Liste des coups (SAN) en paires ; suit le coup actif sans faire défiler la page. */
-export const MoveList = memo(function MoveList({ moves, active = moves.length - 1, onSelect }: Props) {
+export const MoveList = memo(function MoveList({ moves, active = moves.length - 1, onSelect, marks }: Props) {
   const box = useRef<HTMLOListElement>(null);
   useEffect(() => {
     const el = box.current?.querySelector<HTMLElement>(`[data-ply="${active}"]`);
@@ -24,10 +28,12 @@ export const MoveList = memo(function MoveList({ moves, active = moves.length - 
   if (rows.length === 0) return <p className="px-1 text-sm text-muted">Aucun coup joué.</p>;
   const cell = (m: string | null | undefined, ply: number) => {
     if (m === undefined) return <span />;
+    const mk = marks?.[ply];
+    const label = <>{m ?? "…"}{mk && <span className={`ml-0.5 font-bold ${MARK_CLS[mk]}`}>{mk}</span>}</>;
     const cls = `rounded px-1.5 py-1 text-left font-medium ${ply === active ? "bg-neon/15 text-neon" : ""} ${onSelect ? "hover:bg-surface-2" : ""}`;
     return onSelect
-      ? <button type="button" data-ply={ply} className={cls} onClick={() => onSelect(ply)}>{m ?? "…"}</button>
-      : <span data-ply={ply} className={cls}>{m ?? "…"}</span>;
+      ? <button type="button" data-ply={ply} className={cls} onClick={() => onSelect(ply)}>{label}</button>
+      : <span data-ply={ply} className={cls}>{label}</span>;
   };
   return (
     <ol ref={box} className="relative grid max-h-64 grid-cols-[2.25rem_1fr_1fr] content-start gap-y-0.5 overflow-y-auto text-sm lg:max-h-[40vh]">

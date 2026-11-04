@@ -21,6 +21,23 @@ export function replayFromPgn(pgn: string): ReplayStep[] {
   return steps;
 }
 
+/**
+ * Positions d'une partie en cours à partir de la liste des coups (SAN).
+ * S'arrête au premier coup inconnu (null, après une reconnexion) : on ne navigue que sur ce qu'on sait rejouer.
+ */
+export function replayFromSans(sans: ReadonlyArray<string | null>): ReplayStep[] {
+  const r = new Chess();
+  const steps: ReplayStep[] = [{ fen: r.fen(), san: null, uci: null }];
+  for (const san of sans) {
+    if (!san) break;
+    try {
+      const m = r.move(san);
+      steps.push({ fen: r.fen(), san: m.san, uci: m.from + m.to + (m.promotion ?? "") });
+    } catch { break; }
+  }
+  return steps;
+}
+
 /** « 3 min », « 2 h », « hier », « 12 oct. » */
 export function relativeDate(iso: string, now = Date.now()): string {
   const d = new Date(iso);

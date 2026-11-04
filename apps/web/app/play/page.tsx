@@ -16,6 +16,8 @@ import { ChessClock } from "../../components/ChessClock";
 import { PlayerCard } from "../../components/PlayerCard";
 import { TournamentHUD } from "../../components/TournamentHUD";
 import { MoveList } from "../../components/MoveList";
+import { MoveNav, usePlyKeys } from "../../components/MoveNav";
+import { replayFromSans } from "../../lib/replay";
 import { Lobby } from "../../components/Lobby";
 
 const RESULT_LABEL: Record<string, string> = {
@@ -73,10 +75,21 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
   const [confirmResign, setConfirmResign] = useState(false);
   const [tab, setTab] = useState<"tournament" | "moves">(inviteId ? "tournament" : "moves");
   const [showResult, setShowResult] = useState(true);
+  // navigation dans les coups (comme Lichess) : null = position en direct
+  const [browse, setBrowse] = useState<number | null>(null);
+  const steps = useMemo(() => replayFromSans(view.moves), [view.moves]);
+  const liveLast = steps.length - 1;
+  const browsing = browse !== null && browse < liveLast;
+  const navPly = browsing ? browse : liveLast;
+  const go = useCallback((p: number) => {
+    const c = Math.max(0, Math.min(liveLast, p));
+    setBrowse(c >= liveLast ? null : c);
+  }, [liveLast]);
+  usePlyKeys(navPly, liveLast, go, !!view.start);
   useEffect(() => { setConfirmResign(false); setShowResult(true); }, [view.phase]);
   // nouvelle partie (tournoi qui démarre pendant qu'on lit le classement, sur mobile) : on remonte au plateau
   const gameId = view.start?.gameId;
-  useEffect(() => { if (gameId) window.scrollTo({ top: 0, behavior: "smooth" }); }, [gameId]);
+  useEffect(() => { if (gameId) window.scrollTo({ top: 0, behavior: "smooth" }); setBrowse(null); }, [gameId]);
   useEffect(() => { if (sng.current && !playing) setTab("tournament"); }, [sng.current, playing]);
 
   // le contexte audio ne peut démarrer que sur un geste : premier clic n'importe où
@@ -91,7 +104,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
   const opp: Color = me === "w" ? "b" : "w";
   const seat = (c: Color) => (c === "w" ? view.start?.white : view.start?.black);
   const running = playing && view.server && view.server.ply >= 2 ? view.server.turn : null;
-  const fen = view.start ? view.displayFen : START_FEN;
+  const fen = browsing ? steps[browse]!.fen : view.start ? view.displayFen : START_FEN;
   const initialMs = view.start?.timeControl.initialMs ?? 0;
   const myTurn = isMyTurn(view) && view.premoves.length === 0;
   const mat = useMemo(() => material(fen), [fen]);
@@ -113,7 +126,9 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     return (view.over.result === "1-0") === (me === "w");
   }, [view.over, me]);
 
+  const plyLabel = (p: number) => (p === 0 ? "position de départ" : `${Math.ceil(p / 2)}${p % 2 === 1 ? "." : "…"} ${steps[p]?.san ?? ""}`);
   const status = !playing ? null
+    : browsing ? `Vous regardez ${plyLabel(browse!)} — la partie continue. ⏭, → ou un clic sur l'échiquier pour revenir.`
     : view.server && view.server.ply < 2 ? "Jouez votre premier coup dans les 20 s, sinon la partie est annulée."
     : isMyTurn(view) ? "À vous de jouer."
     : view.premoves.length ? `${view.premoves.length} pré-move${view.premoves.length > 1 ? "s" : ""} en file · clic droit ou Échap pour annuler`
@@ -168,21 +183,30 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
             materialAdvantage={view.start ? materialAdvantage(fen, opp) : 0} captured={view.start ? mat[opp].captured : undefined}
             clock={<ChessClock color={opp} subscribe={subscribe} active={running === opp} initialMs={initialMs} alert={false} />}
           />
-          <div className="relative">
+          <div className="relative" onPointerDownCapture={(e) => {
+            // en navigation, un clic sur le plateau ramène au direct SANS jouer : on ne joue jamais depuis une position passée
+            if (browsing) { e.stopPropagation(); e.preventDefault(); setBrowse(null); }
+          }}>
             <GameBoard
               fen={fen}
-              serverFen={view.server?.fen ?? fen}
+              serverFen={browsing ? fen : (view.server?.fen ?? fen)}
               orientation={me}
               myColor={me}
-              interactive={playing}
+              interactive={playing && !browsing}
               myTurn={myTurn}
-              lastMove={view.lastMove}
-              premoves={view.premoves}
+              lastMove={browsing ? steps[browse]!.uci : view.lastMove}
+              premoves={browsing ? [] : view.premoves}
               theme={settings.boardTheme}
               coordinates={settings.coordinates}
               onMove={playOrPremove}
               onCancelPremoves={cancelPremoves}
             />
+            {browsing && (
+              <button type="button" onClick={() => setBrowse(null)}
+                className="absolute left-1/2 top-2 z-[45] -translate-x-1/2 rounded-full border border-gold/60 bg-ink/85 px-3 py-1 text-xs font-semibold text-gold shadow-lg backdrop-blur">
+                {plyLabel(browse!)} · {playing ? "revenir au direct ⏭" : "dernière position ⏭"}
+              </button>
+            )}
             {view.phase === "over" && view.over && showResult && (
               <div className="absolute inset-0 z-50 grid place-items-center bg-ink/55 backdrop-blur-[2px]">
                 <div className="panel w-[min(86%,340px)] p-5 text-center shadow-2xl">
@@ -212,6 +236,9 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
                       Voir l'échiquier
                     </button>
                   </div>
+                  {view.over.termination !== "aborted" && view.start && (
+                    <a href={`/history?g=${view.start.gameId}`} className="mt-3 block text-sm text-neon hover:underline">Analyser avec Stockfish 19 →</a>
+                  )}
                 </div>
               </div>
             )}
@@ -281,7 +308,15 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
                 </button>
               ))}
             </div>
-            {tab === "moves" ? <MoveList moves={view.moves} /> : (
+            {tab === "moves" ? (
+              <div className="flex flex-col gap-2">
+                {view.start && liveLast > 0 && <MoveNav compact ply={navPly} last={liveLast} go={go} />}
+                <MoveList moves={view.moves} active={navPly - 1} onSelect={view.start ? (p) => go(p + 1) : undefined} />
+                {view.phase === "over" && view.start && view.over?.termination !== "aborted" && (
+                  <a href={`/history?g=${view.start.gameId}`} className="text-sm text-neon hover:underline">Analyser cette partie avec Stockfish 19 →</a>
+                )}
+              </div>
+            ) : (
               <TournamentHUD userId={userId} current={sng.current} lobby={sng.lobby} busy={sng.busy} error={sng.error}
                 onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} invite={sng.invite} />
             )}

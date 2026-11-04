@@ -1,6 +1,7 @@
 import type {
   Color, ErrorCode, GameNetEvent, GameOverEvent, GameStartEvent, GameStateEvent, PresenceEvent, SessionModeEvent, Stake, TimeControlId,
 } from "@chessarena/shared";
+import { replayFromPgn } from "./replay";
 import { tryLocalMove, type Premove } from "./moves";
 
 /**
@@ -124,7 +125,7 @@ export function gameReducer(s: GameView, a: GameAction): GameView {
       return a.presence.userId === a.userId ? s : { ...s, opponentPresence: a.presence.connected ? null : a.presence };
     case "over":
       if (!s.start || a.over.gameId !== s.start.gameId) return s;
-      return { ...s, phase: "over", over: a.over, pending: null, premoves: [], opponentPresence: null, drawOffer: null };
+      return { ...s, phase: "over", over: a.over, pending: null, premoves: [], opponentPresence: null, drawOffer: null, ...finalFromPgn(a.over.pgn, s.moves.length) };
     case "error":
       return { ...s, error: a.code, phase: s.phase === "queued" && isQueueError(a.code) ? "idle" : s.phase };
     case "session_mode":
@@ -132,6 +133,20 @@ export function gameReducer(s: GameView, a: GameAction): GameView {
     case "clear_error":
       return { ...s, error: null };
   }
+}
+
+/**
+ * Le PGN de fin de partie fait foi : il contient le dernier coup (souvent le mat), que l'on peut ne pas
+ * avoir reçu en état séparé, et comble les trous laissés par une reconnexion.
+ */
+export function finalFromPgn(pgn: string, known: number): Partial<GameView> {
+  if (!pgn) return {};
+  try {
+    const steps = replayFromPgn(pgn);
+    if (steps.length - 1 < known) return {}; // PGN tronqué : on garde ce qu'on a
+    const last = steps.at(-1)!;
+    return { moves: steps.slice(1).map((x) => x.san), displayFen: last.fen, lastMove: last.uci };
+  } catch { return {}; }
 }
 
 /** Historique SAN : un coup de plus si l'état suit le précédent, sinon un trou marqué null. */
