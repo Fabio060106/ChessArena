@@ -338,7 +338,10 @@ describe("tournoi de taille libre, départ anticipé par le créateur", () => {
     if (!created.ok) return;
     const id = created.snapshot.id;
     expect(await sng(cs[0]!, "sng:start", { tournamentId: id })).toMatchObject({ ok: false, code: "NOT_ENOUGH_PLAYERS" });
-    for (const c of cs.slice(1)) expect((await sng(c, "sng:join", { tournamentId: id })).ok).toBe(true);
+    expect((await sng(cs[1]!, "sng:join", { tournamentId: id })).ok).toBe(true);
+    expect(await sng(cs[0]!, "sng:start", { tournamentId: id })).toMatchObject({ ok: false, code: "NOT_ENOUGH_PLAYERS" }); // 2 : pas un tournoi
+    expect(await sng(cs[1]!, "sng:create", { size: 2, timeControl: "blitz_3_0", buyInCents: 0 })).toMatchObject({ ok: false });
+    expect((await sng(cs[2]!, "sng:join", { tournamentId: id })).ok).toBe(true);
     expect(await sng(cs[1]!, "sng:start", { tournamentId: id })).toMatchObject({ ok: false, code: "NOT_CREATOR" });
     const started = await sng(cs[0]!, "sng:start", { tournamentId: id });
     expect(started).toMatchObject({ ok: true, snapshot: { status: "running", size: 50 } });

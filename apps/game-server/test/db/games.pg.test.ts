@@ -131,7 +131,7 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect((await store.find("beta_player"))!.passwordHash).toBe(h);
   });
 
-  it("tournoi de 50 places : accepté par la base (migration 006), 129 refusé", async () => {
+  it("tournoi de 50 places : accepté par la base (migrations 006-007), 2 et 129 refusés", async () => {
     const { PgTournamentStore } = await import("../../src/tournaments/TournamentStore.js");
     const { SitAndGo } = await import("../../src/tournaments/SitAndGo.js");
     const { InMemoryLedger } = await import("../../src/settlement/ledger.js");
@@ -146,5 +146,6 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     const row = (await db.pool.query("SELECT size, status FROM tournaments WHERE id = $1", [t.id])).rows[0];
     expect(row).toEqual({ size: 50, status: "running" });
     await expect(db.pool.query("UPDATE tournaments SET size = 129 WHERE id = $1", [t.id])).rejects.toThrow();
+    await expect(db.pool.query("UPDATE tournaments SET size = 2 WHERE id = $1", [t.id])).rejects.toThrow();
   });
 });

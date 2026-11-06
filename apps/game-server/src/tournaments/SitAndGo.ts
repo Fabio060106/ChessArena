@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { SNG_MAX_SIZE, SNG_MIN_SIZE } from "@chessarena/shared";
 import type {
   Color, Cents, Currency, SngGameKind, SngGameView, SngMatchView, SngPlayerView, SngSize, SngSnapshot, TimeControlId,
 } from "@chessarena/shared";
@@ -8,7 +9,7 @@ import { computeRake, settleTournament } from "../settlement/rake.js";
 import type { AuditSink } from "../audit/auditLog.js";
 
 /**
- * Moteur de tournoi — élimination directe (KO), de 2 à 128 joueurs (tables officielles : 4, 6 ou 8).
+ * Moteur de tournoi — élimination directe (KO), de 3 à 128 joueurs (tables officielles : 4, 6 ou 8).
  *
  * Cycle de vie :
  *   registering ──(table pleine)──▶ running ──(finale jouée)──▶ finished
@@ -27,7 +28,7 @@ import type { AuditSink } from "../audit/auditLog.js";
  *     1-8, 4-5, 2-7, 3-6 : les deux meilleurs ne peuvent se croiser qu'en finale.
  *   • Tableau = puissance de 2 immédiatement supérieure au nombre de joueurs : les meilleures têtes de
  *     série sont exemptes au 1er tour (6 joueurs → tableau de 8, têtes 1 et 2 exemptes ; 50 → 64, 14 exempts).
- *   • Le créateur peut lancer un tournoi incomplet (≥ 2 inscrits) : même règle d'exempts.
+ *   • Le créateur peut lancer un tournoi incomplet (≥ 3 inscrits) : même règle d'exempts.
  *   • Un tour suivant ne démarre que lorsque tous les matchs du tour sont terminés.
  *
  * DÉPARTAGE D'UN MATCH (tie-breakers)
@@ -158,7 +159,7 @@ export class SitAndGo {
   private finishedAt: string | null = null;
 
   constructor(cfg: SitAndGoConfig, ports: SitAndGoPorts) {
-    if (!Number.isInteger(cfg.size) || cfg.size < 2 || cfg.size > 128) throw new SngError("INVALID_CONFIG", "taille de 2 à 128");
+    if (!Number.isInteger(cfg.size) || cfg.size < SNG_MIN_SIZE || cfg.size > SNG_MAX_SIZE) throw new SngError("INVALID_CONFIG", "taille de 3 à 128");
     if (cfg.payoutBps.reduce((a, b) => a + b, 0) !== 10_000) throw new SngError("INVALID_CONFIG", "structure de gains ≠ 100 %");
     if (cfg.payoutBps.length > 2) throw new SngError("INVALID_CONFIG", "KO sans petite finale : 2 places payées au plus");
     this.id = cfg.id;
@@ -290,11 +291,11 @@ export class SitAndGo {
     this.changed();
   }
 
-  /** Départ anticipé (tournoi incomplet) : au moins 2 inscrits, aucune inscription en cours de paiement. */
+  /** Départ anticipé (tournoi incomplet) : au moins 3 inscrits, aucune inscription en cours de paiement. */
   async startNow(): Promise<void> {
     if (this.status !== "registering") throw new SngError("NOT_REGISTERING");
     if (this.pendingLocks.size > 0) throw new SngError("BUSY");
-    if (this.countStatus("registered") < 2) throw new SngError("NOT_ENOUGH_PLAYERS");
+    if (this.countStatus("registered") < SNG_MIN_SIZE) throw new SngError("NOT_ENOUGH_PLAYERS");
     this.audit("start_early", { registered: this.countStatus("registered"), size: this.cfg.size });
     await this.start();
   }

@@ -142,9 +142,10 @@ export type ErrorCode =
 export type MoveAck = { ok: true; ply: number } | { ok: false; code: ErrorCode };
 
 // ─── Tournois Sit & Go ───────────────────────────────────────────────────────
-/** Nombre de places d'un tournoi : 4, 6 ou 8 pour les tables officielles, 2 à 128 pour un tournoi créé par un joueur. */
+/** Nombre de places d'un tournoi : 4, 6 ou 8 pour les tables officielles, 3 à 128 pour un tournoi créé par un joueur. */
 export type SngSize = number;
-export const SNG_MIN_SIZE = 2;
+/** à 2, ce n'est pas un tournoi mais un match */
+export const SNG_MIN_SIZE = 3;
 export const SNG_MAX_SIZE = 128;
 export type SngStatus = "registering" | "running" | "finished" | "cancelled";
 export type SngGameKind = "main" | "rematch" | "armageddon";
@@ -346,7 +347,7 @@ export interface ClientToServerEvents {
   "sng:join": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
   /** état d'un tournoi (page d'invitation, avant inscription) */
   "sng:get": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
-  /** le créateur lance son tournoi sans attendre qu'il soit complet (≥ 2 inscrits ; exempts au 1er tour) */
+  /** le créateur lance son tournoi sans attendre qu'il soit complet (≥ 3 inscrits ; exempts au 1er tour) */
   "sng:start": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
 }
 

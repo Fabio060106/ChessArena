@@ -23,7 +23,7 @@ const SNG_ERRORS: Record<string, string> = {
   ALREADY_CREATED: "Tu as déjà un tournoi en attente de joueurs.",
   TOO_MANY_OPEN: "Trop de tournois ouverts en ce moment, réessaie plus tard.",
   BAD_PAYLOAD: "Réglages du tournoi invalides.",
-  NOT_ENOUGH_PLAYERS: "Il faut au moins 2 inscrits pour lancer le tournoi.",
+  NOT_ENOUGH_PLAYERS: "Il faut au moins 3 inscrits pour lancer le tournoi.",
   NOT_CREATOR: "Seul le créateur peut lancer le tournoi.",
   RATE_LIMITED: "Trop d'actions, ralentissez.",
   REAL_MONEY_DISABLED: "Argent réel indisponible : tables en jetons uniquement.",
@@ -336,7 +336,7 @@ function InviteBox({ t }: { t: SngSnapshot }) {
 function StartNow({ t, busy, onStart }: { t: SngSnapshot; busy: boolean; onStart: () => void }) {
   const [confirm, setConfirm] = useState(false);
   const n = t.players.filter((x) => x.status === "registered").length;
-  if (n < 2) return <p className="text-xs text-muted">Tu pourras lancer le tournoi dès qu'il y aura au moins 2 inscrits.</p>;
+  if (n < SNG_MIN_SIZE) return <p className="text-xs text-muted">Tu pourras lancer le tournoi dès qu'il y aura au moins {SNG_MIN_SIZE} inscrits.</p>;
   if (n === t.size) return null; // complet : il démarre tout seul
   const b = bracketInfo(n);
   return confirm ? (

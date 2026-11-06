@@ -316,11 +316,11 @@ describe("SitAndGo — n'importe quel nombre de joueurs, exempts", () => {
     expect(s.players.filter((p) => p.payoutCents > 0).map((p) => p.userId).sort()).toEqual(["u1", "u2"]);
   });
 
-  it("départ anticipé : le créateur lance avec les inscrits présents (au moins 2)", async () => {
+  it("départ anticipé : le créateur lance avec les inscrits présents (au moins 3)", async () => {
     const t = setup(50);
-    await t.fill(1);
-    await expect(t.sng.startNow()).rejects.toMatchObject({ code: "NOT_ENOUGH_PLAYERS" });
-    for (let i = 2; i <= 7; i++) { await t.fund(`u${i}`); await t.sng.register(`u${i}`, 2000 - i * 10); }
+    await t.fill(2);
+    await expect(t.sng.startNow()).rejects.toMatchObject({ code: "NOT_ENOUGH_PLAYERS" }); // 2 inscrits : pas assez
+    for (let i = 3; i <= 7; i++) { await t.fund(`u${i}`); await t.sng.register(`u${i}`, 2000 - i * 10); }
     await t.sng.startNow();
     const s = t.sng.snapshot();
     expect(s.status).toBe("running");
@@ -336,6 +336,7 @@ describe("SitAndGo — n'importe quel nombre de joueurs, exempts", () => {
     const ports = { ledger: new InMemoryLedger(), startGame: async () => "", persist: async () => {}, emit: () => {} };
     const base = { id: "x", formatId: "f", timeControl: "blitz_3_0" as const, currency: "PLAY" as const, buyInCents: 0, rakeBps: 0, payoutBps: [6500, 3500] };
     expect(() => new SitAndGo({ ...base, size: 1 }, ports)).toThrow();
+    expect(() => new SitAndGo({ ...base, size: 2 }, ports)).toThrow(); // à 2, ce n'est pas un tournoi
     expect(() => new SitAndGo({ ...base, size: 129 }, ports)).toThrow();
     expect(() => new SitAndGo({ ...base, size: 2.5 }, ports)).toThrow();
   });
