@@ -504,7 +504,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       const rating = (await repo.getRatings(user.userId))[timeControl].rating;
       try {
         const snapshot = await tournaments.createCustom(
-          { size: p.size as 4 | 6 | 8, timeControl, buyInCents: p.buyInCents as number, name: typeof p.name === "string" ? p.name : undefined },
+          { size: p.size as number, timeControl, buyInCents: p.buyInCents as number, name: typeof p.name === "string" ? p.name : undefined },
           user.userId, rating,
         );
         io.in(userRoom(user.userId)).socketsJoin(tournamentRoom(snapshot.id));
@@ -527,6 +527,17 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       try {
         io.in(userRoom(user.userId)).socketsJoin(tournamentRoom(snap.id));
         reply({ ok: true, snapshot: await tournaments.registerById(snap.id, user.userId, rating) });
+      } catch (e) {
+        reply(customError(e));
+      }
+    }));
+
+    socket.on("sng:start", guard(socket, async (raw: unknown, ack: unknown) => {
+      const reply = sngReply(ack);
+      const tid = (raw as { tournamentId?: unknown } | null)?.tournamentId;
+      if (typeof tid !== "string") return reply({ ok: false, code: "BAD_PAYLOAD" });
+      try {
+        reply({ ok: true, snapshot: await tournaments.startCustom(tid, user.userId) });
       } catch (e) {
         reply(customError(e));
       }

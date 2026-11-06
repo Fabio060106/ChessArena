@@ -94,5 +94,12 @@ export function useTournament(socket: ArenaSocket, userId: string, inviteId: str
     });
   }, [socket]);
 
-  return { lobby, current, invite, register, unregister, create, join, busy, error };
+  /** Le créateur lance son tournoi sans attendre qu'il soit complet. */
+  const start = useCallback((tournamentId: string) => {
+    setBusy(`start:${tournamentId}`);
+    setError(null);
+    socket.emit("sng:start", { tournamentId }, handle(`start:${tournamentId}`));
+  }, [socket]);
+
+  return { lobby, current, invite, register, unregister, create, join, start, busy, error };
 }

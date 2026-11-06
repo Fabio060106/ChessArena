@@ -60,6 +60,8 @@ const ACTIVE: ReadonlyArray<SngPlayerView["status"]> = ["registered", "playing",
 /** Classement live : vainqueur, puis joueurs encore en lice (par tête de série), puis éliminés (les plus tardifs d'abord). */
 export function liveStandings(s: SngSnapshot): StandingRow[] {
   const players = s.players.filter((p) => ACTIVE.includes(p.status));
+  // « en jeu » seulement pendant une partie ; un exempt ou un qualifié qui attend est « en lice »
+  const inGame = new Set(s.rounds.flat().filter((m) => m.status === "playing").flatMap((m) => [m.p1, m.p2]));
   const score = (p: SngPlayerView) =>
     p.finalRank ?? (p.status === "winner" ? 1 : p.status === "eliminated" ? 1000 - (p.eliminatedRound ?? 0) : 0);
   const sorted = [...players].sort((a, b) => score(a) - score(b) || (a.seed ?? 99) - (b.seed ?? 99) || b.rating - a.rating);
@@ -67,7 +69,7 @@ export function liveStandings(s: SngSnapshot): StandingRow[] {
     userId: p.userId,
     rating: p.rating,
     rank: p.finalRank ?? i + 1,
-    state: p.status === "winner" ? "winner" : p.status === "eliminated" ? "eliminated" : p.status === "playing" ? "playing"
+    state: p.status === "winner" ? "winner" : p.status === "eliminated" ? "eliminated" : p.status === "playing" && inGame.has(p.userId) ? "playing"
       : s.status === "registering" ? "waiting" : "alive",
     payoutCents: p.payoutCents,
     eliminatedRound: p.eliminatedRound,
@@ -79,7 +81,15 @@ export function roundLabel(round: number, totalRounds: number): string {
   if (fromEnd === 0) return "Finale";
   if (fromEnd === 1) return "Demi-finales";
   if (fromEnd === 2) return "Quarts de finale";
+  if (fromEnd <= 6) return `${2 ** fromEnd}es de finale`; // 8es, 16es, 32es, 64es
   return `Tour ${round + 1}`;
+}
+
+/** Tableau d'un tournoi à `players` joueurs : taille (puissance de 2), exempts au 1er tour, nombre de tours. */
+export function bracketInfo(players: number): { bracket: number; byes: number; rounds: number } {
+  let bracket = 2;
+  while (bracket < players) bracket *= 2;
+  return { bracket, byes: bracket - players, rounds: Math.log2(bracket) };
 }
 
 /**
@@ -90,6 +100,24 @@ export function currentPairings(s: SngSnapshot): { round: number; label: string;
   if (s.rounds.length === 0) return null;
   const round = s.currentRound > 0 ? s.currentRound - 1 : s.rounds.length - 1;
   return { round, label: roundLabel(round, s.rounds.length - 1), matches: s.rounds[round] ?? [] };
+}
+
+/** Nombre de joueurs engagés : inscrits pendant les inscriptions, puis ceux réellement au départ. */
+export function fieldSize(s: SngSnapshot): number {
+  return s.status === "registering" ? s.size : s.players.filter((p) => p.seed !== null).length || s.size;
+}
+
+/** Le joueur attend-il sans partie (exempt, ou qualifié en attendant la fin du tour) ? */
+export function waitingInfo(s: SngSnapshot, userId: string): "bye" | "qualified" | null {
+  if (s.status !== "running") return null;
+  const me = s.players.find((p) => p.userId === userId);
+  if (!me || me.status !== "playing") return null;
+  const r = s.currentRound > 0 ? s.rounds[s.currentRound - 1] : undefined;
+  const m = r?.find((x) => x.p1 === userId || x.p2 === userId);
+  if (!m) return null;
+  if (m.status === "done" && m.p2 === null && m.round === 1) return "bye";
+  if (m.status === "done" && m.winner === userId) return "qualified";
+  return null;
 }
 
 /** Le tournoi « courant » du joueur : inscrit ou en cours, sinon le dernier terminé. */

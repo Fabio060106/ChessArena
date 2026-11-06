@@ -326,7 +326,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
               </div>
             ) : (
               <TournamentHUD userId={userId} current={sng.current} lobby={sng.lobby} busy={sng.busy} error={sng.error}
-                onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} invite={sng.invite} />
+                onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} onStart={sng.start} invite={sng.invite} />
             )}
           </div>
 

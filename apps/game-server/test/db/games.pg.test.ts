@@ -130,4 +130,21 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect(await store.claim({ id: "beta_player", passwordHash: h, flag: "BE", email: null })).toBe("taken");
     expect((await store.find("beta_player"))!.passwordHash).toBe(h);
   });
+
+  it("tournoi de 50 places : accepté par la base (migration 006), 129 refusé", async () => {
+    const { PgTournamentStore } = await import("../../src/tournaments/TournamentStore.js");
+    const { SitAndGo } = await import("../../src/tournaments/SitAndGo.js");
+    const { InMemoryLedger } = await import("../../src/settlement/ledger.js");
+    const store = new PgTournamentStore(db.pool);
+    const t = new SitAndGo(
+      { id: "00000000-0000-4000-8000-0000000000aa", formatId: "custom:x", size: 50, timeControl: "blitz_3_0", currency: "PLAY", buyInCents: 0, rakeBps: 1000, payoutBps: [6500, 3500], createdBy: "fx", name: "Grand" },
+      { ledger: new InMemoryLedger(), startGame: async (r) => r.gameId, persist: (s) => store.save(s), emit: () => {} },
+    );
+    for (const u of ["t50-a", "t50-b", "t50-c"]) { await repo.ensureUser(u); await t.register(u, 1500); }
+    await t.startNow();
+    await t.flush();
+    const row = (await db.pool.query("SELECT size, status FROM tournaments WHERE id = $1", [t.id])).rows[0];
+    expect(row).toEqual({ size: 50, status: "running" });
+    await expect(db.pool.query("UPDATE tournaments SET size = 129 WHERE id = $1", [t.id])).rejects.toThrow();
+  });
 });

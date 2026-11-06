@@ -62,3 +62,34 @@ describe("fin de partie", () => {
     expect(finalFromPgn("1. e4 e5", 5)).toEqual({});
   });
 });
+
+import { bracketInfo, roundLabel } from "./tournament";
+describe("tournois de taille libre", () => {
+  it("tableau, exempts et noms des tours", () => {
+    expect(bracketInfo(5)).toEqual({ bracket: 8, byes: 3, rounds: 3 });
+    expect(bracketInfo(50)).toEqual({ bracket: 64, byes: 14, rounds: 6 });
+    expect(bracketInfo(2)).toEqual({ bracket: 2, byes: 0, rounds: 1 });
+    expect([0, 1, 2, 3, 4, 5].map((r) => roundLabel(r, 5))).toEqual(["32es de finale", "16es de finale", "8es de finale", "Quarts de finale", "Demi-finales", "Finale"]);
+  });
+});
+
+import { fieldSize, liveStandings, waitingInfo } from "./tournament";
+import type { SngSnapshot } from "@chessarena/shared";
+describe("exempts dans le HUD", () => {
+  it("l'exempt est « en lice » et prévenu ; le nombre de joueurs est celui du départ", () => {
+    const pl = (userId: string, seed: number) => ({ userId, rating: 1500, seed, status: "playing" as const, eliminatedRound: null, finalRank: null, payoutCents: 0 });
+    const s = {
+      id: "t", formatId: "custom:t", size: 7, timeControl: "blitz_3_0", currency: "PLAY", buyInCents: 0, sponsorAddedCents: 0, rakeBps: 1000, payoutBps: [6500, 3500],
+      status: "running", players: [pl("orga", 1), pl("ana", 2), pl("bob", 3)], currentRound: 1, prizePoolCents: 0, rakeCents: 0, cancelReason: null,
+      createdAt: "", startedAt: "", finishedAt: null,
+      rounds: [
+        [{ round: 1, slot: 0, p1: "orga", p2: null, winner: "orga", status: "done", games: [] }, { round: 1, slot: 1, p1: "ana", p2: "bob", winner: null, status: "playing", games: [] }],
+        [{ round: 2, slot: 0, p1: null, p2: null, winner: null, status: "pending", games: [] }],
+      ],
+    } as unknown as SngSnapshot;
+    expect(fieldSize(s)).toBe(3);
+    expect(waitingInfo(s, "orga")).toBe("bye");
+    expect(waitingInfo(s, "ana")).toBeNull();
+    expect(Object.fromEntries(liveStandings(s).map((r) => [r.userId, r.state]))).toEqual({ orga: "alive", ana: "playing", bob: "playing" });
+  });
+});

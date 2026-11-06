@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TIME_CONTROLS, type GameResult, type SngSnapshot } from "@chessarena/shared";
-import { bracketOrder, SitAndGo, SngError, type StartGameRequest } from "./SitAndGo.js";
+import { bracketOrder, bracketSizeFor, SitAndGo, SngError, type StartGameRequest } from "./SitAndGo.js";
 import { acct, InMemoryLedger } from "../settlement/ledger.js";
 import type { FinishedGame } from "../game/GameRoom.js";
 
 const BUY_IN = 500;
 
-function setup(size: 4 | 6 | 8, opts: { buyIn?: number; random?: () => number } = {}) {
+function setup(size: number, opts: { buyIn?: number; random?: () => number } = {}) {
   const ledger = new InMemoryLedger();
   const started: StartGameRequest[] = [];
   const snapshots: SngSnapshot[] = [];
@@ -251,7 +251,7 @@ describe("SitAndGo — robustesse", () => {
   it("rejette une configuration invalide", () => {
     const ports = { ledger: new InMemoryLedger(), startGame: async (r: StartGameRequest) => r.gameId, persist: async () => {}, emit: () => {} };
     const base = { id: "x", formatId: "f", timeControl: "blitz_3_0" as const, currency: "PLAY" as const, buyInCents: 100, rakeBps: 1000 };
-    expect(() => new SitAndGo({ ...base, size: 5 as 4, payoutBps: [10_000] }, ports)).toThrow();
+    expect(() => new SitAndGo({ ...base, size: 1, payoutBps: [10_000] }, ports)).toThrow(); // 5 joueurs est désormais valide
     expect(() => new SitAndGo({ ...base, size: 4, payoutBps: [6000, 3000] }, ports)).toThrow();
   });
 
@@ -267,3 +267,76 @@ describe("SitAndGo — robustesse", () => {
 });
 
 beforeEach(() => vi.restoreAllMocks());
+
+
+describe("SitAndGo — n'importe quel nombre de joueurs, exempts", () => {
+  /** joue tout le tournoi : à chaque partie en cours, la meilleure tête de série gagne */
+  const playOut = async (t: ReturnType<typeof setup>) => {
+    for (let guard = 0; guard < 500 && t.sng.state === "running"; guard++) {
+      const snap = t.sng.snapshot();
+      const live = snap.rounds.flat().find((m) => m.status === "playing");
+      if (!live) break;
+      const seed = (u: string) => snap.players.find((p) => p.userId === u)!.seed!;
+      const fav = seed(live.p1!) < seed(live.p2!) ? live.p1! : live.p2!;
+      await t.win(fav);
+    }
+  };
+
+  it("taille du tableau : puissance de 2 supérieure", () => {
+    expect([2, 3, 4, 5, 8, 9, 50, 64, 65, 128].map(bracketSizeFor)).toEqual([2, 4, 4, 8, 8, 16, 64, 64, 128, 128]);
+  });
+
+  it("5 joueurs : tableau de 8, les têtes de série 1 à 3 exemptes, tournoi jusqu'au bout", async () => {
+    const t = setup(5, { buyIn: 0 });
+    await t.fill(5);
+    const r1 = t.sng.snapshot().rounds[0]!;
+    expect(r1).toHaveLength(4);
+    expect(r1.filter((m) => m.p2 === null).map((m) => m.p1).sort()).toEqual(["u1", "u2", "u3"]);
+    expect(t.started.filter((r) => r.tournament.round === 1)).toHaveLength(1); // seul u4–u5 joue
+    await playOut(t);
+    const s = t.sng.snapshot();
+    expect(s.status).toBe("finished");
+    expect(s.rounds).toHaveLength(3);
+    expect(s.players.find((p) => p.finalRank === 1)!.userId).toBe("u1");
+  });
+
+  it("50 joueurs : tableau de 64, 14 exempts, 6 tours, gains répartis", async () => {
+    const t = setup(50);
+    await t.fill(50);
+    const s0 = t.sng.snapshot();
+    expect(s0.rounds).toHaveLength(6);
+    expect(s0.rounds[0]!.filter((m) => m.p2 === null)).toHaveLength(14);
+    expect(t.started).toHaveLength(18); // 32 matchs − 14 exempts
+    await playOut(t);
+    const s = t.sng.snapshot();
+    expect(s.status).toBe("finished");
+    const pot = 50 * BUY_IN;
+    const paid = s.players.reduce((a, p) => a + p.payoutCents, 0);
+    expect(paid + s.rakeCents).toBe(pot);
+    expect(s.players.filter((p) => p.payoutCents > 0).map((p) => p.userId).sort()).toEqual(["u1", "u2"]);
+  });
+
+  it("départ anticipé : le créateur lance avec les inscrits présents (au moins 2)", async () => {
+    const t = setup(50);
+    await t.fill(1);
+    await expect(t.sng.startNow()).rejects.toMatchObject({ code: "NOT_ENOUGH_PLAYERS" });
+    for (let i = 2; i <= 7; i++) { await t.fund(`u${i}`); await t.sng.register(`u${i}`, 2000 - i * 10); }
+    await t.sng.startNow();
+    const s = t.sng.snapshot();
+    expect(s.status).toBe("running");
+    expect(s.rounds[0]!).toHaveLength(4);
+    expect(s.rounds[0]!.filter((m) => m.p2 === null).map((m) => m.p1)).toEqual(["u1"]);
+    expect(s.prizePoolCents).toBe(7 * BUY_IN - Math.floor(7 * BUY_IN / 10)); // cagnotte = joueurs réellement engagés
+    await expect(t.sng.startNow()).rejects.toMatchObject({ code: "NOT_REGISTERING" });
+    await playOut(t);
+    expect(t.sng.state).toBe("finished");
+  });
+
+  it("refuse une taille hors limites", () => {
+    const ports = { ledger: new InMemoryLedger(), startGame: async () => "", persist: async () => {}, emit: () => {} };
+    const base = { id: "x", formatId: "f", timeControl: "blitz_3_0" as const, currency: "PLAY" as const, buyInCents: 0, rakeBps: 0, payoutBps: [6500, 3500] };
+    expect(() => new SitAndGo({ ...base, size: 1 }, ports)).toThrow();
+    expect(() => new SitAndGo({ ...base, size: 129 }, ports)).toThrow();
+    expect(() => new SitAndGo({ ...base, size: 2.5 }, ports)).toThrow();
+  });
+});

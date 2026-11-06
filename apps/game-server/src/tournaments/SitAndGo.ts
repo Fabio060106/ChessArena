@@ -8,7 +8,7 @@ import { computeRake, settleTournament } from "../settlement/rake.js";
 import type { AuditSink } from "../audit/auditLog.js";
 
 /**
- * Moteur de tournoi Sit & Go — élimination directe (KO), 4, 6 ou 8 joueurs.
+ * Moteur de tournoi — élimination directe (KO), de 2 à 128 joueurs (tables officielles : 4, 6 ou 8).
  *
  * Cycle de vie :
  *   registering ──(table pleine)──▶ running ──(finale jouée)──▶ finished
@@ -25,7 +25,9 @@ import type { AuditSink } from "../audit/auditLog.js";
  * TABLEAU
  *   • Têtes de série par Elo (départage : ordre d'inscription), placement standard
  *     1-8, 4-5, 2-7, 3-6 : les deux meilleurs ne peuvent se croiser qu'en finale.
- *   • À 6 joueurs, tableau de 8 : les têtes de série 1 et 2 sont exemptes au 1er tour.
+ *   • Tableau = puissance de 2 immédiatement supérieure au nombre de joueurs : les meilleures têtes de
+ *     série sont exemptes au 1er tour (6 joueurs → tableau de 8, têtes 1 et 2 exemptes ; 50 → 64, 14 exempts).
+ *   • Le créateur peut lancer un tournoi incomplet (≥ 2 inscrits) : même règle d'exempts.
  *   • Un tour suivant ne démarre que lorsque tous les matchs du tour sont terminés.
  *
  * DÉPARTAGE D'UN MATCH (tie-breakers)
@@ -80,7 +82,7 @@ export interface SitAndGoPorts {
 export class SngError extends Error {
   constructor(readonly code:
     | "NOT_REGISTERING" | "ALREADY_REGISTERED" | "FULL" | "NOT_REGISTERED" | "BUSY"
-    | "INSUFFICIENT_FUNDS" | "INVALID_CONFIG", message?: string) {
+    | "INSUFFICIENT_FUNDS" | "INVALID_CONFIG" | "NOT_ENOUGH_PLAYERS", message?: string) {
     super(message ?? code);
   }
 }
@@ -116,6 +118,13 @@ interface Match {
   games: GameRec[];
 }
 
+/** Taille du tableau : puissance de 2 immédiatement supérieure (ou égale) au nombre de joueurs. */
+export function bracketSizeFor(players: number): number {
+  let b = 2;
+  while (b < players) b *= 2;
+  return b;
+}
+
 /** Ordre de placement des têtes de série dans un tableau de taille 2^k. */
 export function bracketOrder(bracketSize: number): number[] {
   let order = [1];
@@ -142,12 +151,14 @@ export class SitAndGo {
   private cancelReason: string | null = null;
   private rakeCents = 0;
   private finishing = false;
+  /** joueurs réellement au départ (≤ size si le créateur a lancé un tournoi incomplet) */
+  private entrants = 0;
   private readonly createdAt: string;
   private startedAt: string | null = null;
   private finishedAt: string | null = null;
 
   constructor(cfg: SitAndGoConfig, ports: SitAndGoPorts) {
-    if (![4, 6, 8].includes(cfg.size)) throw new SngError("INVALID_CONFIG", "taille 4, 6 ou 8");
+    if (!Number.isInteger(cfg.size) || cfg.size < 2 || cfg.size > 128) throw new SngError("INVALID_CONFIG", "taille de 2 à 128");
     if (cfg.payoutBps.reduce((a, b) => a + b, 0) !== 10_000) throw new SngError("INVALID_CONFIG", "structure de gains ≠ 100 %");
     if (cfg.payoutBps.length > 2) throw new SngError("INVALID_CONFIG", "KO sans petite finale : 2 places payées au plus");
     this.id = cfg.id;
@@ -279,6 +290,15 @@ export class SitAndGo {
     this.changed();
   }
 
+  /** Départ anticipé (tournoi incomplet) : au moins 2 inscrits, aucune inscription en cours de paiement. */
+  async startNow(): Promise<void> {
+    if (this.status !== "registering") throw new SngError("NOT_REGISTERING");
+    if (this.pendingLocks.size > 0) throw new SngError("BUSY");
+    if (this.countStatus("registered") < 2) throw new SngError("NOT_ENOUGH_PLAYERS");
+    this.audit("start_early", { registered: this.countStatus("registered"), size: this.cfg.size });
+    await this.start();
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Déroulement
   // ═══════════════════════════════════════════════════════════════════════════
@@ -290,7 +310,8 @@ export class SitAndGo {
       .sort((a, b) => b.rating - a.rating || a.registeredSeq - b.registeredSeq);
     players.forEach((e, i) => { e.seed = i + 1; e.status = "playing"; });
 
-    const bracketSize = this.cfg.size === 4 ? 4 : 8;
+    this.entrants = players.length;
+    const bracketSize = bracketSizeFor(players.length);
     const order = bracketOrder(bracketSize);
     const bySeed = new Map(players.map((p) => [p.seed!, p.userId]));
     const first: Match[] = [];
@@ -411,7 +432,7 @@ export class SitAndGo {
     const ranking = [winner, finalist, ...others.map((e) => e.userId)];
 
     const plan = settleTournament(
-      this.cfg.buyInCents, this.cfg.size, ranking, this.cfg.payoutBps, this.cfg.rakeBps, this.cfg.sponsorAddedCents,
+      this.cfg.buyInCents, this.entrants, ranking, this.cfg.payoutBps, this.cfg.rakeBps, this.cfg.sponsorAddedCents,
     );
     if (plan.potCents > 0) {
       // Rejoué tant qu'il échoue (clé idempotente) : le résultat sportif est acquis,
@@ -451,7 +472,8 @@ export class SitAndGo {
   // Instantané, persistance, notifications
   // ═══════════════════════════════════════════════════════════════════════════
   snapshot(): SngSnapshot {
-    const rake = this.status === "finished" ? this.rakeCents : computeRake(this.cfg.buyInCents * this.cfg.size, this.cfg.rakeBps);
+    const field = this.entrants || this.cfg.size; // après le départ : les joueurs réellement engagés
+    const rake = this.status === "finished" ? this.rakeCents : computeRake(this.cfg.buyInCents * field, this.cfg.rakeBps);
     return {
       id: this.id, formatId: this.cfg.formatId, createdBy: this.cfg.createdBy, name: this.cfg.name,
       size: this.cfg.size, timeControl: this.cfg.timeControl,
@@ -459,7 +481,7 @@ export class SitAndGo {
       rakeBps: this.cfg.rakeBps, payoutBps: [...this.cfg.payoutBps], status: this.status,
       players: [...this.entries.values()]
         .filter((e) => e.status !== "unregistered")
-        .sort((a, b) => (a.seed ?? 99) - (b.seed ?? 99) || a.registeredSeq - b.registeredSeq)
+        .sort((a, b) => (a.seed ?? 999) - (b.seed ?? 999) || a.registeredSeq - b.registeredSeq)
         .map((e) => ({
           userId: e.userId, rating: e.rating, seed: e.seed, status: e.status,
           eliminatedRound: e.eliminatedRound, finalRank: e.finalRank, payoutCents: e.payoutCents,
@@ -471,7 +493,7 @@ export class SitAndGo {
         })),
       }))),
       currentRound: this.rounds.findIndex((r) => r.some((m) => m.status !== "done")) + 1,
-      prizePoolCents: this.cfg.buyInCents * this.cfg.size - rake + this.cfg.sponsorAddedCents,
+      prizePoolCents: this.cfg.buyInCents * field - rake + this.cfg.sponsorAddedCents,
       rakeCents: this.status === "finished" ? this.rakeCents : 0,
       cancelReason: this.cancelReason,
       createdAt: this.createdAt, startedAt: this.startedAt, finishedAt: this.finishedAt,

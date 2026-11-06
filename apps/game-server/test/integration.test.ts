@@ -245,7 +245,7 @@ describe("partie complète", () => {
 });
 
 describe("tournois créés par les joueurs, historique, HUD", () => {
-  const sng = <E extends "sng:create" | "sng:join" | "sng:get">(c: Client, ev: E, p: Parameters<ClientToServerEvents[E]>[0]) =>
+  const sng = <E extends "sng:create" | "sng:join" | "sng:get" | "sng:start">(c: Client, ev: E, p: Parameters<ClientToServerEvents[E]>[0]) =>
     new Promise<SngAck>((res) => (c.emit as (e: string, p: unknown, cb: (r: SngAck) => void) => void)(ev, p, res));
 
   it("créer un tournoi gratuit à 4, le rejoindre par son id ; il démarre quand il est complet", async () => {
@@ -260,7 +260,7 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     expect(t.formatId).toMatch(/^custom:/);
     // second tournoi du même créateur refusé ; valeurs hors bornes refusées
     expect(await sng(cs[0]!, "sng:create", { size: 4, timeControl: "blitz_3_0", buyInCents: 0 })).toMatchObject({ ok: false, code: "IN_TOURNAMENT" });
-    expect(await sng(cs[1]!, "sng:create", { size: 5 as 4, timeControl: "blitz_3_0", buyInCents: 0 })).toMatchObject({ ok: false, code: "BAD_PAYLOAD" });
+    expect(await sng(cs[1]!, "sng:create", { size: 129, timeControl: "blitz_3_0", buyInCents: 0 })).toMatchObject({ ok: false, code: "BAD_PAYLOAD" });
     expect(await sng(cs[1]!, "sng:create", { size: 4, timeControl: "blitz_3_0", buyInCents: 999_999 })).toMatchObject({ ok: false, code: "BAD_PAYLOAD" });
     // page d'invitation : état lisible sans être inscrit
     expect(await sng(cs[1]!, "sng:get", { tournamentId: t.id })).toMatchObject({ ok: true, snapshot: { id: t.id } });
@@ -322,6 +322,31 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     });
     expect(net.rttMs.w).toBeLessThan(1000);
     white.emit("game:resign", { gameId: start.gameId });
+  });
+});
+
+describe("tournoi de taille libre, départ anticipé par le créateur", () => {
+  const sng = (c: Client, ev: string, p: unknown) =>
+    new Promise<SngAck>((res) => (c.emit as (e: string, p: unknown, cb: (r: SngAck) => void) => void)(ev, p, res));
+
+  it("tournoi de 50 places lancé à 3 : seul le créateur peut le lancer, la tête de série 1 est exempte", async () => {
+    const names = ["fx-ana", "fx-ben", "fx-cleo"];
+    const cs = names.map((n) => client({ token: token({ sub: n }) }));
+    await Promise.all(cs.map(connected));
+    const created = await sng(cs[0]!, "sng:create", { size: 50, timeControl: "blitz_3_0", buyInCents: 0, name: "Grand tournoi" });
+    expect(created).toMatchObject({ ok: true, snapshot: { size: 50, status: "registering" } });
+    if (!created.ok) return;
+    const id = created.snapshot.id;
+    expect(await sng(cs[0]!, "sng:start", { tournamentId: id })).toMatchObject({ ok: false, code: "NOT_ENOUGH_PLAYERS" });
+    for (const c of cs.slice(1)) expect((await sng(c, "sng:join", { tournamentId: id })).ok).toBe(true);
+    expect(await sng(cs[1]!, "sng:start", { tournamentId: id })).toMatchObject({ ok: false, code: "NOT_CREATOR" });
+    const started = await sng(cs[0]!, "sng:start", { tournamentId: id });
+    expect(started).toMatchObject({ ok: true, snapshot: { status: "running", size: 50 } });
+    if (!started.ok) return;
+    const r1 = started.snapshot.rounds[0]!;
+    expect(r1).toHaveLength(2); // 3 joueurs → tableau de 4
+    expect(r1.filter((m) => m.p2 === null)).toHaveLength(1);
+    expect(started.snapshot.rounds).toHaveLength(2);
   });
 });
 

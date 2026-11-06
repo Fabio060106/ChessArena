@@ -190,6 +190,7 @@ describe("HUD Sit & Go", () => {
         pl("late", { status: "eliminated", eliminatedRound: 1, seed: 3 }),
         pl("gone", { status: "unregistered" }),
       ],
+      rounds: [[{ round: 2, slot: 0, p1: "playing", p2: "x", winner: null, status: "playing", games: [] }]],
     }));
     expect(rows.map((r) => [r.userId, r.state])).toEqual([
       ["playing", "playing"], ["alive", "alive"], ["late", "eliminated"], ["early", "eliminated"],

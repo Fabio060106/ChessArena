@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { TIME_CONTROLS, type SngCreatePayload, type SngFormat, type SngSnapshot } from "@chessarena/shared";
+import { SNG_MAX_SIZE, SNG_MIN_SIZE, TIME_CONTROLS, type SngCreatePayload, type SngFormat, type SngSnapshot } from "@chessarena/shared";
 import { SitAndGo, type StartGameRequest } from "./SitAndGo.js";
 import type { TournamentStore } from "./TournamentStore.js";
 import type { Ledger } from "../settlement/ledger.js";
@@ -30,7 +30,7 @@ export const CUSTOM_LIMITS = {
 } as const;
 
 export class CustomTournamentError extends Error {
-  constructor(readonly code: "BAD_PAYLOAD" | "TOO_MANY_OPEN" | "ALREADY_CREATED") { super(code); }
+  constructor(readonly code: "BAD_PAYLOAD" | "TOO_MANY_OPEN" | "ALREADY_CREATED" | "NOT_CREATOR") { super(code); }
 }
 
 /**
@@ -62,7 +62,9 @@ export class TournamentManager {
    * payer l'entrée, le tournoi n'est pas créé). Un tournoi en inscription par créateur.
    */
   async createCustom(p: SngCreatePayload, creator: string, rating: number): Promise<SngSnapshot> {
-    if (![4, 6, 8].includes(p.size) || !(p.timeControl in TIME_CONTROLS)) throw new CustomTournamentError("BAD_PAYLOAD");
+    if (!Number.isInteger(p.size) || p.size < SNG_MIN_SIZE || p.size > SNG_MAX_SIZE || !(p.timeControl in TIME_CONTROLS)) {
+      throw new CustomTournamentError("BAD_PAYLOAD");
+    }
     if (!Number.isSafeInteger(p.buyInCents) || p.buyInCents < 0 || p.buyInCents > CUSTOM_LIMITS.maxBuyInCents) {
       throw new CustomTournamentError("BAD_PAYLOAD");
     }
@@ -91,6 +93,16 @@ export class TournamentManager {
     }
     this.deps.emitLobby(this.lobby());
     return t.snapshot();
+  }
+
+  /** Le créateur lance son tournoi sans attendre qu'il soit complet. */
+  async startCustom(tournamentId: string, userId: string): Promise<SngSnapshot> {
+    const c = this.customOpen.get(tournamentId);
+    if (!c) throw new Error("UNKNOWN_TOURNAMENT");
+    if (c.createdBy !== userId) throw new CustomTournamentError("NOT_CREATOR");
+    await c.t.startNow();
+    this.deps.emitLobby(this.lobby());
+    return c.t.snapshot();
   }
 
   /** Inscription à un tournoi précis (lien d'invitation ou carte du lobby). */
@@ -171,7 +183,7 @@ export class TournamentManager {
     const t: SitAndGo = new SitAndGo(
       {
         id: extra.id ?? randomUUID(), formatId: f.id, size: f.size, timeControl: f.timeControl, currency: f.currency,
-        buyInCents: f.buyInCents, rakeBps: this.deps.rakeBps, payoutBps: SIT_AND_GO_STRUCTURES[f.size],
+        buyInCents: f.buyInCents, rakeBps: this.deps.rakeBps, payoutBps: SIT_AND_GO_STRUCTURES[f.size as 4 | 6 | 8] ?? [6_500, 3_500],
         createdBy: extra.createdBy ?? null, name: extra.name ?? null,
       },
       {
