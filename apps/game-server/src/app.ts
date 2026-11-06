@@ -21,6 +21,7 @@ import { WithdrawalService, type Psp } from "./settlement/withdrawals.js";
 import { FairPlayEnforcer } from "./fairplay/FairPlayEnforcer.js";
 import { ModerationService } from "./fairplay/ModerationService.js";
 import { handleApi } from "./http/api.js";
+import { AccountService, InMemoryAccountStore, PgAccountStore, type AccountStore } from "./auth/accounts.js";
 import type { Worker } from "bullmq";
 import { TokenBucket } from "./net/rateLimiter.js";
 import { LagTracker } from "./net/lagTracker.js";
@@ -50,6 +51,8 @@ export interface GameServerDeps {
   ledger?: Ledger;
   audit?: AuditSink;
   repo?: GameRepository;
+  /** comptes joueurs (tests : stockage en mémoire injecté) */
+  accountStore?: AccountStore;
   tournamentStore?: TournamentStore;
   psp?: Psp;
   /** résolveur IP → pays (tests) ; sinon chargé depuis cfg.geoIpCsvPath */
@@ -103,6 +106,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const limits = pool ? new LimitsService(pool, audit) : null;
   const ledger: Ledger = deps.ledger ?? (pool ? new PgLedger(pool, { audit, policy: limits!.ledgerPolicy }) : new InMemoryLedger());
   const repo: GameRepository = deps.repo ?? (pool ? new PgGameRepository(pool) : new InMemoryGameRepository());
+  const accounts = new AccountService(deps.accountStore ?? (pool ? new PgAccountStore(pool) : new InMemoryAccountStore()));
   const store: TournamentStore = deps.tournamentStore ?? (pool ? new PgTournamentStore(pool) : new InMemoryTournamentStore());
 
   // ─── Argent réel, fair-play, modération (nécessitent PostgreSQL) ──────────────
@@ -131,8 +135,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   let withdrawalTimer: ReturnType<typeof setInterval> | null = null;
 
   const http = createServer((req, res) => {
-    if (/^\/(admin|wallet|account|kyc)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo });
+    if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
+      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts });
       return;
     }
     if (req.url === "/health") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");

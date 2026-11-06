@@ -324,3 +324,25 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     white.emit("game:resign", { gameId: start.gameId });
   });
 });
+
+describe("comptes via HTTP (jeton de service du serveur web)", () => {
+  const svc = () => jwt.sign({ sub: "web" }, SECRET, { audience: "chessarena-auth-service", expiresIn: 60 });
+  const post = (path: string, body: unknown, auth = svc()) => fetch(`${url}${path}`, {
+    method: "POST", headers: { authorization: `Bearer ${auth}`, "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+
+  it("inscription puis connexion ; refusé sans jeton de service ; le compte peut ensuite jouer", async () => {
+    const r1 = await post("/auth/signup", { pseudo: "Http_Player", password: "un-bon-mdp-1", flag: "FR", adult: true, terms: true });
+    expect(r1.status).toBe(200);
+    expect(await r1.json()).toEqual({ userId: "Http_Player", flag: "FR" });
+    const r2 = await post("/auth/login", { pseudo: "http_player", password: "un-bon-mdp-1" });
+    expect(await r2.json()).toEqual({ userId: "Http_Player", flag: "FR" });
+    expect((await post("/auth/login", { pseudo: "Http_Player", password: "faux" })).status).toBe(401);
+    // un jeton de joueur (sans audience) ne permet pas d'appeler /auth/*
+    expect((await post("/auth/login", { pseudo: "Http_Player", password: "un-bon-mdp-1" }, token({ sub: "x" }))).status).toBe(401);
+    // et le jeton de service ne permet pas de jouer
+    const c = client({ token: svc() });
+    const err = await new Promise<string>((res) => c.on("connect_error", (e) => res(e.message)));
+    expect(err).toMatch(/token invalide/);
+  });
+});

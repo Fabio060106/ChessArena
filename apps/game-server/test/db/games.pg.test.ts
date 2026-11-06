@@ -115,4 +115,19 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect((await repo.getRepertoire("rep-a"))!.data).toEqual({ v: 1, choices: { x: "d2d4" } });
     expect(await repo.getRepertoire("rep-b")).toBeNull();
   });
+
+  it("comptes : création, unicité sans casse, e-mail unique, réclamation d'un pseudo de la bêta", async () => {
+    const { PgAccountStore, hashPassword } = await import("../../src/auth/accounts.js");
+    const store = new PgAccountStore(db.pool);
+    const h = await hashPassword("mot-de-passe-1");
+    expect(await store.create({ id: "Acc_One", passwordHash: h, flag: "FR", email: "one@example.com" })).toBe("ok");
+    expect(await store.create({ id: "acc_one", passwordHash: h, flag: null, email: null })).toBe("taken");
+    expect(await store.create({ id: "acc_two", passwordHash: h, flag: null, email: "ONE@example.com" })).toBe("email_taken");
+    expect(await store.find("ACC_ONE")).toMatchObject({ id: "Acc_One", flag: "FR", state: "active" });
+    await repo.ensureUser("beta_player"); // pseudo créé pendant la bêta, sans mot de passe
+    expect((await store.find("beta_player"))!.passwordHash).toBeNull();
+    expect(await store.claim({ id: "beta_player", passwordHash: h, flag: "BE", email: null })).toBe("ok");
+    expect(await store.claim({ id: "beta_player", passwordHash: h, flag: "BE", email: null })).toBe("taken");
+    expect((await store.find("beta_player"))!.passwordHash).toBe(h);
+  });
 });

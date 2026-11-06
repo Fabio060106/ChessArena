@@ -13,6 +13,10 @@ import { LedgerError } from "../settlement/ledger.js";
 import type { GeoFilter, KillSwitch } from "../net/geoFilter.js";
 import { ExportError, type RegulatoryExporter } from "../audit/regulatoryExport.js";
 import { TokenBucket } from "../net/rateLimiter.js";
+import { AccountError, type AccountService } from "../auth/accounts.js";
+
+/** Audience du jeton de service émis par le serveur web pour les routes /auth/* (jamais par un navigateur). */
+export const AUTH_SERVICE_AUDIENCE = "chessarena-auth-service";
 
 /**
  * API REST du game-server (même port que le WebSocket).
@@ -55,6 +59,8 @@ export interface ApiDeps {
   pool?: pg.Pool | null;
   /** historique des parties */
   repo?: GameRepository | null;
+  /** comptes joueurs (pseudo + mot de passe) */
+  accounts?: AccountService | null;
 }
 
 class HttpError extends Error {
@@ -67,6 +73,7 @@ function auth(req: IncomingMessage, cfg: GameServerConfig): ArenaJwtClaims {
   try {
     const c = jwt.verify(h.slice(7), cfg.jwtSecret, { algorithms: ["HS256"] }) as ArenaJwtClaims;
     if (typeof c.sub !== "string" || !/^[^:\s]{1,64}$/.test(c.sub)) throw new Error();
+    if ((c as { aud?: unknown }).aud !== undefined) throw new Error(); // ni session web ni jeton de service
     return c;
   } catch {
     throw new HttpError(401, "UNAUTHORIZED");
@@ -135,7 +142,7 @@ function securityHeaders(res: ServerResponse, cfg: GameServerConfig): void {
 /** Retourne true si la requête a été prise en charge. */
 export async function handleApi(req: IncomingMessage, res: ServerResponse, d: ApiDeps): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://x");
-  if (!/^\/(admin|wallet|account|kyc)\//.test(url.pathname)) return false;
+  if (!/^\/(admin|wallet|account|kyc|auth)\//.test(url.pathname)) return false;
 
   securityHeaders(res, d.cfg);
   const send = (status: number, payload: unknown) => res.writeHead(status, { "content-type": "application/json; charset=utf-8" }).end(JSON.stringify(payload));
@@ -165,6 +172,33 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       try { parsed = JSON.parse(raw); } catch { throw new HttpError(400, "BAD_JSON"); }
       const r = await kyc.applyProviderResult(KycService.parseWebhook(parsed));
       send(200, { received: true, duplicate: r.duplicate });
+      return true;
+    }
+
+    // ─── Comptes : appelés par le serveur web avec un jeton de service ─────────────
+    if (url.pathname === "/auth/signup" || url.pathname === "/auth/login") {
+      if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED");
+      const h = req.headers.authorization;
+      try {
+        if (!h?.startsWith("Bearer ") || !d.cfg.jwtSecret) throw new Error();
+        jwt.verify(h.slice(7), d.cfg.jwtSecret, { algorithms: ["HS256"], audience: AUTH_SERVICE_AUDIENCE });
+      } catch { throw new HttpError(401, "UNAUTHORIZED"); }
+      const accounts = need(d.accounts);
+      const b = await body(req);
+      const str = (v: unknown) => (typeof v === "string" ? v : "");
+      const clientIp = str(b.clientIp).slice(0, 64);
+      try {
+        const u = url.pathname === "/auth/signup"
+          ? await accounts.signup({
+              pseudo: str(b.pseudo), password: str(b.password), flag: str(b.flag) || null, email: str(b.email) || null,
+              adult: b.adult === true, terms: b.terms === true, betaCodeOk: b.betaCodeOk === true, clientIp,
+            })
+          : await accounts.login({ pseudo: str(b.pseudo), password: str(b.password), clientIp });
+        send(200, u);
+      } catch (e) {
+        if (e instanceof AccountError) { send(e.status, { error: e.code }); return true; }
+        throw e;
+      }
       return true;
     }
 

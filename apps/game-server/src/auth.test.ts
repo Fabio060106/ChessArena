@@ -27,6 +27,9 @@ describe("authenticate", () => {
     expect(() => authenticate({ token: jwt.sign({ foo: 1 }, SECRET) }, cfg)).toThrow("sub manquant");
     const unsigned = `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from('{"sub":"u"}').toString("base64url")}.`;
     expect(() => authenticate({ token: unsigned }, cfg)).toThrow("token invalide");
+    // jeton de service du serveur web ou cookie de session : jamais acceptés pour jouer
+    expect(() => authenticate({ token: jwt.sign({ sub: "web" }, cfg.jwtSecret!, { audience: "chessarena-auth-service" }) }, cfg)).toThrow("token invalide");
+    expect(() => authenticate({ token: jwt.sign({ sub: "fabio" }, cfg.jwtSecret!, { audience: "chessarena-web-session-v2" }) }, cfg)).toThrow("token invalide");
   });
 
   it("DEV_AUTH : userId en clair accepté seulement si activé", () => {

@@ -2,16 +2,16 @@ import { timingSafeEqual } from "node:crypto";
 import jwt from "jsonwebtoken";
 
 /**
- * Accès bêta (en attendant la vraie authentification) : un code d'invitation partagé
- * (BETA_ACCESS_CODE) + un pseudo. La session est un cookie httpOnly signé (30 jours) ;
- * le jeton de jeu (15 min) en est dérivé à chaque connexion au serveur de jeu.
+ * Session web : cookie httpOnly signé (30 jours), créé après inscription ou connexion
+ * (pseudo + mot de passe, vérifiés par le serveur de jeu qui garde les comptes).
+ * Le jeton de jeu (15 min) en est dérivé à chaque connexion au serveur de jeu.
  *
- * Limite assumée : le pseudo n'est pas réservé. Deux personnes ayant le code peuvent
- * choisir le même pseudo. Suffisant pour une bêta fermée entre testeurs de confiance,
- * en jetons PLAY uniquement.
+ * BETA_ACCESS_CODE ne sert plus qu'à réclamer un pseudo créé pendant la bêta sans mot de passe.
+ * L'audience « v2 » invalide les anciennes sessions bêta (pseudo seul, sans mot de passe).
  */
 export const SESSION_COOKIE = "arena_session";
-const SESSION_AUDIENCE = "chessarena-web-session";
+const SESSION_AUDIENCE = "chessarena-web-session-v2";
+const AUTH_SERVICE_AUDIENCE = "chessarena-auth-service";
 export const SESSION_MAX_AGE_S = 30 * 24 * 3600;
 
 export interface BetaSession {
@@ -58,4 +58,9 @@ export function signGameToken(s: BetaSession, key: string): string {
   return jwt.sign({ sub: s.userId, state: "active", kyc: false, ...(s.flag ? { flag: s.flag } : {}) }, key, {
     algorithm: "HS256", expiresIn: "15m",
   });
+}
+
+/** Jeton de service (1 min) : seul le serveur web peut appeler /auth/signup et /auth/login du serveur de jeu. */
+export function signServiceToken(key: string): string {
+  return jwt.sign({ sub: "web" }, key, { algorithm: "HS256", audience: AUTH_SERVICE_AUDIENCE, expiresIn: 60 });
 }

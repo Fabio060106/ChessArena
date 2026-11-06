@@ -260,4 +260,15 @@ describe("accès bêta", () => {
     expect(game).toMatchObject({ sub: "fabio", flag: "FR", state: "active", kyc: false });
     expect(Number(game.exp) - Number(game.iat)).toBe(900);
   });
+
+  it("comptes : les anciennes sessions bêta (pseudo seul) ne sont plus valides ; le jeton de service n'est pas une session", async () => {
+    const { readSession, signServiceToken } = await import("./betaSession");
+    const jwt = (await import("jsonwebtoken")).default;
+    const key = "k".repeat(40);
+    const old = jwt.sign({ sub: "fabio" }, key, { algorithm: "HS256", audience: "chessarena-web-session", expiresIn: 3600 });
+    expect(readSession(old, key)).toBeNull();
+    expect(readSession(signServiceToken(key), key)).toBeNull();
+    const svc = jwt.verify(signServiceToken(key), key, { audience: "chessarena-auth-service" }) as Record<string, unknown>;
+    expect(Number(svc.exp) - Number(svc.iat)).toBe(60);
+  });
 });

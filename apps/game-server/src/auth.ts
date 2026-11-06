@@ -53,6 +53,8 @@ export function authenticate(handshakeAuth: Record<string, unknown>, cfg: GameSe
   } catch (e) {
     throw new AuthError(e instanceof jwt.TokenExpiredError ? "token expiré" : "token invalide");
   }
+  // un jeton de jeu n'a pas d'audience : session web et jeton de service (qui en ont une) sont refusés
+  if (claims.aud !== undefined) throw new AuthError("token invalide");
   if (typeof claims.sub !== "string" || !claims.sub) throw new AuthError("sub manquant");
   // le `sub` sert de segment de nom de compte comptable (user:<sub>:<CUR>)
   if (!/^[^:\s]{1,64}$/.test(claims.sub)) throw new AuthError("sub invalide");
