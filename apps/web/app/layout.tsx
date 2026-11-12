@@ -21,7 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="fr" suppressHydrationWarning>
       <head>
         {/* applique l'interface choisie AVANT l'affichage (pas de flash sombre pour l'interface sobre) */}
-        <script dangerouslySetInnerHTML={{ __html: `try{var s=JSON.parse(localStorage.getItem("arena.settings.v1")||"{}");if(s.ui==="sobre")document.documentElement.dataset.ui="sobre";if(s.largeText)document.documentElement.dataset.text="large"}catch(e){}` }} />
+        <script dangerouslySetInnerHTML={{ __html: `try{var s=JSON.parse(localStorage.getItem("arena.settings.v1")||"{}");if(s.ui==="sobre"||(s.ui==="auto"&&matchMedia("(prefers-color-scheme: light)").matches))document.documentElement.dataset.ui="sobre";if(s.largeText)document.documentElement.dataset.text="large"}catch(e){}` }} />
       </head>
       <body className="bg-white text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100">{children}</body>
     </html>

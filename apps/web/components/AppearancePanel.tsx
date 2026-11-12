@@ -80,10 +80,13 @@ export function AppearancePanel({ onClose }: { onClose: () => void }) {
                 </button>
               </div>
               <div className="mt-3 flex flex-col gap-2 text-sm">
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" className="size-4" checked={s.ui === "sobre"} onChange={(e) => update({ ui: e.target.checked ? "sobre" : "arena" })} />
-                  Interface claire et sobre (sans néons)
-                </label>
+                <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Thème de l'interface">
+                  <span>Thème :</span>
+                  {([["arena", "🌙 Sombre"], ["sobre", "☀️ Clair"], ["auto", "🖥 Automatique"]] as const).map(([v, label]) => (
+                    <button key={v} type="button" role="radio" aria-checked={s.ui === v} onClick={() => update({ ui: v })}
+                      className={`rounded-lg border px-2.5 py-1 text-sm ${s.ui === v ? "border-neon bg-neon/10 font-semibold" : "border-line hover:bg-surface-2"}`}>{label}</button>
+                  ))}
+                </div>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" className="size-4" checked={s.largeText} onChange={(e) => update({ largeText: e.target.checked })} />
                   Texte plus grand

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { useRouter } from "next/navigation";
 
 const FLAGS = ["", "FR", "BE", "CH", "CA", "MA", "DZ", "TN", "SN", "CI", "DE", "ES", "IT", "PT", "GB", "US", "BR", "SG"];
@@ -64,7 +65,8 @@ export default function Home() {
   const switchTo = (m: "signup" | "login" | "reset") => { setMode(m); setError(null); };
 
   return (
-    <main className="arena-app grid place-items-center overflow-x-hidden px-4 py-8">
+    <main className="arena-app relative grid place-items-center overflow-x-hidden px-4 py-8">
+      <ThemeToggle className="absolute right-3 top-3" />
       <div className="w-full max-w-sm">
         <div className="mb-4 text-center">
           <h1 className="font-display text-4xl font-bold tracking-tight">Chess<span className="text-neon">Arena</span></h1>

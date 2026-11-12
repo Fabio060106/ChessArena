@@ -16,8 +16,8 @@ export interface Settings {
   soundOn: boolean;
   volume: number;
   coordinates: boolean;
-  /** interface : « arena » (sombre, néons) ou « sobre » (claire, calme) */
-  ui: "arena" | "sobre";
+  /** interface : « arena » (sombre), « sobre » (claire, calme) ou « auto » (suit le réglage de l'appareil) */
+  ui: "arena" | "sobre" | "auto";
   /** texte plus grand partout */
   largeText: boolean;
 }
@@ -42,12 +42,19 @@ export function parseSettings(raw: string | null): Settings {
       soundOn: typeof v.soundOn === "boolean" ? v.soundOn : DEFAULT_SETTINGS.soundOn,
       volume: typeof v.volume === "number" && v.volume >= 0 && v.volume <= 1 ? v.volume : DEFAULT_SETTINGS.volume,
       coordinates: typeof v.coordinates === "boolean" ? v.coordinates : DEFAULT_SETTINGS.coordinates,
-      ui: v.ui === "sobre" ? "sobre" : "arena",
+      ui: v.ui === "sobre" || v.ui === "auto" ? v.ui : "arena",
       largeText: v.largeText === true,
     };
   } catch {
     return DEFAULT_SETTINGS;
   }
+}
+
+/** L'interface affichée est-elle claire ? (« auto » : selon le réglage clair / sombre de l'appareil) */
+export function isLight(ui: Settings["ui"]): boolean {
+  if (ui === "sobre") return true;
+  if (ui === "arena") return false;
+  return typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: light)").matches === true;
 }
 
 // Une seule source de vérité par onglet : le panneau « Apparence » et tous les plateaux de la page restent synchronisés.
@@ -75,8 +82,14 @@ export function useSettings() {
   useEffect(() => {
     if (!loaded) return; // pas d'effacement avant lecture des réglages (sinon flash)
     const el = document.documentElement;
-    if (settings.ui === "sobre") el.dataset.ui = "sobre"; else delete el.dataset.ui;
     if (settings.largeText) el.dataset.text = "large"; else delete el.dataset.text;
+    const apply = () => { if (isLight(settings.ui)) el.dataset.ui = "sobre"; else delete el.dataset.ui; };
+    apply();
+    if (settings.ui !== "auto") return;
+    // mode automatique : suit le passage jour / nuit de l'appareil en direct
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
   }, [loaded, settings.ui, settings.largeText]);
   useEffect(() => {
     sound.setMuted(!settings.soundOn);

@@ -1,0 +1,9 @@
+# dépendances et fichiers générés : jamais dans le dépôt
+node_modules/
+.next/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

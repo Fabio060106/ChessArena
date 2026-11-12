@@ -1,5 +1,6 @@
 "use client";
 import { AppearanceButton } from "./AppearancePanel";
+import { ThemeToggle } from "./ThemeToggle";
 import { useSettings } from "../lib/settings";
 
 const LINKS = [
@@ -25,6 +26,7 @@ export function SiteNav({ active }: { active?: (typeof LINKS)[number][0] }) {
             </a>
           </li>
         ))}
+        <li><ThemeToggle /></li>
         <li><AppearanceButton /></li>
       </ul>
     </nav>
