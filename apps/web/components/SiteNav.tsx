@@ -1,4 +1,5 @@
 "use client";
+import { AppearanceButton } from "./AppearancePanel";
 
 const LINKS = [
   ["/play", "Jouer"],
@@ -22,6 +23,7 @@ export function SiteNav({ active }: { active?: (typeof LINKS)[number][0] }) {
             </a>
           </li>
         ))}
+        <li><AppearanceButton /></li>
       </ul>
     </nav>
   );

@@ -41,6 +41,8 @@ export interface GameRepository {
   /** Profil public d'un joueur (pseudo insensible à la casse) ; null s'il n'existe pas. */
   getProfile(pseudo: string): Promise<Omit<PlayerProfile, "liveGameId"> | null>;
   /** Classement d'une cadence (joueurs ayant au moins une partie classée) + la place de `me`. */
+  /** Toutes les parties terminées d'un joueur (PGN), de la plus ancienne à la plus récente : export complet. */
+  exportPgns(userId: string, max: number): Promise<string[]>;
   leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }>;
 }
 
@@ -216,6 +218,14 @@ export class PgGameRepository implements GameRepository {
     };
   }
 
+  async exportPgns(userId: string, max: number): Promise<string[]> {
+    const r = await this.pool.query<{ pgn: string }>(
+      `SELECT pgn FROM games WHERE (white_id = $1 OR black_id = $1) AND termination <> 'aborted' AND pgn <> ''
+        ORDER BY ended_at ASC LIMIT $2`, [userId, Math.min(Math.max(1, max), 20_000)],
+    );
+    return r.rows.map((x) => x.pgn);
+  }
+
   async leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }> {
     const n = Math.min(Math.max(1, Math.floor(limit)), 200);
     const r = await this.pool.query<{ user_id: string; rating: number; games: number; peak: number; display_flag: string | null; rank: string }>(
@@ -389,6 +399,13 @@ export class InMemoryGameRepository implements GameRepository {
       totals: { games: all.length, wins: all.filter((g) => g.outcome === "win").length, draws: all.filter((g) => g.outcome === "draw").length, losses: all.filter((g) => g.outcome === "loss").length },
       recent: all.slice(0, 10),
     };
+  }
+
+  async exportPgns(userId: string, max: number): Promise<string[]> {
+    return [...this.games.values()]
+      .filter((e) => (e.game.white.userId === userId || e.game.black.userId === userId) && e.game.termination !== "aborted")
+      .sort((a, b) => +(a.endedAt ?? 0) - +(b.endedAt ?? 0))
+      .slice(0, max).map((e) => e.game.pgn);
   }
 
   async leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }> {

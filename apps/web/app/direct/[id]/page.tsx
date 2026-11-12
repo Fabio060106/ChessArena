@@ -98,7 +98,7 @@ function Watch({ gameId, me }: { gameId: string; me: string }) {
         {card(top)}
         <div className="relative">
           <GameBoard fen={fen} serverFen={fen} orientation={bottom} myColor={bottom} interactive={false} myTurn={false}
-            lastMove={lastMove} premoves={[]} theme={settings.boardTheme} coordinates={settings.coordinates}
+            lastMove={lastMove} premoves={[]} theme={settings.boardTheme} pieceSet={settings.pieceSet} palette={settings.palette} coordinates={settings.coordinates}
             onMove={() => false} onCancelPremoves={() => {}} />
           {browsing && (
             <button type="button" onClick={() => setBrowse(null)}

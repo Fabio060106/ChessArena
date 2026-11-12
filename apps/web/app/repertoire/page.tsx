@@ -240,7 +240,7 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy }: {
           ))}
         </div>
         <GameBoard fen={fen} serverFen={fen} orientation={tree.color} myColor={tree.color} interactive={false} myTurn={false}
-          lastMove={line.at(-1)?.uci ?? null} premoves={[]} theme={settings.boardTheme} coordinates={settings.coordinates}
+          lastMove={line.at(-1)?.uci ?? null} premoves={[]} theme={settings.boardTheme} pieceSet={settings.pieceSet} palette={settings.palette} coordinates={settings.coordinates}
           onMove={() => false} onCancelPremoves={() => {}} arrows={arrows} />
         <div className="flex gap-1.5">
           <button type="button" className="flex-1 rounded-lg bg-surface-2 px-3 py-2 text-lg text-muted hover:text-text disabled:opacity-30" onClick={() => setLine([])} disabled={!line.length} aria-label="Début">⏮</button>
@@ -406,7 +406,7 @@ function Training({ cardKey, doc, due, paths, engine, update, onNext, onDone }: 
         <p className="text-sm text-muted">{lineLabel(p)} <span className="font-semibold text-text">{moveNo} ?</span></p>
         <GameBoard fen={fen} serverFen={fen} orientation={card.color} myColor={card.color}
           interactive={state === "ask" || state === "wrong"} myTurn lastMove={last} premoves={[]}
-          theme={settings.boardTheme} coordinates={settings.coordinates}
+          theme={settings.boardTheme} pieceSet={settings.pieceSet} palette={settings.palette} coordinates={settings.coordinates}
           onMove={(f, t, pr) => onMove(f, t, pr)} onCancelPremoves={() => {}} />
       </section>
 

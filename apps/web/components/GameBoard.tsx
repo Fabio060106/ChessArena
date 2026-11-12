@@ -1,7 +1,7 @@
 "use client";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Color } from "@chessarena/shared";
-import { BOARD_THEMES, type BoardThemeId } from "../lib/boardThemes";
+import { boardVars, type BoardThemeId, type PaletteId, type PieceSetId } from "../lib/boardThemes";
 import {
   FILES, checkedKing, isPromotion, legalTargets, premoveDests, reconcileSprites, squareToXY, uciToSquares, virtualBoard,
   xyToSquare, type PieceCode, type PieceSprite, type Premove, type PromotionPiece,
@@ -22,6 +22,10 @@ interface Props {
   lastMove: string | null;
   premoves: readonly Premove[];
   theme: BoardThemeId;
+  /** forme des pièces (défaut : Arena) */
+  pieceSet?: PieceSetId;
+  /** couleurs des pièces (défaut : Néon) */
+  palette?: PaletteId;
   coordinates: boolean;
   /** true = coup joué ou pré-move ajouté */
   onMove: (from: string, to: string, promotion?: PromotionPiece) => boolean;
@@ -229,7 +233,7 @@ export const GameBoard = memo(function GameBoard(p: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [p]);
 
-  const themeVars = BOARD_THEMES[p.theme].vars as CSSProperties;
+  const themeVars = boardVars(p.theme, p.palette ?? "neon") as CSSProperties;
   const at = (sq: string): CSSProperties => ({ transform: sqTransform(sq, p.orientation) });
   const premoveSquares = new Set(p.premoves.flatMap((m) => [m.from, m.to]));
 
@@ -264,7 +268,7 @@ export const GameBoard = memo(function GameBoard(p: Props) {
 
       {fading.map((s) => (
         <div key={`f${s.id}`} className="arena-piece arena-fading" data-sq={s.square} style={at(s.square)}>
-          <PieceSvg code={s.code} />
+          <PieceSvg code={s.code} set={p.pieceSet} />
         </div>
       ))}
       {sprites.map((s) => (
@@ -275,7 +279,7 @@ export const GameBoard = memo(function GameBoard(p: Props) {
           style={at(s.square)}
           aria-label={`${PIECE_NAMES[s.code[1] as keyof typeof PIECE_NAMES]} ${s.code[0] === "w" ? "blanc" : "noir"} en ${s.square}`}
         >
-          <PieceSvg code={s.code} />
+          <PieceSvg code={s.code} set={p.pieceSet} />
         </div>
       ))}
 
@@ -283,6 +287,7 @@ export const GameBoard = memo(function GameBoard(p: Props) {
 
       {promo && (
         <PromotionPicker
+          set={p.pieceSet}
           color={p.myColor}
           square={promo.to}
           orientation={p.orientation}
@@ -337,8 +342,8 @@ const Coordinates = memo(function Coordinates({ orientation }: { orientation: Co
   );
 });
 
-function PromotionPicker({ color, square, orientation, onPick }: {
-  color: Color; square: string; orientation: Color; onPick: (p: PromotionPiece | null) => void;
+function PromotionPicker({ color, square, orientation, onPick, set }: {
+  color: Color; square: string; orientation: Color; onPick: (p: PromotionPiece | null) => void; set?: PieceSetId;
 }) {
   const { x, y } = squareToXY(square, orientation);
   const fromTop = y === 0;
@@ -359,7 +364,7 @@ function PromotionPicker({ color, square, orientation, onPick }: {
             aria-label={PIECE_NAMES[pc]}
             onPointerDown={(e) => { e.stopPropagation(); onPick(pc); }}
           >
-            <PieceSvg code={`${color}${pc}` as PieceCode} />
+            <PieceSvg code={`${color}${pc}` as PieceCode} set={set} />
           </button>
         ))}
       </div>

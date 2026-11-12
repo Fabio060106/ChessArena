@@ -5,7 +5,6 @@ import type { Color } from "@chessarena/shared";
 import { useClockTicker, useGameSocket } from "../../hooks/useGameSocket";
 import { useTournament } from "../../hooks/useTournament";
 import { ERROR_MESSAGES, isMyTurn, sessionBanner, START_FEN } from "../../lib/gameReducer";
-import { BOARD_THEMES, THEME_ORDER } from "../../lib/boardThemes";
 import { useSettings } from "../../lib/settings";
 import { materialAdvantage } from "../../lib/profile";
 import { material } from "../../lib/material";
@@ -208,23 +207,9 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
               Quitter
             </button>
           )}
-          <div className="flex rounded-lg bg-surface-2 p-0.5" role="radiogroup" aria-label="Thème de l'échiquier">
-            {THEME_ORDER.map((id) => (
-              <button key={id} type="button" role="radio" aria-checked={settings.boardTheme === id} title={BOARD_THEMES[id].label}
-                onClick={() => updateSettings({ boardTheme: id })}
-                className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs ${settings.boardTheme === id ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>
-                <span className="size-3 rounded-sm" style={{ background: `linear-gradient(135deg, ${BOARD_THEMES[id].vars["--sq-light"]} 50%, ${BOARD_THEMES[id].vars["--sq-dark"]} 50%)` }} />
-                <span className="hidden sm:inline">{BOARD_THEMES[id].label}</span>
-              </button>
-            ))}
-          </div>
           <button type="button" onClick={() => updateSettings({ soundOn: !settings.soundOn })} aria-pressed={settings.soundOn}
             title={settings.soundOn ? "Couper le son" : "Activer le son"} className="rounded-lg bg-surface-2 px-2 py-1.5 text-xs text-muted hover:text-text">
             {settings.soundOn ? "🔊" : "🔇"}
-          </button>
-          <button type="button" onClick={() => updateSettings({ coordinates: !settings.coordinates })} aria-pressed={settings.coordinates}
-            title="Coordonnées" className="hidden rounded-lg bg-surface-2 px-2 py-1.5 font-mono text-xs text-muted hover:text-text sm:block">
-            a1
           </button>
         </div>
       </header>
@@ -248,6 +233,8 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
               lastMove={browsing ? steps[browse]!.uci : view.lastMove}
               premoves={browsing ? [] : view.premoves}
               theme={settings.boardTheme}
+              pieceSet={settings.pieceSet}
+              palette={settings.palette}
               coordinates={settings.coordinates}
               onMove={playOrPremove}
               onCancelPremoves={cancelPremoves}

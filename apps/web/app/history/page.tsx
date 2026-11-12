@@ -63,10 +63,19 @@ export default function HistoryPage() {
   }, []);
   useEffect(() => { if (me) void load(); }, [me, load]);
 
+  // bilan sur TOUTES les parties (pas seulement celles déjà chargées)
+  const [totals, setTotals] = useState<{ games: number; wins: number; draws: number; losses: number } | null>(null);
+  useEffect(() => {
+    if (!me) return;
+    fetch(`/api/players/${encodeURIComponent(me)}`, { cache: "no-store" })
+      .then(async (r) => { if (r.ok) setTotals(((await r.json()) as { totals: { games: number; wins: number; draws: number; losses: number } }).totals); })
+      .catch(() => {});
+  }, [me, games?.length]);
   const stats = useMemo(() => {
+    if (totals) return { n: totals.games, w: totals.wins, d: totals.draws, l: totals.losses };
     const played = (games ?? []).filter((g) => g.outcome !== "aborted");
     return { n: played.length, w: played.filter((g) => g.outcome === "win").length, d: played.filter((g) => g.outcome === "draw").length, l: played.filter((g) => g.outcome === "loss").length };
-  }, [games]);
+  }, [games, totals]);
 
   return (
     <main className="arena-app">
@@ -83,6 +92,12 @@ export default function HistoryPage() {
               <Stat label="Nulles" value={stats.d} />
               <Stat label="Défaites" value={stats.l} cls="text-danger" />
             </div>
+          )}
+          {stats.n > 0 && (
+            <p className="flex items-center justify-between gap-2 px-1 text-xs text-muted">
+              <span>Toutes tes parties sont conservées.</span>
+              <a href="/api/history/export" className="font-semibold text-neon hover:underline">⬇ Télécharger tout (PGN)</a>
+            </p>
           )}
           {error && <p role="alert" className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{error}</p>}
           {games === null && <p className="px-1 text-sm text-muted">Chargement…</p>}
@@ -221,7 +236,7 @@ function Replay({ gameId, me }: { gameId: string; me: string }) {
       {an.on && <EvalBar score={an.viewScore} flip={(g.color === "b") !== flipped} />}
       <GameBoard
         fen={fen} serverFen={fen} orientation={flipped ? opp : g.color} myColor={toMove} interactive myTurn
-        lastMove={shown.uci} premoves={[]} theme={settings.boardTheme} coordinates={settings.coordinates}
+        lastMove={shown.uci} premoves={[]} theme={settings.boardTheme} pieceSet={settings.pieceSet} palette={settings.palette} coordinates={settings.coordinates}
         onMove={onMove} onCancelPremoves={() => {}} arrows={arrows}
       />
       {flipped ? oppCard : myCard}

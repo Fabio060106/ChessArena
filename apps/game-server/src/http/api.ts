@@ -294,6 +294,24 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
     }
 
     // ─── Profils et classement (joueurs connectés) ───────────────────────────────
+    const pgm = url.pathname.match(/^\/account\/players\/([^/]{1,200})\/games$/);
+    if (pgm && req.method === "GET") {
+      let pseudo: string;
+      try { pseudo = decodeURIComponent(pgm[1]!); } catch { throw new HttpError(400, "BAD_PSEUDO"); }
+      const before = url.searchParams.get("before");
+      if (before !== null && Number.isNaN(Date.parse(before))) throw new HttpError(400, "BAD_CURSOR");
+      const repo = need(d.repo);
+      const p = await repo.getProfile(pseudo);
+      if (!p) throw new HttpError(404, "NOT_FOUND");
+      send(200, { games: await repo.listGames(p.userId, 30, before ?? undefined) });
+      return true;
+    }
+    if (url.pathname === "/account/games/export" && req.method === "GET") {
+      const pgns = await need(d.repo).exportPgns(claims.sub, 20_000);
+      res.writeHead(200, { "content-type": "application/x-chess-pgn; charset=utf-8", "cache-control": "no-store" });
+      res.end(pgns.map((x) => x.trim()).join("\n\n") + "\n");
+      return true;
+    }
     const pm = url.pathname.match(/^\/account\/players\/([^/]{1,200})$/);
     if (pm && req.method === "GET") {
       let pseudo: string;

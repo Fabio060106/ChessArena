@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import type { GameHistoryItem } from "@chessarena/shared";
 import { useParams } from "next/navigation";
 import type { PlayerProfile } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
@@ -52,6 +53,21 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
   const av = avatarFor(p.userId);
   const best = TC_ORDER.filter((tc) => p.ratings[tc].games > 0).sort((a, b) => p.ratings[b].games - p.ratings[a].games)[0];
   const t = p.totals;
+  // toutes les parties : les 10 dernières d'abord, puis « Voir plus » (30 par page, jusqu'à la toute première)
+  const [games, setGames] = useState<GameHistoryItem[]>(p.recent);
+  const [more, setMore] = useState(t.games > p.recent.length);
+  const [loading, setLoading] = useState(false);
+  const loadMore = async () => {
+    const lastAt = games.at(-1)?.endedAt;
+    if (!lastAt) return;
+    setLoading(true);
+    const r = await fetch(`/api/players/${encodeURIComponent(p.userId)}/games?before=${encodeURIComponent(lastAt)}`, { cache: "no-store" }).catch(() => null);
+    setLoading(false);
+    if (!r?.ok) return;
+    const page = ((await r.json()) as { games: GameHistoryItem[] }).games.filter((g) => g.outcome !== "aborted");
+    setGames((g) => [...g, ...page.filter((x) => !g.some((y) => y.gameId === x.gameId))]);
+    if (page.length === 0) setMore(false);
+  };
   return (
     <>
       <section className="panel flex flex-wrap items-center gap-4 p-4">
@@ -108,10 +124,13 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
       </section>
 
       <section className="panel p-4">
-        <h2 className="mb-2 text-sm font-semibold">Dernières parties</h2>
-        {p.recent.length === 0 ? <p className="text-sm text-muted">Aucune partie.</p> : (
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold">Parties <span className="font-normal text-muted">({games.length} affichée{games.length > 1 ? "s" : ""} sur {t.games})</span></h2>
+          {mine && <a href="/api/history/export" className="text-xs text-neon hover:underline">⬇ Tout télécharger (PGN)</a>}
+        </div>
+        {games.length === 0 ? <p className="text-sm text-muted">Aucune partie.</p> : (
           <ul className="flex flex-col divide-y divide-line">
-            {p.recent.map((g) => (
+            {games.map((g) => (
               <li key={g.gameId} className="flex items-center gap-3 py-2 text-sm">
                 <span className={`w-20 shrink-0 rounded-md px-2 py-1 text-center text-xs font-semibold ${OUTCOME[g.outcome].cls}`}>{OUTCOME[g.outcome].label}</span>
                 <span className="min-w-0 flex-1">
@@ -132,6 +151,12 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
               </li>
             ))}
           </ul>
+        )}
+        {more && games.length > 0 && games.length < t.games && (
+          <button type="button" disabled={loading} onClick={() => void loadMore()}
+            className="mt-2 w-full rounded-lg border border-line px-3 py-2 text-sm text-muted hover:text-text disabled:opacity-50">
+            {loading ? "Chargement…" : "Voir plus de parties"}
+          </button>
         )}
       </section>
     </>

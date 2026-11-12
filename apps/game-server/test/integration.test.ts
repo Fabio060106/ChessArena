@@ -455,6 +455,17 @@ describe("social : spectateurs, chat, revanche, profil, classement", () => {
     expect(lb.me?.userId).toBe(start.black.userId);
     expect(lb.entries.find((e) => e.userId === start.black.userId)!.rating).toBeGreaterThan(lb.entries.find((e) => e.userId === start.white.userId)!.rating);
     expect((await get("/account/leaderboard?tc=nimporte", "soc-a")).status).toBe(400);
+
+    // historique complet : toutes les parties d'un joueur (paginées) et export PGN de ses propres parties
+    const all = (await (await get("/account/players/soc-a/games", "soc-spec")).json()) as { games: Array<{ gameId: string }> };
+    expect(all.games.map((g) => g.gameId)).toContain(id);
+    expect((await get("/account/players/inconnu-zz/games", "soc-spec")).status).toBe(404);
+    expect((await get("/account/players/soc-a/games?before=pas-une-date", "soc-spec")).status).toBe(400);
+    const exp = await get("/account/games/export", "soc-a");
+    expect(exp.headers.get("content-type")).toContain("pgn");
+    const pgn = await exp.text();
+    expect(pgn).toContain("Qh4#");
+    expect(pgn).toMatch(/\[(White|Black) "soc-a"\]/);
   });
 
   it("revanche refusée ; impossible après un tournoi ou si l'adversaire rejoue déjà", async () => {
