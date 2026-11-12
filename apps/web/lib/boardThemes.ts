@@ -140,7 +140,7 @@ export function isPalette(v: unknown): v is PaletteId {
 }
 
 // ─── Formes des pièces ───────────────────────────────────────────────────────
-export type PieceSetId = "arena" | "classic" | "flat" | "outline" | "pixel" | "letters";
+export type PieceSetId = "arena" | "classic" | "flat" | "outline" | "pixel" | "letters" | "relief" | "sketch" | "silhouette" | "crystal" | "bold" | "geo";
 
 export const PIECE_SETS: Array<{ id: PieceSetId; label: string }> = [
   { id: "arena", label: "Arena" },
@@ -149,6 +149,12 @@ export const PIECE_SETS: Array<{ id: PieceSetId; label: string }> = [
   { id: "outline", label: "Contour" },
   { id: "pixel", label: "Pixel" },
   { id: "letters", label: "Lettres" },
+  { id: "relief", label: "Relief" },
+  { id: "sketch", label: "Croquis" },
+  { id: "silhouette", label: "Silhouette" },
+  { id: "crystal", label: "Cristal" },
+  { id: "bold", label: "Gros traits" },
+  { id: "geo", label: "Géométrique" },
 ];
 
 export function isPieceSet(v: unknown): v is PieceSetId {

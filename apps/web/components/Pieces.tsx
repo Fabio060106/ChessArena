@@ -71,6 +71,21 @@ export function PieceDefs() {
           <stop offset="0" style={{ stopColor: "var(--pb-0)" }} />
           <stop offset="1" style={{ stopColor: "var(--pb-1)" }} />
         </linearGradient>
+        {/* reflet (jeux Relief et Cristal) */}
+        <linearGradient id="arena-gloss" x1="0" y1="0" x2="0.8" y2="0.9">
+          <stop offset="0" stopColor="#fff" stopOpacity="0.85" />
+          <stop offset="0.45" stopColor="#fff" stopOpacity="0.12" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        </linearGradient>
+        {/* trait tremblé (jeu Croquis) */}
+        <filter id="arena-sketch" x="-10%" y="-10%" width="120%" height="120%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.07" numOctaves="3" seed="7" />
+          <feDisplacementMap in="SourceGraphic" scale="6" />
+        </filter>
+        {/* ombre portée douce */}
+        <filter id="arena-shadow" x="-20%" y="-20%" width="140%" height="150%">
+          <feDropShadow dx="0" dy="2" stdDeviation="1.6" floodColor="#000" floodOpacity="0.45" />
+        </filter>
       </defs>
     </svg>
   );
@@ -114,6 +129,16 @@ const FLAT: Record<PieceType, Shape> = {
   k: { body: ["M28 86h44l-4-34H32z", "M45 52V36h-9v-9h9V14h10v13h9v9h-9v16z"] },
 };
 
+/** Jeu « Géométrique » (esprit Bauhaus) : chaque pièce réduite à des formes simples. */
+const GEO: Record<PieceType, Shape> = {
+  p: { body: ["M36 86h28v-8H36z"], circles: [[50, 62, 14]] },
+  r: { body: ["M30 86h40V40H30z", "M30 40V26h10v8h6v-8h8v8h6v-8h10v14z"] },
+  b: { body: ["M34 86h32l-4-8H38z", "M50 14l17 32-17 32-17-32z"], detail: ["M50 32v28"] },
+  n: { body: ["M30 86h42V30L30 52z", "M48 30l24-14v14z"], dots: [[56, 40, 3.4]] },
+  q: { body: ["M30 86h40l-8-34H38z", "M24 46l26-24 26 24z"], circles: [[50, 17, 6]] },
+  k: { body: ["M30 86h40V44H30z", "M45 44V30h-9v-9h9v-9h10v9h9v9h-9v14z"] },
+};
+
 /** Jeu « Pixel » : grilles 12×12 (# = corps, x = contour, o = détail). */
 const PIXEL: Record<PieceType, string[]> = {
   p: ["............", "....xxxx....", "...x####x...", "...x####x...", "....xxxx....", "....x##x....", "...x####x...", "....x##x....", "...x####x...", "..x######x..", "..xxxxxxxx..", "............"],
@@ -127,10 +152,13 @@ const PIXEL: Record<PieceType, string[]> = {
 /** Jeu « Lettres » : initiales françaises (R, D, T, F, C) ; le pion est un simple jeton. */
 const LETTER: Record<PieceType, string> = { k: "R", q: "D", r: "T", b: "F", n: "C", p: "" };
 
-function ShapeSvg({ shape, fill, stroke, detail, strokeWidth = 3 }: { shape: Shape; fill: string; stroke: string; detail: string; strokeWidth?: number }) {
+function ShapeSvg({ shape, fill, stroke, detail, strokeWidth = 3, fillOpacity, filter, noDetail }: {
+  shape: Shape; fill: string; stroke: string; detail: string; strokeWidth?: number; fillOpacity?: number; filter?: string; noDetail?: boolean;
+}) {
+  if (noDetail) shape = { ...shape, detail: undefined, dots: undefined };
   return (
-    <>
-      <g fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round">
+    <g filter={filter}>
+      <g fill={fill} fillOpacity={fillOpacity} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" strokeLinecap="round">
         {shape.body.map((d, i) => <path key={i} d={d} />)}
         {shape.ellipses?.map(([cx, cy, rx, ry], i) => <ellipse key={`e${i}`} cx={cx} cy={cy} rx={rx} ry={ry} />)}
         {shape.circles?.map(([cx, cy, r], i) => <circle key={`c${i}`} cx={cx} cy={cy} r={r} />)}
@@ -141,7 +169,7 @@ function ShapeSvg({ shape, fill, stroke, detail, strokeWidth = 3 }: { shape: Sha
         </g>
       )}
       {shape.dots?.map(([cx, cy, r], i) => <circle key={`d${i}`} cx={cx} cy={cy} r={r} fill={detail} />)}
-    </>
+    </g>
   );
 }
 
@@ -192,10 +220,40 @@ export const PieceSvg = memo(function PieceSvg({ code, set = "arena" }: { code: 
     );
   }
 
-  const shape = set === "classic" ? CLASSIC[type] : set === "flat" ? FLAT[type] : SHAPES[type];
+  const shape = set === "classic" || set === "relief" || set === "sketch" || set === "silhouette" ? CLASSIC[type]
+    : set === "flat" || set === "bold" ? FLAT[type] : set === "geo" ? GEO[type] : SHAPES[type];
+  const gloss = <ShapeSvg shape={shape} fill="url(#arena-gloss)" stroke="none" detail="none" strokeWidth={0} noDetail />;
   return (
     <svg viewBox="5 4 90 90" width="100%" height="100%" aria-hidden focusable="false" style={{ display: "block", overflow: "visible" }}>
-      {set === "outline" ? (
+      {set === "relief" ? (
+        // volume : dégradé + reflet + ombre portée
+        <g filter="url(#arena-shadow)">
+          <ShapeSvg shape={shape} fill={fill} stroke={stroke} detail={detail} strokeWidth={2.5} />
+          {gloss}
+        </g>
+      ) : set === "sketch" ? (
+        // dessin au crayon : trait tremblé, aplat léger
+        <g filter="url(#arena-sketch)">
+          {/* aplat légèrement décalé, comme une couleur posée au crayon, puis le trait par-dessus */}
+          <g transform="translate(2.5 2)" opacity={0.85}><ShapeSvg shape={shape} fill={w ? c1 : c1} stroke="none" detail="none" strokeWidth={0} noDetail /></g>
+          <ShapeSvg shape={shape} fill={w ? c0 : c1} fillOpacity={w ? 0.9 : 0.75} stroke={stroke} detail={detail} strokeWidth={2.6} />
+          <ShapeSvg shape={shape} fill="none" stroke={stroke} detail={detail} strokeWidth={1.4} />
+        </g>
+      ) : set === "silhouette" ? (
+        // ombre chinoise : silhouette pleine, sans détail, détachée par une ombre
+        <ShapeSvg shape={shape} fill={w ? c0 : c1} stroke={stroke} detail={detail} strokeWidth={1.2} filter="url(#arena-shadow)" noDetail />
+      ) : set === "crystal" ? (
+        // cristal : corps translucide, arêtes nettes, reflet
+        <>
+          <ShapeSvg shape={shape} fill={w ? c0 : c1} fillOpacity={w ? 0.55 : 0.7} stroke={w ? stroke : detail} detail={detail} strokeWidth={2.4} />
+          {gloss}
+        </>
+      ) : set === "bold" ? (
+        // gros traits : très lisible (vue faible, petits écrans)
+        <ShapeSvg shape={shape} fill={w ? c0 : c1} stroke={stroke} detail={detail} strokeWidth={5.5} />
+      ) : set === "geo" ? (
+        <ShapeSvg shape={shape} fill={fill} stroke={stroke} detail={detail} strokeWidth={3} />
+      ) : set === "outline" ? (
         w ? (
           // blanc : silhouette évidée (double trait : lisible sur toutes les cases)
           <>
