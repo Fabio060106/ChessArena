@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import type { Color, GameStartEvent, GameStateEvent, QueueJoinPayload } from "@chessarena/shared";
+import type { ChatAck, ChatMessage, Color, GameStartEvent, GameStateEvent, QueueJoinPayload, RematchAck, RematchEvent } from "@chessarena/shared";
+import { mergeChat } from "../lib/chat";
 import { getSocket, type AuthProvider } from "../lib/socket";
 import { gameReducer, initialView, type PendingMove } from "../lib/gameReducer";
 import { ClockSync, displayedClocks } from "../lib/clock";
@@ -25,6 +26,10 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
   const socket = getSocket(getAuth);
   const [view, dispatch] = useReducer(gameReducer, initialView);
   const syncRef = useRef(new ClockSync());
+  // chat des joueurs, revanche, spectateurs : liés à la partie courante (ou qui vient de se terminer)
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [rematch, setRematch] = useState<RematchEvent | null>(null);
+  const [spectators, setSpectators] = useState(0);
 
   const hot = useRef<{
     start: GameStartEvent | null;
@@ -90,7 +95,7 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
       h.myColor = start.black.userId === userId ? "b" : "w";
       h.playing = true;
       h.pending = null;
-      if (!same) { h.server = null; h.premoves = []; sound.play("start"); }
+      if (!same) { h.server = null; h.premoves = []; sound.play("start"); setChat([]); setRematch(null); setSpectators(0); }
       dispatch({ type: "start", start, userId });
     });
     socket.on("game:state", (state) => {
@@ -126,11 +131,16 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
       dispatch({ type: "over", over });
     });
     socket.on("error", (e) => dispatch({ type: "error", code: e.code }));
+    socket.on("chat:msg", (m) => { if (m.gameId === hot.current.start?.gameId && m.channel === "players") setChat((c) => mergeChat(c, [m])); });
+    socket.on("chat:history", (p) => { if (p.gameId === hot.current.start?.gameId) setChat((c) => mergeChat(c, p.messages)); });
+    socket.on("game:spectators", (p) => { if (p.gameId === hot.current.start?.gameId) setSpectators(p.count); });
+    socket.on("rematch", (r) => { if (r.gameId === hot.current.start?.gameId) setRematch(r); });
     socket.on("session:mode", (session) => dispatch({ type: "session_mode", session }));
     if (socket.connected) onConnect();
     return () => {
       for (const ev of ["connect", "disconnect", "queue:joined", "queue:left", "game:start", "game:state",
-        "game:presence", "game:net", "game:draw", "game:over", "error", "session:mode"] as const) socket.off(ev);
+        "game:presence", "game:net", "game:draw", "game:over", "error", "session:mode",
+        "chat:msg", "chat:history", "game:spectators", "rematch"] as const) socket.off(ev);
     };
   }, [socket, userId, firePremove]);
 
@@ -218,7 +228,26 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
     if (id) socket.emit("game:draw", { gameId: id, action });
   }, [socket]);
 
-  return { view, socket, sync: syncRef.current, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw };
+  /** Chat des joueurs (pendant et juste après la partie). */
+  const sendChat = useCallback((text: string) => new Promise<ChatAck>((resolve) => {
+    const id = hot.current.start?.gameId;
+    if (!id) return resolve({ ok: false, code: "NO_GAME" });
+    const t = setTimeout(() => resolve({ ok: false, code: "RATE_LIMITED" }), 5_000);
+    socket.emit("chat:send", { gameId: id, text }, (r) => { clearTimeout(t); resolve(r); });
+  }), [socket]);
+
+  /** Revanche : proposer (ou accepter si l'adversaire l'a proposée), refuser / retirer. */
+  const rematchAction = useCallback((action: "offer" | "decline") => new Promise<RematchAck>((resolve) => {
+    const id = hot.current.start?.gameId;
+    if (!id) return resolve({ ok: false, code: "NO_GAME" });
+    const t = setTimeout(() => resolve({ ok: false, code: "TIMEOUT" }), 10_000);
+    socket.emit("rematch", { gameId: id, action }, (r) => { clearTimeout(t); resolve(r); });
+  }), [socket]);
+
+  return {
+    view, socket, sync: syncRef.current, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw,
+    chat, sendChat, rematch, rematchAction, spectators,
+  };
 }
 
 /**

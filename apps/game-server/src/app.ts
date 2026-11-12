@@ -2,13 +2,16 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { performance } from "node:perf_hooks";
 import { Server, type Socket } from "socket.io";
 import pg from "pg";
-import { TIME_CONTROLS, type ClientToServerEvents, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
+import { TIME_CONTROLS, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "./config.js";
 import { authenticate, canPlay, type AuthUser } from "./auth.js";
 import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
 import { Matchmaker } from "./matchmaking/Matchmaker.js";
 import { GameManager, userRoom } from "./game/GameManager.js";
-import { InMemoryLedger, PgLedger, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
+import { InMemoryLedger, PgLedger, lockStakes, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
+import { ChatService } from "./social/ChatService.js";
+import { RematchService } from "./social/RematchService.js";
+import { randomUUID } from "node:crypto";
 import { FileAuditLog, PgAuditLog, type AuditSink } from "./audit/auditLog.js";
 import { InMemoryGameRepository, PgGameRepository, type GameRepository } from "./persistence/GameRepository.js";
 import { InMemoryTournamentStore, PgTournamentStore, type TournamentStore } from "./tournaments/TournamentStore.js";
@@ -41,6 +44,8 @@ interface SocketData {
   selfExcluded: boolean;
   bucket: TokenBucket;
   lag: LagTracker;
+  /** partie regardée en spectateur (une à la fois par onglet) */
+  watching: string | null;
 }
 
 export type ArenaIO = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
@@ -86,6 +91,8 @@ export interface GameServer {
 }
 
 const tournamentRoom = (id: string) => `sng:${id}`;
+/** spectateurs d'une partie : ils reçoivent aussi tout ce qui est diffusé dans la room de la partie */
+const spectatorRoom = (gameId: string) => `spec:${gameId}`;
 
 /**
  * Fabrique du game-server. Aucun effet de bord à l'import : les tests
@@ -136,7 +143,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts });
+      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null });
       return;
     }
     if (req.url === "/health") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
@@ -187,6 +194,25 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     emitLobby: (tables) => io.emit("sng:lobby", tables),
   });
   games.onGameFinished((g) => tournaments.onGameFinished(g));
+
+  // ─── Social : chat, spectateurs, revanche ─────────────────────────────────
+  const chat = new ChatService();
+  const rematches = new RematchService();
+  const spectatorCount = (gameId: string) => io.of("/").adapter.rooms.get(spectatorRoom(gameId))?.size ?? 0;
+  const withdrawRematches = (userId: string) => {
+    for (const w of rematches.withdrawAll(userId)) io.to(w.players.map(userRoom)).emit("rematch", { gameId: w.gameId, offeredBy: null });
+  };
+  const announceSpectators = (gameId: string) => io.to(gameId).emit("game:spectators", { gameId, count: spectatorCount(gameId) });
+  games.onGameFinished((g) => {
+    chat.ended(g.gameId);
+    if (!g.tournament) {
+      rematches.finished(g.gameId, {
+        white: g.white.userId, black: g.black.userId, timeControl: g.timeControl.id, stake: g.stake, rated: g.rated,
+      });
+    }
+    for (const sock of io.of("/").sockets.values()) if (sock.data.watching === g.gameId) sock.data.watching = null;
+    io.in(spectatorRoom(g.gameId)).socketsLeave(spectatorRoom(g.gameId));
+  });
   // Drapeau d'affichage : dernier connu par joueur (profil porté par le JWT).
   const flags = new Map<string, string>();
   games.setProfileLookup((userId) => {
@@ -223,6 +249,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       socket.data.user = user;
       socket.data.bucket = new TokenBucket(cfg.rateLimit.burst, cfg.rateLimit.perSecond);
       socket.data.lag = new LagTracker();
+      socket.data.watching = null;
       next();
     } catch (e) {
       next(new Error(`UNAUTHORIZED: ${(e as Error).message}`));
@@ -363,6 +390,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         });
         socket.emit("game:state", room.state());
         if (room.drawOffer) socket.emit("game:draw", { gameId: room.id, offeredBy: room.drawOffer });
+        socket.emit("chat:history", { gameId: room.id, messages: chat.history(room.id, ["players"]) });
+        socket.emit("game:spectators", { gameId: room.id, count: spectatorCount(room.id) });
       },
     );
     // … et de ses tournois en cours.
@@ -397,6 +426,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         return fail(socket, "ALREADY_QUEUED");
       }
       io.to(userRoom(user.userId)).emit("queue:joined", p);
+      withdrawRematches(user.userId);
     }));
 
     socket.on("queue:leave", guard(socket, () => {
@@ -563,12 +593,133 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       }
     }));
 
+    // ─── Chat ────────────────────────────────────────────────────────────────
+    socket.on("chat:send", guard(socket, (raw: unknown, ack?: unknown) => {
+      const reply = (r: ChatAck) => { if (typeof ack === "function") (ack as (r: ChatAck) => void)(r); };
+      const p = raw as { gameId?: unknown; text?: unknown } | null;
+      if (!p || typeof p !== "object" || typeof p.gameId !== "string") return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const gameId = p.gameId;
+      const room = games.get(gameId);
+      let target: { channel: "players" | "spectators"; emit: (m: Parameters<typeof io.emit<"chat:msg">>[1]) => void } | null = null;
+      if (room && room.colorOf(user.userId)) {
+        target = { channel: "players", emit: (m) => io.to(gameId).emit("chat:msg", m) };
+      } else if (room && socket.data.watching === gameId) {
+        target = { channel: "spectators", emit: (m) => io.to(spectatorRoom(gameId)).emit("chat:msg", m) };
+      } else {
+        // après la partie : les deux joueurs peuvent encore se parler (revanche, « bien joué »)
+        const pl = rematches.players(gameId);
+        if (pl?.includes(user.userId)) target = { channel: "players", emit: (m) => io.to(pl.map(userRoom)).emit("chat:msg", m) };
+      }
+      if (!target) return reply({ ok: false, code: "NO_GAME" });
+      const m = chat.post(gameId, target.channel, user.userId, p.text);
+      if (typeof m === "string") return reply({ ok: false, code: m });
+      target.emit(m);
+      reply({ ok: true });
+    }));
+
+    // ─── Spectateurs ─────────────────────────────────────────────────────────
+    const stopWatching = () => {
+      const g = socket.data.watching;
+      if (!g) return;
+      socket.data.watching = null;
+      void socket.leave(spectatorRoom(g));
+      // un joueur de cette partie (autre onglet du même compte) ne doit pas quitter la room de jeu
+      if (!games.get(g)?.colorOf(user.userId)) void socket.leave(g);
+      announceSpectators(g);
+    };
+
+    socket.on("watch:list", guard(socket, (ack: unknown) => {
+      if (typeof ack !== "function") return;
+      const list: LiveGameView[] = games.list().filter((r) => !r.isFinished).map((r) => ({
+        gameId: r.id, white: r.white, black: r.black, timeControl: r.timeControl.id, ply: r.ply,
+        tournamentId: r.tournamentId, spectators: spectatorCount(r.id),
+      }));
+      list.sort((a, b) => b.spectators - a.spectators || (b.white.rating + b.black.rating) - (a.white.rating + a.black.rating));
+      (ack as (g: LiveGameView[]) => void)(list.slice(0, 100));
+    }));
+
+    socket.on("watch:start", guard(socket, (raw: unknown, ack: unknown) => {
+      const reply = (r: WatchAck) => { if (typeof ack === "function") (ack as (r: WatchAck) => void)(r); };
+      const p = parseGameRef(raw);
+      if (!p) return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const room = games.get(p.gameId);
+      if (!room || room.isFinished) return reply({ ok: false, code: "NO_GAME" });
+      if (room.colorOf(user.userId)) return reply({ ok: false, code: "IS_PLAYER" });
+      if (socket.data.watching !== room.id) stopWatching();
+      socket.data.watching = room.id;
+      void socket.join([room.id, spectatorRoom(room.id)]);
+      reply({
+        ok: true,
+        snapshot: {
+          start: { gameId: room.id, white: room.white, black: room.black, timeControl: room.timeControl, stake: room.stake, fen: room.fen },
+          state: room.state(), moves: room.sans(), chat: chat.history(room.id, ["players", "spectators"]),
+          drawOffer: room.drawOffer, spectators: spectatorCount(room.id), tournamentId: room.tournamentId,
+        },
+      });
+      announceSpectators(room.id);
+    }));
+
+    socket.on("watch:stop", guard(socket, () => stopWatching()));
+
+    // ─── Revanche ────────────────────────────────────────────────────────────
+    socket.on("rematch", guard(socket, async (raw: unknown, ack?: unknown) => {
+      const reply = (r: RematchAck) => { if (typeof ack === "function") (ack as (r: RematchAck) => void)(r); };
+      const p = raw as { gameId?: unknown; action?: unknown } | null;
+      if (!p || typeof p.gameId !== "string" || (p.action !== "offer" && p.action !== "decline")) return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const gameId = p.gameId;
+      if (p.action === "decline") {
+        const pl = rematches.decline(gameId, user.userId);
+        if (pl) io.to(pl.map(userRoom)).emit("rematch", { gameId, offeredBy: null, declined: true });
+        return reply({ ok: true, started: false });
+      }
+      // le joueur ne doit pas déjà être occupé ailleurs
+      if (games.activeGameOf(user.userId)) return reply({ ok: false, code: "IN_GAME" });
+      if (tournaments.isBusy(user.userId)) return reply({ ok: false, code: "IN_TOURNAMENT" });
+      const gate = canPlay(user, "PLAY", socket.data.mode);
+      if (!gate.ok) return reply({ ok: false, code: gate.code });
+      const d = rematches.offer(gameId, user.userId);
+      if (d.kind === "error") return reply({ ok: false, code: d.code });
+      if (d.kind === "offered") {
+        const pl = rematches.players(gameId)!;
+        io.to(pl.map(userRoom)).emit("rematch", { gameId, offeredBy: d.by });
+        return reply({ ok: true, started: false });
+      }
+      // acceptée : l'adversaire est-il encore disponible ?
+      const other = d.white === user.userId ? d.black : d.white;
+      const busy = games.activeGameOf(other) ? "IN_GAME" : tournaments.isBusy(other) ? "IN_TOURNAMENT" : null;
+      const restore = () => rematches.restore(gameId, { white: d.black, black: d.white, timeControl: d.timeControl, stake: d.stake, rated: d.rated });
+      if (busy || d.stake.currency !== "PLAY") {
+        restore();
+        io.to([userRoom(user.userId), userRoom(other)]).emit("rematch", { gameId, offeredBy: null, declined: true });
+        return reply({ ok: false, code: busy ?? "PLAY_MONEY_ONLY" });
+      }
+      for (const u of [d.white, d.black]) { if (matchmaker.dequeue(u)) io.to(userRoom(u)).emit("queue:left"); }
+      const newId = randomUUID();
+      try {
+        if (d.stake.buyInCents > 0) await lockStakes(ledger, newId, d.stake.currency, d.stake.buyInCents, [d.white, d.black]);
+      } catch {
+        restore();
+        io.to([userRoom(d.white), userRoom(d.black)]).emit("error", { code: "STAKE_LOCK_FAILED", message: "Solde insuffisant ou mise refusée" });
+        io.to([userRoom(d.white), userRoom(d.black)]).emit("rematch", { gameId, offeredBy: null, declined: true });
+        return reply({ ok: false, code: "STAKE_LOCK_FAILED" });
+      }
+      const [rw, rb] = await Promise.all([repo.getRatings(d.white), repo.getRatings(d.black)]);
+      io.to([userRoom(d.white), userRoom(d.black)]).emit("rematch", { gameId, offeredBy: null });
+      await games.createGame({
+        gameId: newId, timeControl: d.timeControl, stake: d.stake, rated: d.rated,
+        white: { userId: d.white, rating: rw[d.timeControl].rating }, black: { userId: d.black, rating: rb[d.timeControl].rating },
+      });
+      reply({ ok: true, started: true });
+    }));
+
     socket.on("disconnect", () => {
+      stopWatching();
       // Plusieurs onglets possibles : on ne considère le joueur parti qu'au DERNIER socket.
       const remaining = io.of("/").adapter.rooms.get(userRoom(user.userId))?.size ?? 0;
       if (remaining === 0) {
         matchmaker.dequeue(user.userId);
         games.onUserOffline(user.userId);
+        withdrawRematches(user.userId);
       }
     });
   });

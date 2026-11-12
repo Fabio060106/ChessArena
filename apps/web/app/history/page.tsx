@@ -11,6 +11,9 @@ import { material } from "../../lib/material";
 import { materialAdvantage } from "../../lib/profile";
 import { formatThink, relativeDate, replayFromPgn } from "../../lib/replay";
 import { MoveNav, usePlyKeys } from "../../components/MoveNav";
+import { PageHeader } from "../../components/PageHeader";
+import { FlipButton } from "../../components/SiteNav";
+import { useFlip } from "../../hooks/useFlip";
 import { applyMove, atMain, currentStep, numbered, playOnBoard, previousStep, type Cursor } from "../../lib/variation";
 import { moveSound, sound } from "../../lib/sound";
 import { accuracy, classify, Engine, ENGINE_NAME, formatScore, pvToSan, scoreToCp, terminalScore, winPct, type EngineLine, type MoveMark, type Score } from "../../lib/engine";
@@ -67,12 +70,9 @@ export default function HistoryPage() {
 
   return (
     <main className="arena-app">
-      <header className="mx-auto flex h-13 max-w-[1400px] items-center gap-3 px-3 lg:px-6">
-        <a href="/play" className="font-display text-lg font-bold tracking-tight">Chess<span className="text-neon">Arena</span></a>
-        <span className="text-sm text-muted">· Mes parties</span>
-        <a href="/repertoire" className="ml-auto rounded-lg bg-surface-2 px-2 py-1.5 text-xs text-muted hover:text-text">Répertoire</a>
+      <PageHeader title="Mes parties" active="/history">
         <a href="/play" className="neon-btn rounded-lg px-3 py-1.5 text-sm font-semibold">Jouer</a>
-      </header>
+      </PageHeader>
 
       <div className="mx-auto grid max-w-[1400px] gap-4 px-2 pb-8 sm:px-3 lg:grid-cols-[380px_minmax(0,1fr)] lg:px-6">
         <section className="flex flex-col gap-3">
@@ -148,6 +148,7 @@ function Replay({ gameId, me }: { gameId: string; me: string }) {
   const [err, setErr] = useState(false);
   const [cur, setCur] = useState<Cursor>(atMain(0));
   const [settings] = useSettings();
+  const [flipped, flip] = useFlip(gameId);
 
   useEffect(() => {
     fetch(`/api/history/${gameId}`, { cache: "no-store" })
@@ -202,23 +203,32 @@ function Replay({ gameId, me }: { gameId: string; me: string }) {
   const arrows = an.on && played && playedMark && line?.pv[0] !== played
     ? [...bestArrow, { from: played.slice(0, 2), to: played.slice(2, 4), color: playedMark === "??" ? "#ef4444" : playedMark === "?" ? "#fb923c" : "#eab308" }]
     : bestArrow;
+  const oppCard = (
+    <PlayerCard userId={g.opponent} rating={g.opponentRating ?? undefined}
+      materialAdvantage={materialAdvantage(fen, opp)} captured={mat[opp].captured}
+      clock={<span className="tabular text-xs text-muted">{ply > 0 && ply % 2 === (opp === "w" ? 1 : 0) ? thinkOf(ply) : ""}</span>} />
+  );
+  const myCard = (
+    <PlayerCard userId={me} isMe rating={g.ratingBefore ?? undefined}
+      materialAdvantage={materialAdvantage(fen, g.color)} captured={mat[g.color].captured}
+      clock={<span className="tabular text-xs text-muted">{ply > 0 && ply % 2 === (g.color === "w" ? 1 : 0) ? thinkOf(ply) : ""}</span>} />
+  );
   const verdict = v && cur.vply > 0 ? an.judge(previousStep(steps, cur)!.fen, shown) : null;
 
   return (
     <div className="mx-auto flex w-full flex-col gap-1.5" style={{ maxWidth: "min(100%, max(320px, calc(100dvh - 220px)))" }}>
-      <PlayerCard userId={g.opponent} rating={g.opponentRating ?? undefined}
-        materialAdvantage={materialAdvantage(fen, opp)} captured={mat[opp].captured}
-        clock={<span className="tabular text-xs text-muted">{ply > 0 && ply % 2 === (opp === "w" ? 1 : 0) ? thinkOf(ply) : ""}</span>} />
-      {an.on && <EvalBar score={an.viewScore} flip={g.color === "b"} />}
+      {flipped ? myCard : oppCard}
+      {an.on && <EvalBar score={an.viewScore} flip={(g.color === "b") !== flipped} />}
       <GameBoard
-        fen={fen} serverFen={fen} orientation={g.color} myColor={toMove} interactive myTurn
+        fen={fen} serverFen={fen} orientation={flipped ? opp : g.color} myColor={toMove} interactive myTurn
         lastMove={shown.uci} premoves={[]} theme={settings.boardTheme} coordinates={settings.coordinates}
         onMove={onMove} onCancelPremoves={() => {}} arrows={arrows}
       />
-      <PlayerCard userId={me} isMe rating={g.ratingBefore ?? undefined}
-        materialAdvantage={materialAdvantage(fen, g.color)} captured={mat[g.color].captured}
-        clock={<span className="tabular text-xs text-muted">{ply > 0 && ply % 2 === (g.color === "w" ? 1 : 0) ? thinkOf(ply) : ""}</span>} />
-      {v ? <MoveNav ply={cur.vply} last={v.steps.length} go={goVar} /> : <MoveNav ply={ply} last={last} go={go} />}
+      {flipped ? oppCard : myCard}
+      <div className="flex gap-1.5">
+        <div className="flex-1">{v ? <MoveNav ply={cur.vply} last={v.steps.length} go={goVar} /> : <MoveNav ply={ply} last={last} go={go} />}</div>
+        <FlipButton onFlip={flip} className="!px-3 text-lg" />
+      </div>
 
       {v && (
         <div className="panel border-neon/40 p-3" aria-label="Ta variante">
@@ -282,7 +292,7 @@ function Replay({ gameId, me }: { gameId: string; me: string }) {
         </div>
         <MoveList moves={steps.slice(1).map((s) => s.san)} active={ply - 1} onSelect={(p) => go(p + 1)} marks={an.marks.slice(0, -1)} />
         <p className="mt-2 text-[11px] text-muted">
-          Déplace les pièces pour essayer tes propres coups : {ENGINE_NAME} les évalue. Flèches ← → du clavier pour avancer coup par coup.
+          Déplace les pièces pour essayer tes propres coups : {ENGINE_NAME} les évalue. Flèches ← → du clavier pour avancer coup par coup, F pour retourner l'échiquier.
           {an.on ? " Flèche bleue : meilleur coup du moteur ; flèche orange/rouge : le coup joué, quand c'est une erreur." : ""}
         </p>
       </div>

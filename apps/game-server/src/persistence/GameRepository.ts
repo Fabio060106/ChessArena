@@ -1,6 +1,6 @@
 import type pg from "pg";
 import {
-  DEFAULT_RATING, TIME_CONTROLS, type AccountState, type GameHistoryDetail, type GameHistoryItem, type RepertoireGame, type TimeControlId,
+  DEFAULT_RATING, TIME_CONTROLS, type AccountState, type GameHistoryDetail, type GameHistoryItem, type LeaderboardEntry, type PlayerProfile, type RepertoireGame, type TimeControlId,
 } from "@chessarena/shared";
 import type { FinishedGame } from "../game/GameRoom.js";
 import { withTx } from "../db/tx.js";
@@ -38,7 +38,14 @@ export interface GameRepository {
   listRepertoireGames(userId: string, limit: number): Promise<RepertoireGame[]>;
   getRepertoire(userId: string): Promise<{ data: unknown; updatedAt: string } | null>;
   saveRepertoire(userId: string, data: unknown): Promise<{ updatedAt: string }>;
+  /** Profil public d'un joueur (pseudo insensible à la casse) ; null s'il n'existe pas. */
+  getProfile(pseudo: string): Promise<Omit<PlayerProfile, "liveGameId"> | null>;
+  /** Classement d'une cadence (joueurs ayant au moins une partie classée) + la place de `me`. */
+  leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }>;
 }
+
+/** Comptes exclus des classements (suspendus, clôturés). */
+const HIDDEN_STATES = ["suspended", "closed"];
 
 /** Taille maximale du document de répertoire (octets JSON). */
 export const REPERTOIRE_MAX_BYTES = 1_048_576;
@@ -183,6 +190,56 @@ export class PgGameRepository implements GameRepository {
     });
   }
 
+  async getProfile(pseudo: string): Promise<Omit<PlayerProfile, "liveGameId"> | null> {
+    if (typeof pseudo !== "string" || pseudo.length < 1 || pseudo.length > 64) return null;
+    const u = await this.pool.query<{ id: string; display_flag: string | null; created_at: Date; state: string }>(
+      "SELECT id, display_flag, created_at, state FROM users WHERE lower(id) = lower($1) ORDER BY (id = $1) DESC LIMIT 1", [pseudo],
+    );
+    const row = u.rows[0];
+    if (!row || HIDDEN_STATES.includes(row.state)) return null;
+    const [ratings, totals, recent] = await Promise.all([
+      this.getRatings(row.id),
+      this.pool.query<{ games: string; wins: string; draws: string; losses: string }>(
+        `SELECT count(*) AS games,
+                count(*) FILTER (WHERE (result = '1-0' AND white_id = $1) OR (result = '0-1' AND black_id = $1)) AS wins,
+                count(*) FILTER (WHERE result = '1/2-1/2') AS draws,
+                count(*) FILTER (WHERE (result = '0-1' AND white_id = $1) OR (result = '1-0' AND black_id = $1)) AS losses
+           FROM games WHERE (white_id = $1 OR black_id = $1) AND termination <> 'aborted'`, [row.id],
+      ),
+      this.listGames(row.id, 10),
+    ]);
+    const t = totals.rows[0]!;
+    return {
+      userId: row.id, flag: row.display_flag, memberSince: row.created_at.toISOString(), ratings,
+      totals: { games: Number(t.games), wins: Number(t.wins), draws: Number(t.draws), losses: Number(t.losses) },
+      recent: recent.filter((g) => g.outcome !== "aborted"),
+    };
+  }
+
+  async leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }> {
+    const n = Math.min(Math.max(1, Math.floor(limit)), 200);
+    const r = await this.pool.query<{ user_id: string; rating: number; games: number; peak: number; display_flag: string | null; rank: string }>(
+      `SELECT r.user_id, r.rating, r.games, r.peak, u.display_flag,
+              rank() OVER (ORDER BY r.rating DESC) AS rank
+         FROM ratings r JOIN users u ON u.id = r.user_id
+        WHERE r.time_control = $1 AND r.games > 0 AND u.state <> ALL($2::account_state[])
+        ORDER BY r.rating DESC, r.games DESC, r.user_id LIMIT $3`, [tc, HIDDEN_STATES, n],
+    );
+    const entries = r.rows.map((x) => ({ rank: Number(x.rank), userId: x.user_id, flag: x.display_flag, rating: x.rating, games: x.games, peak: x.peak }));
+    let mine = me ? entries.find((e) => e.userId === me) ?? null : null;
+    if (me && !mine) {
+      const m = await this.pool.query<{ rating: number; games: number; peak: number; display_flag: string | null; better: string }>(
+        `SELECT r.rating, r.games, r.peak, u.display_flag,
+                (SELECT count(*) FROM ratings o JOIN users ou ON ou.id = o.user_id
+                  WHERE o.time_control = $2 AND o.games > 0 AND o.rating > r.rating AND ou.state <> ALL($3::account_state[])) AS better
+           FROM ratings r JOIN users u ON u.id = r.user_id WHERE r.user_id = $1 AND r.time_control = $2 AND r.games > 0`, [me, tc, HIDDEN_STATES],
+      );
+      const x = m.rows[0];
+      if (x) mine = { rank: Number(x.better) + 1, userId: me, flag: x.display_flag, rating: x.rating, games: x.games, peak: x.peak };
+    }
+    return { entries, me: mine };
+  }
+
   async listGames(userId: string, limit: number, before?: string): Promise<GameHistoryItem[]> {
     const n = Math.min(Math.max(1, Math.floor(limit)), 100);
     const r = await this.pool.query<GameRow>(
@@ -318,5 +375,28 @@ export class InMemoryGameRepository implements GameRepository {
     const updatedAt = new Date().toISOString();
     this.repertoires.set(userId, { data: JSON.parse(JSON.stringify(data)), updatedAt });
     return { updatedAt };
+  }
+
+  async getProfile(pseudo: string): Promise<Omit<PlayerProfile, "liveGameId"> | null> {
+    const ids = new Set<string>();
+    for (const e of this.games.values()) { ids.add(e.game.white.userId); ids.add(e.game.black.userId); }
+    for (const k of this.ratings.keys()) ids.add(k.split("|")[0]!);
+    const id = [...ids].find((x) => x === pseudo) ?? [...ids].find((x) => x.toLowerCase() === pseudo.toLowerCase());
+    if (!id || HIDDEN_STATES.includes(this.states.get(id) ?? "active")) return null;
+    const all = (await this.listGames(id, 100)).filter((g) => g.outcome !== "aborted");
+    return {
+      userId: id, flag: null, memberSince: null, ratings: await this.getRatings(id),
+      totals: { games: all.length, wins: all.filter((g) => g.outcome === "win").length, draws: all.filter((g) => g.outcome === "draw").length, losses: all.filter((g) => g.outcome === "loss").length },
+      recent: all.slice(0, 10),
+    };
+  }
+
+  async leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }> {
+    const rows = [...this.ratings.entries()]
+      .filter(([k, r]) => k.endsWith(`|${tc}`) && r.games > 0 && !HIDDEN_STATES.includes(this.states.get(k.split("|")[0]!) ?? "active"))
+      .map(([k, r]) => ({ userId: k.split("|")[0]!, ...r }))
+      .sort((a, b) => b.rating - a.rating || b.games - a.games || a.userId.localeCompare(b.userId));
+    const ranked = rows.map((r) => ({ rank: rows.filter((o) => o.rating > r.rating).length + 1, userId: r.userId, flag: null, rating: r.rating, games: r.games, peak: r.peak }));
+    return { entries: ranked.slice(0, Math.min(Math.max(1, limit), 200)), me: ranked.find((e) => e.userId === me) ?? null };
   }
 }

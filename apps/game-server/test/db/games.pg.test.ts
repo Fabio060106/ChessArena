@@ -148,4 +148,33 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     await expect(db.pool.query("UPDATE tournaments SET size = 129 WHERE id = $1", [t.id])).rejects.toThrow();
     await expect(db.pool.query("UPDATE tournaments SET size = 2 WHERE id = $1", [t.id])).rejects.toThrow();
   });
+
+  it("profil (casse indifférente) et classement : rangs, exclusion des comptes suspendus, place du joueur", async () => {
+    for (const u of ["Lb_Top", "lb_mid", "lb_low", "lb_ban"]) await repo.ensureUser(u);
+    await db.pool.query("UPDATE users SET display_flag = 'FR' WHERE id = 'Lb_Top'");
+    await repo.recordGame(game("Lb_Top", "lb_mid", "1-0"));
+    await repo.recordGame(game("lb_mid", "lb_low", "1-0"));
+    await repo.recordGame(game("lb_ban", "lb_low", "1-0"));
+    await repo.recordGame(game("lb_low", "Lb_Top", "1/2-1/2", { aborted: true, rated: false, termination: "aborted" }));
+    await db.pool.query("UPDATE users SET state = 'suspended' WHERE id = 'lb_ban'");
+
+    const p = (await repo.getProfile("lb_top"))!;
+    expect(p).toMatchObject({ userId: "Lb_Top", flag: "FR", totals: { games: 1, wins: 1, draws: 0, losses: 0 } });
+    expect(p.recent.map((g) => g.outcome)).toEqual(["win"]); // la partie annulée n'apparaît pas
+    expect(p.ratings.blitz_3_0).toMatchObject({ rating: 1520, games: 1 });
+    expect(await repo.getProfile("lb_ban")).toBeNull();
+    expect(await repo.getProfile("inconnu-total")).toBeNull();
+
+    const lb = await repo.leaderboard("blitz_3_0", 100, "lb_low");
+    const ids = lb.entries.map((e) => e.userId);
+    expect(ids).not.toContain("lb_ban");
+    expect(ids.indexOf("Lb_Top")).toBeLessThan(ids.indexOf("lb_low"));
+    expect(lb.entries[0]!.rank).toBe(1);
+    expect(lb.me).toMatchObject({ userId: "lb_low", rank: ids.indexOf("lb_low") + 1 });
+    const small = await repo.leaderboard("blitz_3_0", 1, "lb_low");
+    expect(small.entries).toHaveLength(1);
+    expect(small.me!.rank).toBe(lb.me!.rank); // calculée même hors du top affiché
+    expect((await repo.leaderboard("rapid_5_0", 10)).entries.find((e) => e.userId === "Lb_Top")).toBeUndefined();
+  });
 });
+

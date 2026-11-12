@@ -308,6 +308,86 @@ export interface AccountComplianceView {
   selfExclusionPermanent: boolean;
 }
 
+// ─── Social : chat, spectateurs, revanche, profils, classement ───────────────
+/** Chat d'une partie : les joueurs entre eux (lu aussi par les spectateurs) ; les spectateurs entre eux (jamais lu par les joueurs). */
+export type ChatChannel = "players" | "spectators";
+export const CHAT_MAX_LENGTH = 200;
+
+export interface ChatMessage {
+  id: number;
+  gameId: string;
+  channel: ChatChannel;
+  userId: string;
+  text: string;
+  /** horodatage serveur (ms) */
+  at: number;
+}
+
+export type ChatAck = { ok: true } | { ok: false; code: "RATE_LIMITED" | "BAD_PAYLOAD" | "NO_GAME" | "TOO_LONG" | "EMPTY" };
+
+/** Partie en cours, telle que listée pour les spectateurs. */
+export interface LiveGameView {
+  gameId: string;
+  white: SeatView;
+  black: SeatView;
+  timeControl: TimeControlId;
+  ply: number;
+  tournamentId: string | null;
+  spectators: number;
+}
+
+/** Ce que reçoit un spectateur en arrivant sur une partie. */
+export interface WatchSnapshot {
+  start: GameStartEvent;
+  state: GameStateEvent;
+  /** coups joués (SAN) depuis le début */
+  moves: string[];
+  chat: ChatMessage[];
+  drawOffer: Color | null;
+  spectators: number;
+  tournamentId: string | null;
+}
+
+export type WatchAck = { ok: true; snapshot: WatchSnapshot } | { ok: false; code: "NO_GAME" | "IS_PLAYER" | "BAD_PAYLOAD" };
+
+/** Revanche après une partie hors tournoi : `offeredBy` = qui la propose (null = plus de proposition). */
+export interface RematchEvent {
+  gameId: string;
+  offeredBy: string | null;
+  /** la proposition a été refusée (ou n'est plus possible) */
+  declined?: boolean;
+}
+
+export type RematchAck = { ok: true; started: boolean } | { ok: false; code: string };
+
+export interface PlayerProfile {
+  userId: string;
+  flag: string | null;
+  memberSince: string | null;
+  ratings: Record<TimeControlId, { rating: number; games: number; peak: number }>;
+  totals: { games: number; wins: number; draws: number; losses: number };
+  /** dernières parties, du point de vue de ce joueur */
+  recent: GameHistoryItem[];
+  /** partie en cours (pour la regarder), sinon null */
+  liveGameId: string | null;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  flag: string | null;
+  rating: number;
+  games: number;
+  peak: number;
+}
+
+export interface LeaderboardResponse {
+  timeControl: TimeControlId;
+  entries: LeaderboardEntry[];
+  /** place du joueur connecté (null s'il n'a pas encore joué dans cette cadence) */
+  me: LeaderboardEntry | null;
+}
+
 export interface ServerToClientEvents {
   "queue:joined": (p: { timeControl: TimeControlId; stake: Stake }) => void;
   "queue:left": () => void;
@@ -326,6 +406,11 @@ export interface ServerToClientEvents {
   "session:mode": (p: SessionModeEvent) => void;
   "sng:lobby": (p: SngSnapshot[]) => void;
   "error": (p: { code: ErrorCode; message: string }) => void;
+  "chat:msg": (m: ChatMessage) => void;
+  /** historique du chat des joueurs (reconnexion) */
+  "chat:history": (p: { gameId: string; messages: ChatMessage[] }) => void;
+  "game:spectators": (p: { gameId: string; count: number }) => void;
+  "rematch": (p: RematchEvent) => void;
 }
 
 export interface ClientToServerEvents {
@@ -349,6 +434,13 @@ export interface ClientToServerEvents {
   "sng:get": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
   /** le créateur lance son tournoi sans attendre qu'il soit complet (≥ 3 inscrits ; exempts au 1er tour) */
   "sng:start": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
+  "chat:send": (p: { gameId: string; text: string }, ack?: (r: ChatAck) => void) => void;
+  /** regarder une partie en cours */
+  "watch:start": (p: { gameId: string }, ack: (r: WatchAck) => void) => void;
+  "watch:stop": (p: { gameId: string }) => void;
+  "watch:list": (ack: (games: LiveGameView[]) => void) => void;
+  /** revanche : proposer (ou accepter si l'adversaire l'a déjà proposée), refuser / retirer */
+  "rematch": (p: { gameId: string; action: "offer" | "decline" }, ack?: (r: RematchAck) => void) => void;
 }
 
 /** Claims du JWT émis par l'API d'auth (le game-server ne fait que vérifier). */

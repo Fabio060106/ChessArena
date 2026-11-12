@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PageHeader } from "../../components/PageHeader";
 import { useRouter } from "next/navigation";
 import type { Color, RepertoireResponse } from "@chessarena/shared";
 import { GameBoard } from "../../components/GameBoard";
@@ -136,14 +137,9 @@ export default function RepertoirePage() {
 
   return (
     <main className="arena-app">
-      <header className="mx-auto flex h-13 max-w-[1400px] items-center gap-3 px-3 lg:px-6">
-        <a href="/play" className="font-display text-lg font-bold tracking-tight">Chess<span className="text-neon">Arena</span></a>
-        <span className="text-sm text-muted">· Répertoire</span>
-        <div className="ml-auto flex items-center gap-1.5">
-          <a href="/history" className="rounded-lg bg-surface-2 px-2 py-1.5 text-xs text-muted hover:text-text">Mes parties</a>
-          <a href="/play" className="neon-btn rounded-lg px-3 py-1.5 text-sm font-semibold">Jouer</a>
-        </div>
-      </header>
+      <PageHeader title="Répertoire" active="/repertoire">
+        <a href="/play" className="neon-btn rounded-lg px-3 py-1.5 text-sm font-semibold">Jouer</a>
+      </PageHeader>
 
       <div className="mx-auto max-w-[1400px] px-2 pb-8 sm:px-3 lg:px-6">
         {loadError && <p role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{loadError}</p>}

@@ -151,6 +151,15 @@ export class GameRoom {
     return this.chess.fen();
   }
 
+  /** Coups joués (SAN), pour un spectateur qui arrive en cours de partie. */
+  sans(): string[] {
+    return this.chess.history();
+  }
+
+  get tournamentId(): string | null {
+    return this.tournament?.tournamentId ?? null;
+  }
+
   state(): GameStateEvent {
     const t = this.clock.snapshot();
     return {

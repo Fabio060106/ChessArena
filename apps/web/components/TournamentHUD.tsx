@@ -147,7 +147,8 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
                   <span className="text-xs text-muted">vs</span>
                   <Seat name={m.p2} winner={m.winner} bye={m.round === 1 && m.p1 !== null && m.p2 === null} />
                   <span className="ml-auto shrink-0 text-xs">
-                    {m.status === "playing" ? <span className="text-neon">● en jeu{last && last.kind !== "main" ? ` (${last.kind === "rematch" ? "revanche" : "armageddon"})` : ""}</span>
+                    {m.status === "playing" ? <span className="text-neon">● en jeu{last && last.kind !== "main" ? ` (${last.kind === "rematch" ? "revanche" : "armageddon"})` : ""}
+                      {!mine && last && !last.result && <a href={`/direct/${last.gameId}`} target="_blank" rel="noreferrer" className="ml-1.5 rounded bg-neon/15 px-1.5 py-0.5 font-semibold hover:bg-neon/25" title="Regarder la partie">👁 Regarder</a>}</span>
                       : m.status === "done" ? <span className="text-muted">{last?.result ?? (m.p2 === null ? "qualifié" : "—")}</span>
                       : <span className="text-muted">à venir</span>}
                   </span>

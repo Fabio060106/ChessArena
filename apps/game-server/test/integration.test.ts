@@ -9,7 +9,7 @@ import { join } from "node:path";
 import jwt from "jsonwebtoken";
 import { io as connect, type Socket } from "socket.io-client";
 import type {
-  ArenaJwtClaims, ClientToServerEvents, GameOverEvent, GameStartEvent, MoveAck, PresenceEvent, ServerToClientEvents, SngAck, SngSnapshot,
+  ArenaJwtClaims, ChatAck, ChatMessage, ClientToServerEvents, GameOverEvent, LeaderboardResponse, LiveGameView, PlayerProfile, RematchAck, WatchAck, GameStartEvent, MoveAck, PresenceEvent, ServerToClientEvents, SngAck, SngSnapshot,
 } from "@chessarena/shared";
 import { createGameServer, type GameServer } from "../src/app.js";
 import { defaultConfig, type GameServerConfig } from "../src/config.js";
@@ -372,5 +372,107 @@ describe("comptes via HTTP (jeton de service du serveur web)", () => {
     const c = client({ token: svc() });
     const err = await new Promise<string>((res) => c.on("connect_error", (e) => res(e.message)));
     expect(err).toMatch(/token invalide/);
+  });
+});
+
+describe("social : spectateurs, chat, revanche, profil, classement", () => {
+  it("un spectateur suit la partie, les chats sont séparés, puis revanche couleurs inversées", async () => {
+    const { start, white, black } = await pair("soc-a", "soc-b");
+    const id = start.gameId;
+    const spec = client({ token: token({ sub: "soc-spec" }) });
+    await connected(spec);
+
+    const live = await new Promise<LiveGameView[]>((r) => spec.emit("watch:list", r));
+    expect(live.map((g) => g.gameId)).toContain(id);
+    const count = once(white, "game:spectators");
+    const w = await new Promise<WatchAck>((r) => spec.emit("watch:start", { gameId: id }, r));
+    expect(w.ok && w.snapshot).toMatchObject({ moves: [], spectators: 1, tournamentId: null });
+    expect(await count).toEqual({ gameId: id, count: 1 });
+    expect(await new Promise<WatchAck>((r) => white.emit("watch:start", { gameId: id }, r))).toEqual({ ok: false, code: "IS_PLAYER" });
+
+    const seen = once(spec, "game:state");
+    await move(white, id, "f2f3", 0);
+    expect((await seen).ply).toBe(1);
+
+    // chat des joueurs : lu par l'adversaire ET les spectateurs
+    const toBlack = once(black, "chat:msg");
+    const toSpec = once(spec, "chat:msg");
+    expect(await new Promise<ChatAck>((r) => white.emit("chat:send", { gameId: id, text: " bonne  chance " }, r))).toEqual({ ok: true });
+    expect(await toBlack).toMatchObject({ channel: "players", userId: start.white.userId, text: "bonne chance" });
+    expect((await toSpec).text).toBe("bonne chance");
+
+    // chat des spectateurs : jamais transmis aux joueurs (pas de conseils pendant la partie)
+    const leaked: ChatMessage[] = [];
+    black.on("chat:msg", (m) => leaked.push(m));
+    const specEcho = once(spec, "chat:msg");
+    await new Promise<ChatAck>((r) => spec.emit("chat:send", { gameId: id, text: "joue Dh4 !" }, r));
+    expect(await specEcho).toMatchObject({ channel: "spectators", text: "joue Dh4 !" });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(leaked).toHaveLength(0);
+    black.off("chat:msg");
+
+    // un inconnu (ni joueur ni spectateur) ne peut pas écrire
+    const intrus = client({ token: token({ sub: "soc-intrus" }) });
+    await connected(intrus);
+    expect(await new Promise<ChatAck>((r) => intrus.emit("chat:send", { gameId: id, text: "coucou" }, r))).toEqual({ ok: false, code: "NO_GAME" });
+
+    // fin de partie : le spectateur la reçoit
+    await move(black, id, "e7e5", 1);
+    await move(white, id, "g2g4", 2);
+    const specOver = once(spec, "game:over");
+    await move(black, id, "d8h4", 3);
+    expect((await specOver).result).toBe("0-1");
+    await new Promise((r) => setTimeout(r, 100));
+
+    // chat d'après-partie entre les joueurs
+    const gg = once(white, "chat:msg");
+    await new Promise<ChatAck>((r) => black.emit("chat:send", { gameId: id, text: "gg" }, r));
+    expect((await gg).text).toBe("gg");
+
+    // revanche : proposée par les Blancs, acceptée par les Noirs → couleurs inversées
+    const offerSeen = once(black, "rematch");
+    expect(await new Promise<RematchAck>((r) => white.emit("rematch", { gameId: id, action: "offer" }, r))).toEqual({ ok: true, started: false });
+    expect(await offerSeen).toEqual({ gameId: id, offeredBy: start.white.userId });
+    const starts = Promise.all([once(white, "game:start"), once(black, "game:start")]);
+    expect(await new Promise<RematchAck>((r) => black.emit("rematch", { gameId: id, action: "offer" }, r))).toEqual({ ok: true, started: true });
+    const [s2] = (await starts) as [GameStartEvent, GameStartEvent];
+    expect(s2.white.userId).toBe(start.black.userId);
+    expect(s2.black.userId).toBe(start.white.userId);
+    expect(s2.timeControl.id).toBe("blitz_3_0");
+    expect(s2.stake).toEqual(start.stake);
+    expect(await new Promise<RematchAck>((r) => white.emit("rematch", { gameId: id, action: "offer" }, r))).toMatchObject({ ok: false });
+
+    // profil (pseudo insensible à la casse) et classement
+    const get = (path: string, sub: string) => fetch(`${url}${path}`, { headers: { authorization: `Bearer ${token({ sub })}` } });
+    const prof = (await (await get("/account/players/SOC-B", "soc-spec")).json()) as PlayerProfile;
+    expect(prof).toMatchObject({ userId: "soc-b", liveGameId: s2.gameId });
+    expect(prof.totals.games).toBe(1);
+    expect(prof.recent[0]).toMatchObject({ gameId: id });
+    expect(prof.ratings.blitz_3_0.games).toBe(1);
+    expect((await get("/account/players/personne-xyz", "soc-spec")).status).toBe(404);
+    const lb = (await (await get("/account/leaderboard?tc=blitz_3_0", start.black.userId)).json()) as LeaderboardResponse;
+    expect(lb.entries.map((e) => e.userId)).toEqual(expect.arrayContaining(["soc-a", "soc-b"]));
+    expect(lb.me?.userId).toBe(start.black.userId);
+    expect(lb.entries.find((e) => e.userId === start.black.userId)!.rating).toBeGreaterThan(lb.entries.find((e) => e.userId === start.white.userId)!.rating);
+    expect((await get("/account/leaderboard?tc=nimporte", "soc-a")).status).toBe(400);
+  });
+
+  it("revanche refusée ; impossible après un tournoi ou si l'adversaire rejoue déjà", async () => {
+    const { start, white, black } = await pair("soc-c", "soc-d");
+    const id = start.gameId;
+    const over = once(white, "game:over");
+    white.emit("game:resign", { gameId: id });
+    await over;
+    await new Promise((r) => setTimeout(r, 100));
+    await new Promise<RematchAck>((r) => white.emit("rematch", { gameId: id, action: "offer" }, r));
+    const declined = once(white, "rematch");
+    await new Promise<RematchAck>((r) => black.emit("rematch", { gameId: id, action: "decline" }, r));
+    expect(await declined).toEqual({ gameId: id, offeredBy: null, declined: true });
+    // les Noirs repartent en file : la proposition qu'ils feraient est retirée
+    await new Promise<RematchAck>((r) => black.emit("rematch", { gameId: id, action: "offer" }, r));
+    const withdrawn = once(white, "rematch");
+    black.emit("queue:join", { timeControl: "rapid_5_0", stake: { currency: "PLAY", buyInCents: 0 } });
+    expect(await withdrawn).toEqual({ gameId: id, offeredBy: null });
+    black.emit("queue:leave");
   });
 });

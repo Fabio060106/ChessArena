@@ -19,6 +19,9 @@ import { MoveList } from "../../components/MoveList";
 import { MoveNav, usePlyKeys } from "../../components/MoveNav";
 import { replayFromSans } from "../../lib/replay";
 import { Lobby } from "../../components/Lobby";
+import { ChatPanel } from "../../components/ChatPanel";
+import { FlipButton, SiteNav } from "../../components/SiteNav";
+import { useFlip } from "../../hooks/useFlip";
 
 const RESULT_LABEL: Record<string, string> = {
   checkmate: "échec et mat", resignation: "abandon", timeout: "temps écoulé", abandon: "forfait (déconnexion)",
@@ -57,6 +60,15 @@ function Play() {
   return <Arena userId={me.userId} flag={me.flag ?? ""} dev={!!devUser} inviteId={invite && /^[0-9a-f-]{36}$/i.test(invite) ? invite : null} />;
 }
 
+const REMATCH_ERRORS: Record<string, string> = {
+  IN_GAME: "Ton adversaire (ou toi) est déjà dans une autre partie.",
+  IN_TOURNAMENT: "Pas de revanche pendant un tournoi.",
+  EXPIRED: "Trop tard : la revanche n'est possible que 5 minutes après la partie.",
+  NO_GAME: "La revanche n'est plus possible pour cette partie.",
+  STAKE_LOCK_FAILED: "Solde insuffisant pour rejouer avec la même mise.",
+  PLAY_MONEY_ONLY: "Revanche possible uniquement en jetons PLAY.",
+};
+
 const TC_NAME = { bullet_1_0: "Bullet 1+0", blitz_3_0: "Blitz 3+0", blitz_3_2: "Blitz 3+2", rapid_5_0: "Rapide 5+0" } as const;
 
 function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; dev: boolean; inviteId: string | null }) {
@@ -66,14 +78,14 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     return r.ok ? { token: ((await r.json()) as { token: string }).token } : {};
   }, [userId, flag, dev]);
 
-  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw } = useGameSocket(userId, getAuth);
+  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, chat, sendChat, rematch, rematchAction, spectators } = useGameSocket(userId, getAuth);
   const sng = useTournament(socket, userId, inviteId);
   const [settings, updateSettings] = useSettings();
   const playing = view.phase === "playing";
   const subscribe = useClockTicker(view.server, sync, !playing);
   const graceLeft = useCountdown(view.opponentPresence?.graceMs ?? null, view.opponentPresence);
   const [confirmResign, setConfirmResign] = useState(false);
-  const [tab, setTab] = useState<"tournament" | "moves">(inviteId ? "tournament" : "moves");
+  const [tab, setTab] = useState<"tournament" | "moves" | "chat">(inviteId ? "tournament" : "moves");
   const [showResult, setShowResult] = useState(true);
   // navigation dans les coups (comme Lichess) : null = position en direct
   const [browse, setBrowse] = useState<number | null>(null);
@@ -98,6 +110,24 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     if (gameId && r && (r.top < 0 || r.bottom > window.innerHeight)) window.scrollTo({ top: 0, behavior: "instant" });
   }, [gameId]);
   useEffect(() => { if (sng.current && !playing) setTab("tournament"); }, [sng.current, playing]);
+  const [flipped, flip] = useFlip(gameId);
+  // messages non lus (onglet Chat fermé)
+  const [readCount, setReadCount] = useState(0);
+  const othersMsgs = chat.filter((m) => m.userId !== userId).length;
+  useEffect(() => { if (tab === "chat") setReadCount(othersMsgs); }, [tab, othersMsgs]);
+  useEffect(() => { setReadCount(0); }, [gameId]);
+  const unread = tab === "chat" ? 0 : Math.max(0, othersMsgs - readCount);
+  const [rematchErr, setRematchErr] = useState<string | null>(null);
+  useEffect(() => { setRematchErr(null); }, [gameId]);
+  // pas de revanche en tournoi (le tableau décide du prochain adversaire)
+  const canRematch = view.phase === "over" && !!view.start && sng.current?.status !== "running";
+  const doRematch = async (action: "offer" | "decline") => {
+    setRematchErr(null);
+    const r = await rematchAction(action);
+    if (!r.ok) setRematchErr(REMATCH_ERRORS[r.code] ?? "La revanche n'est plus possible.");
+  };
+  const rematchByOpp = !!rematch?.offeredBy && rematch.offeredBy !== userId;
+  const rematchByMe = rematch?.offeredBy === userId;
 
   // le contexte audio ne peut démarrer que sur un geste : premier clic n'importe où
   useEffect(() => {
@@ -109,6 +139,8 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
 
   const me: Color = view.myColor;
   const opp: Color = me === "w" ? "b" : "w";
+  const bottom: Color = flipped ? opp : me;
+  const top: Color = flipped ? me : opp;
   const seat = (c: Color) => (c === "w" ? view.start?.white : view.start?.black);
   const running = playing && view.server && view.server.ply >= 2 ? view.server.turn : null;
   const fen = browsing ? steps[browse]!.fen : view.start ? view.displayFen : START_FEN;
@@ -133,6 +165,22 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     return (view.over.result === "1-0") === (me === "w");
   }, [view.over, me]);
 
+  const card = (c: Color) => c === opp ? (
+    <PlayerCard
+      userId={seat(opp)?.userId ?? "Adversaire"} rating={seat(opp)?.rating} flag={seat(opp)?.flag} profileLink={!!seat(opp)}
+      pingMs={view.start ? pingOf(opp) : null} toMove={running === opp} graceMs={graceLeft}
+      materialAdvantage={view.start ? materialAdvantage(fen, opp) : 0} captured={view.start ? mat[opp].captured : undefined}
+      clock={<ChessClock color={opp} subscribe={subscribe} active={running === opp} initialMs={initialMs} alert={false} />}
+    />
+  ) : (
+    <PlayerCard
+      userId={view.start ? (seat(me)?.userId ?? userId) : userId} rating={seat(me)?.rating} flag={seat(me)?.flag ?? (flag || undefined)}
+      pingMs={pingOf(me)} isMe toMove={running === me}
+      materialAdvantage={view.start ? materialAdvantage(fen, me) : 0} captured={view.start ? mat[me].captured : undefined}
+      clock={<ChessClock color={me} subscribe={subscribe} active={running === me} initialMs={initialMs} alert />}
+    />
+  );
+
   const plyLabel = (p: number) => (p === 0 ? "position de départ" : `${Math.ceil(p / 2)}${p % 2 === 1 ? "." : "…"} ${steps[p]?.san ?? ""}`);
   const status = !playing ? null
     : browsing ? `Vous regardez ${plyLabel(browse!)} — la partie continue. ⏭, → ou un clic sur l'échiquier pour revenir.`
@@ -152,8 +200,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
           {view.connected ? "connecté" : "reconnexion…"}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
-          <a href="/history" className="rounded-lg bg-surface-2 px-2 py-1.5 text-xs text-muted hover:text-text">Mes parties</a>
-          <a href="/repertoire" className="rounded-lg bg-surface-2 px-2 py-1.5 text-xs text-muted hover:text-text">Répertoire</a>
+          <FlipButton onFlip={flip} className="!px-2 !py-1 text-xs" />
           {!dev && (
             <button type="button" title="Se déconnecter"
               onClick={() => void fetch("/api/session", { method: "DELETE" }).finally(() => { window.location.href = "/"; })}
@@ -181,16 +228,12 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
           </button>
         </div>
       </header>
+      <SiteNav active="/play" />
 
       <div className="mx-auto grid max-w-[1400px] gap-4 px-2 pb-6 sm:px-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:px-6">
         {/* ─── Zone de jeu : la taille du plateau suit la hauteur ET la largeur disponibles ─── */}
         <section className="mx-auto flex w-full flex-col gap-1.5" style={{ maxWidth: "min(100%, max(320px, calc(100dvh - 200px)))" }}>
-          <PlayerCard
-            userId={seat(opp)?.userId ?? "Adversaire"} rating={seat(opp)?.rating} flag={seat(opp)?.flag}
-            pingMs={view.start ? pingOf(opp) : null} toMove={running === opp} graceMs={graceLeft}
-            materialAdvantage={view.start ? materialAdvantage(fen, opp) : 0} captured={view.start ? mat[opp].captured : undefined}
-            clock={<ChessClock color={opp} subscribe={subscribe} active={running === opp} initialMs={initialMs} alert={false} />}
-          />
+          {card(top)}
           <div ref={boardBox} className="relative" onPointerDownCapture={(e) => {
             // en navigation, un clic sur le plateau ramène au direct SANS jouer : on ne joue jamais depuis une position passée
             if (browsing) { e.stopPropagation(); e.preventDefault(); setBrowse(null); }
@@ -198,7 +241,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
             <GameBoard
               fen={fen}
               serverFen={browsing ? fen : (view.server?.fen ?? fen)}
-              orientation={me}
+              orientation={bottom}
               myColor={me}
               interactive={playing && !browsing}
               myTurn={myTurn}
@@ -233,6 +276,8 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
                       {view.over.rakeCents > 0 && ` · rake ${formatMoney(view.over.rakeCents, view.start.stake.currency)}`}
                     </p>
                   )}
+                  {canRematch && <RematchBox byOpp={rematchByOpp} byMe={rematchByMe} declined={!!rematch?.declined} error={rematchErr}
+                    opponent={seat(opp)?.userId ?? "Ton adversaire"} onAction={doRematch} />}
                   <div className="mt-4 flex gap-2">
                     {sng.current?.status !== "running" ? (
                       <button type="button" className="neon-btn flex-1 rounded-lg px-3 py-2 font-semibold"
@@ -251,13 +296,12 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
               </div>
             )}
           </div>
-          <PlayerCard
-            userId={view.start ? (seat(me)?.userId ?? userId) : userId} rating={seat(me)?.rating} flag={seat(me)?.flag ?? (flag || undefined)}
-            pingMs={pingOf(me)} isMe toMove={running === me}
-            materialAdvantage={view.start ? materialAdvantage(fen, me) : 0} captured={view.start ? mat[me].captured : undefined}
-            clock={<ChessClock color={me} subscribe={subscribe} active={running === me} initialMs={initialMs} alert />}
-          />
-          {status && <p className="px-2 text-center text-xs text-muted" role="status">{status}</p>}
+          {card(bottom)}
+          {(status || (spectators > 0 && view.start)) && (
+            <p className="px-2 text-center text-xs text-muted" role="status">
+              {status}{spectators > 0 && view.start ? <span className="ml-2 whitespace-nowrap" title="Spectateurs">👁 {spectators} spectateur{spectators > 1 ? "s" : ""}</span> : null}
+            </p>
+          )}
         </section>
 
         {/* ─── HUD latéral (sous le plateau sur mobile) ─── */}
@@ -266,6 +310,13 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
             <div className="panel p-3">
               {view.phase === "over" && <p className="mb-2 text-xs text-muted">Nouvelle partie : même cadence, ou une autre.</p>}
               {lobby}
+            </div>
+          )}
+
+          {canRematch && !showResult && (
+            <div className="panel p-3">
+              <RematchBox byOpp={rematchByOpp} byMe={rematchByMe} declined={!!rematch?.declined} error={rematchErr}
+                opponent={seat(opp)?.userId ?? "Ton adversaire"} onAction={doRematch} />
             </div>
           )}
 
@@ -309,10 +360,11 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
 
           <div className="panel p-3">
             <div className="mb-3 flex gap-1 rounded-lg bg-surface-2 p-0.5" role="tablist">
-              {([["moves", "Coups"], ["tournament", "Tournoi"]] as const).map(([id, label]) => (
+              {([["moves", "Coups"], ["chat", "Chat"], ["tournament", "Tournoi"]] as const).map(([id, label]) => (
                 <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
                   className={`flex-1 rounded-md px-3 py-1.5 text-sm font-semibold ${tab === id ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>
                   {label}{id === "tournament" && sng.current?.status === "running" ? <span className="ml-1.5 inline-block size-1.5 rounded-full bg-neon align-middle" /> : null}
+                  {id === "chat" && unread > 0 ? <span className="tabular ml-1.5 rounded-full bg-gold px-1.5 text-[10px] text-ink" aria-label={`${unread} message(s) non lu(s)`}>{unread}</span> : null}
                 </button>
               ))}
             </div>
@@ -324,6 +376,12 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
                   <a href={`/history?g=${view.start.gameId}`} className="text-sm text-neon hover:underline">Analyser cette partie avec Stockfish 19 →</a>
                 )}
               </div>
+            ) : tab === "chat" ? (
+              view.start ? (
+                <ChatPanel messages={chat} me={userId} onSend={sendChat}
+                  quick={view.phase === "over" ? ["Bien joué !", "Merci pour la partie", "gg"] : ["Bonne chance !", "Bien joué", "Oups"]}
+                  empty={`Discute avec ${seat(opp)?.userId ?? "ton adversaire"}. Les spectateurs lisent ce chat, mais tu ne vois pas le leur.`} />
+              ) : <p className="px-1 text-sm text-muted">Le chat s'ouvre pendant une partie.</p>
             ) : (
               <TournamentHUD userId={userId} current={sng.current} lobby={sng.lobby} busy={sng.busy} error={sng.error}
                 onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} onStart={sng.start} invite={sng.invite} />
@@ -351,4 +409,36 @@ function useCountdown(ms: number | null, key: unknown): number | null {
     return () => clearInterval(id);
   }, [ms, key]);
   return left;
+}
+
+/** Revanche : proposer, accepter, refuser (dans le résultat de la partie ou le panneau latéral). */
+function RematchBox({ byOpp, byMe, declined, error, opponent, onAction }: {
+  byOpp: boolean; byMe: boolean; declined: boolean; error: string | null; opponent: string; onAction: (a: "offer" | "decline") => void;
+}) {
+  return (
+    <div className="mt-3 rounded-lg border border-neon/30 bg-neon/5 p-2.5 text-left" aria-label="Revanche">
+      {byOpp ? (
+        <>
+          <p className="text-sm font-semibold text-neon">{opponent} propose une revanche</p>
+          <div className="mt-2 flex gap-2">
+            <button type="button" className="neon-btn flex-1 rounded-lg px-3 py-2 text-sm font-semibold" onClick={() => onAction("offer")}>Accepter</button>
+            <button type="button" className="flex-1 rounded-lg border border-line px-3 py-2 text-sm text-muted hover:text-text" onClick={() => onAction("decline")}>Refuser</button>
+          </div>
+        </>
+      ) : byMe ? (
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm text-muted">Revanche proposée… en attente de {opponent}</p>
+          <button type="button" className="rounded-lg border border-line px-2.5 py-1.5 text-xs text-muted hover:text-text" onClick={() => onAction("decline")}>Annuler</button>
+        </div>
+      ) : (
+        <>
+          <button type="button" className="w-full rounded-lg border border-neon/60 px-3 py-2 text-sm font-semibold text-neon hover:bg-neon/10" onClick={() => onAction("offer")}>
+            ⟳ Revanche (couleurs inversées)
+          </button>
+          {declined && <p className="mt-1.5 text-xs text-muted">Revanche refusée.</p>}
+        </>
+      )}
+      {error && <p role="alert" className="mt-1.5 text-xs text-danger">{error}</p>}
+    </div>
+  );
 }

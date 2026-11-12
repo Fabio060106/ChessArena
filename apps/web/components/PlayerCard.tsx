@@ -18,6 +18,8 @@ interface Props {
   /** adversaire déconnecté : ms avant forfait */
   graceMs?: number | null;
   clock: ReactNode;
+  /** lien vers le profil du joueur (par défaut /profil/<pseudo>) ; false = pas de lien */
+  profileLink?: boolean;
 }
 
 const PING_COLOR: Record<PingQuality, string> = {
@@ -47,7 +49,9 @@ export const PlayerCard = memo(function PlayerCard(p: Props) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           {emoji && <span title={country ?? undefined} aria-label={country ?? undefined} className="text-base leading-none">{emoji}</span>}
-          <span className="truncate font-semibold text-text">{p.userId}</span>
+          {p.profileLink === false ? <span className="truncate font-semibold text-text">{p.userId}</span> : (
+            <a href={`/profil/${encodeURIComponent(p.userId)}`} className="truncate font-semibold text-text hover:text-neon hover:underline" title={`Profil de ${p.userId}`}>{p.userId}</a>
+          )}
           {p.isMe && <span className="text-xs text-muted">(vous)</span>}
           {p.rating !== undefined && <span className="tabular text-sm text-muted">{p.rating}</span>}
           {p.captured ? <span className="truncate text-sm leading-none tracking-tight text-muted" aria-label="Pièces prises">{p.captured}</span> : null}

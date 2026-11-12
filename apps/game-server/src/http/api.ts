@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import jwt from "jsonwebtoken";
 import type pg from "pg";
 import { REPERTOIRE_MAX_BYTES, type GameRepository } from "../persistence/GameRepository.js";
-import type { ArenaJwtClaims, DecisionRequest, RgLimitKind } from "@chessarena/shared";
+import { TIME_CONTROLS, type ArenaJwtClaims, type DecisionRequest, type RgLimitKind, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "../config.js";
 import { CaseAlreadyResolvedError, CaseNotFoundError, type ModerationService } from "../fairplay/ModerationService.js";
 import { WithdrawalError, type WithdrawalService } from "../settlement/withdrawals.js";
@@ -61,6 +61,8 @@ export interface ApiDeps {
   repo?: GameRepository | null;
   /** comptes joueurs (pseudo + mot de passe) */
   accounts?: AccountService | null;
+  /** partie en cours d'un joueur (profil : bouton « Regarder ») */
+  liveGameOf?: (userId: string) => string | null;
 }
 
 class HttpError extends Error {
@@ -288,6 +290,24 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       const g = await need(d.repo).getGame(claims.sub, gm[1]!);
       if (!g) throw new HttpError(404, "NOT_FOUND");
       send(200, g);
+      return true;
+    }
+
+    // ─── Profils et classement (joueurs connectés) ───────────────────────────────
+    const pm = url.pathname.match(/^\/account\/players\/([^/]{1,200})$/);
+    if (pm && req.method === "GET") {
+      let pseudo: string;
+      try { pseudo = decodeURIComponent(pm[1]!); } catch { throw new HttpError(400, "BAD_PSEUDO"); }
+      const p = await need(d.repo).getProfile(pseudo);
+      if (!p) throw new HttpError(404, "NOT_FOUND");
+      send(200, { ...p, liveGameId: d.liveGameOf?.(p.userId) ?? null });
+      return true;
+    }
+    if (url.pathname === "/account/leaderboard" && req.method === "GET") {
+      const tc = url.searchParams.get("tc") ?? "blitz_3_0";
+      if (!(tc in TIME_CONTROLS)) throw new HttpError(400, "BAD_TIME_CONTROL");
+      const r = await need(d.repo).leaderboard(tc as TimeControlId, 100, claims.sub);
+      send(200, { timeControl: tc, ...r });
       return true;
     }
 
