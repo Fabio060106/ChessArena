@@ -107,7 +107,7 @@ export function isBoardTheme(v: unknown): v is BoardThemeId {
 }
 
 // ─── Couleurs des pièces ─────────────────────────────────────────────────────
-export type PaletteId = "neon" | "slate" | "wood" | "ivory" | "gold" | "coral" | "emerald";
+export type PaletteId = "neon" | "slate" | "wood" | "ivory" | "maple" | "red" | "coral";
 
 export interface PiecePalette {
   id: PaletteId;
@@ -128,19 +128,19 @@ export const PIECE_PALETTES: Record<PaletteId, PiecePalette> = {
   slate: pal("slate", "Ardoise", ["#FFFFFF", "#D3D9E3", "#1A202C", "#1A202C"], ["#3B4456", "#151A24", "#0B0E14", "#C5CDD8"]),
   wood: pal("wood", "Bois", ["#FFFAF0", "#E2D1B3", "#3A2716", "#3A2716"], ["#4C3526", "#1C120B", "#120A05", "#E9D3AE"]),
   ivory: pal("ivory", "Ivoire et ébène", ["#FFFFFF", "#E4E4E4", "#1E1E1E", "#1E1E1E"], ["#4A4A4A", "#121212", "#000000", "#EDEDED"]),
-  gold: pal("gold", "Or et argent", ["#FFF1B8", "#D9A92E", "#5A3E00", "#5A3E00"], ["#BAC3D2", "#58627A", "#1C2230", "#F4F7FB"]),
+  maple: pal("maple", "Érable et noyer", ["#F7E4C2", "#D8B27A", "#4A2E14", "#4A2E14"], ["#7B4B2A", "#3A1F0E", "#1C0E05", "#F0D6B0"]),
+  red: pal("red", "Ivoire et rouge", ["#FFF8EC", "#E7D9BF", "#3A2A1A", "#3A2A1A"], ["#C9412F", "#7A1A12", "#3A0805", "#FFE2D8"]),
   coral: pal("coral", "Corail et marine", ["#FFE6DA", "#F2967A", "#5B1E0E", "#5B1E0E"], ["#3C5F99", "#152849", "#09132A", "#C4DAFF"]),
-  emerald: pal("emerald", "Émeraude et rubis", ["#D9FBE8", "#3FBF7F", "#0C3B22", "#0C3B22"], ["#C2384E", "#5E0E1C", "#2A0309", "#FFD9DF"]),
 };
 
-export const PALETTE_ORDER: PaletteId[] = ["neon", "slate", "wood", "ivory", "gold", "coral", "emerald"];
+export const PALETTE_ORDER: PaletteId[] = ["neon", "slate", "wood", "ivory", "maple", "red", "coral"];
 
 export function isPalette(v: unknown): v is PaletteId {
   return typeof v === "string" && v in PIECE_PALETTES;
 }
 
 // ─── Formes des pièces ───────────────────────────────────────────────────────
-export type PieceSetId = "arena" | "classic" | "flat" | "outline" | "pixel" | "letters" | "relief" | "sketch" | "silhouette" | "crystal" | "bold" | "geo";
+export type PieceSetId = "arena" | "classic" | "flat" | "outline" | "pixel" | "letters" | "relief" | "sketch" | "crystal" | "turned" | "woodgrain" | "marble";
 
 export const PIECE_SETS: Array<{ id: PieceSetId; label: string }> = [
   { id: "arena", label: "Arena" },
@@ -151,10 +151,10 @@ export const PIECE_SETS: Array<{ id: PieceSetId; label: string }> = [
   { id: "letters", label: "Lettres" },
   { id: "relief", label: "Relief" },
   { id: "sketch", label: "Croquis" },
-  { id: "silhouette", label: "Silhouette" },
   { id: "crystal", label: "Cristal" },
-  { id: "bold", label: "Gros traits" },
-  { id: "geo", label: "Géométrique" },
+  { id: "turned", label: "Tourné" },
+  { id: "woodgrain", label: "Bois veiné" },
+  { id: "marble", label: "Marbre" },
 ];
 
 export function isPieceSet(v: unknown): v is PieceSetId {

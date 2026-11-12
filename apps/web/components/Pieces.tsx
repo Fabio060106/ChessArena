@@ -82,6 +82,28 @@ export function PieceDefs() {
           <feTurbulence type="fractalNoise" baseFrequency="0.07" numOctaves="3" seed="7" />
           <feDisplacementMap in="SourceGraphic" scale="6" />
         </filter>
+        {/* ombrage cylindrique : une pièce tournée au tour, éclairée de la gauche (jeu Tourné, Bois, Marbre) */}
+        <linearGradient id="arena-turn" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="#000" stopOpacity="0.38" />
+          <stop offset="0.22" stopColor="#fff" stopOpacity="0.42" />
+          <stop offset="0.42" stopColor="#fff" stopOpacity="0.05" />
+          <stop offset="0.75" stopColor="#000" stopOpacity="0.12" />
+          <stop offset="1" stopColor="#000" stopOpacity="0.5" />
+        </linearGradient>
+        {/* veines du bois (allongées verticalement) */}
+        <filter id="arena-wood" x="0" y="0" width="100%" height="100%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.22 0.018" numOctaves="3" seed="11" result="n" />
+          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.22  0 0 0 0 0.11  0 0 0 0 0.03  1.5 0 0 0 -0.62" result="grain" />
+          <feComposite in="grain" in2="SourceGraphic" operator="in" result="g" />
+          <feMerge><feMergeNode in="SourceGraphic" /><feMergeNode in="g" /></feMerge>
+        </filter>
+        {/* veines du marbre */}
+        <filter id="arena-marble" x="0" y="0" width="100%" height="100%">
+          <feTurbulence type="turbulence" baseFrequency="0.035" numOctaves="4" seed="4" result="n" />
+          <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.35  0 0 0 0 0.36  0 0 0 0 0.4  -2.2 0 0 0 0.62" result="veins" />
+          <feComposite in="veins" in2="SourceGraphic" operator="in" result="v" />
+          <feMerge><feMergeNode in="SourceGraphic" /><feMergeNode in="v" /></feMerge>
+        </filter>
         {/* ombre portée douce */}
         <filter id="arena-shadow" x="-20%" y="-20%" width="140%" height="150%">
           <feDropShadow dx="0" dy="2" stdDeviation="1.6" floodColor="#000" floodOpacity="0.45" />
@@ -127,16 +149,6 @@ const FLAT: Record<PieceType, Shape> = {
   n: { body: ["M28 86h46c2-22 0-46-14-60-5-5-11-8-17-9l-2 8-14 14c-3 3-3 8 1 10l5 2 10-6c2 6-2 12-8 18-6 7-7 13-7 23z"] },
   q: { body: ["M28 86h44l6-52-14 18-6-30-8 24-8-24-6 30-14-18z"] },
   k: { body: ["M28 86h44l-4-34H32z", "M45 52V36h-9v-9h9V14h10v13h9v9h-9v16z"] },
-};
-
-/** Jeu « Géométrique » (esprit Bauhaus) : chaque pièce réduite à des formes simples. */
-const GEO: Record<PieceType, Shape> = {
-  p: { body: ["M36 86h28v-8H36z"], circles: [[50, 62, 14]] },
-  r: { body: ["M30 86h40V40H30z", "M30 40V26h10v8h6v-8h8v8h6v-8h10v14z"] },
-  b: { body: ["M34 86h32l-4-8H38z", "M50 14l17 32-17 32-17-32z"], detail: ["M50 32v28"] },
-  n: { body: ["M30 86h42V30L30 52z", "M48 30l24-14v14z"], dots: [[56, 40, 3.4]] },
-  q: { body: ["M30 86h40l-8-34H38z", "M24 46l26-24 26 24z"], circles: [[50, 17, 6]] },
-  k: { body: ["M30 86h40V44H30z", "M45 44V30h-9v-9h9v-9h10v9h9v9h-9v14z"] },
 };
 
 /** Jeu « Pixel » : grilles 12×12 (# = corps, x = contour, o = détail). */
@@ -220,8 +232,17 @@ export const PieceSvg = memo(function PieceSvg({ code, set = "arena" }: { code: 
     );
   }
 
-  const shape = set === "classic" || set === "relief" || set === "sketch" || set === "silhouette" ? CLASSIC[type]
-    : set === "flat" || set === "bold" ? FLAT[type] : set === "geo" ? GEO[type] : SHAPES[type];
+  const shape = set === "classic" || set === "relief" || set === "sketch" || set === "turned" || set === "woodgrain" || set === "marble" ? CLASSIC[type]
+    : set === "flat" ? FLAT[type] : SHAPES[type];
+  const turn = <ShapeSvg shape={shape} fill="url(#arena-turn)" stroke="none" detail="none" strokeWidth={0} noDetail />;
+  /** pièce « matière » : aplat texturé, ombrage cylindrique, reflet, contour net par-dessus */
+  const material = (texture?: string) => (
+    <g filter="url(#arena-shadow)">
+      <g filter={texture}><ShapeSvg shape={shape} fill={fill} stroke="none" detail="none" strokeWidth={0} noDetail /></g>
+      {turn}
+      <ShapeSvg shape={shape} fill="none" stroke={stroke} detail={detail} strokeWidth={2.2} />
+    </g>
+  );
   const gloss = <ShapeSvg shape={shape} fill="url(#arena-gloss)" stroke="none" detail="none" strokeWidth={0} noDetail />;
   return (
     <svg viewBox="5 4 90 90" width="100%" height="100%" aria-hidden focusable="false" style={{ display: "block", overflow: "visible" }}>
@@ -239,20 +260,18 @@ export const PieceSvg = memo(function PieceSvg({ code, set = "arena" }: { code: 
           <ShapeSvg shape={shape} fill={w ? c0 : c1} fillOpacity={w ? 0.9 : 0.75} stroke={stroke} detail={detail} strokeWidth={2.6} />
           <ShapeSvg shape={shape} fill="none" stroke={stroke} detail={detail} strokeWidth={1.4} />
         </g>
-      ) : set === "silhouette" ? (
-        // ombre chinoise : silhouette pleine, sans détail, détachée par une ombre
-        <ShapeSvg shape={shape} fill={w ? c0 : c1} stroke={stroke} detail={detail} strokeWidth={1.2} filter="url(#arena-shadow)" noDetail />
+      ) : set === "turned" ? (
+        material()
+      ) : set === "woodgrain" ? (
+        material("url(#arena-wood)")
+      ) : set === "marble" ? (
+        material("url(#arena-marble)")
       ) : set === "crystal" ? (
         // cristal : corps translucide, arêtes nettes, reflet
         <>
           <ShapeSvg shape={shape} fill={w ? c0 : c1} fillOpacity={w ? 0.55 : 0.7} stroke={w ? stroke : detail} detail={detail} strokeWidth={2.4} />
           {gloss}
         </>
-      ) : set === "bold" ? (
-        // gros traits : très lisible (vue faible, petits écrans)
-        <ShapeSvg shape={shape} fill={w ? c0 : c1} stroke={stroke} detail={detail} strokeWidth={5.5} />
-      ) : set === "geo" ? (
-        <ShapeSvg shape={shape} fill={fill} stroke={stroke} detail={detail} strokeWidth={3} />
       ) : set === "outline" ? (
         w ? (
           // blanc : silhouette évidée (double trait : lisible sur toutes les cases)

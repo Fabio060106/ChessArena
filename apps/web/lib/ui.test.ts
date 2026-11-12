@@ -238,7 +238,7 @@ describe("profils et préférences", () => {
     expect(parseSettings(JSON.stringify({ boardTheme: "wood", soundOn: false, volume: 3 }))).toEqual({ ...DEFAULT_SETTINGS, boardTheme: "wood", palette: "wood", soundOn: false });
     expect(parseSettings(JSON.stringify({ boardTheme: "neon-pink" })).boardTheme).toBe("cyberpunk");
     // échiquier, forme et couleurs des pièces : trois choix indépendants
-    expect(parseSettings(JSON.stringify({ boardTheme: "green", pieceSet: "pixel", palette: "gold" }))).toMatchObject({ boardTheme: "green", pieceSet: "pixel", palette: "gold" });
+    expect(parseSettings(JSON.stringify({ boardTheme: "green", pieceSet: "pixel", palette: "maple" }))).toMatchObject({ boardTheme: "green", pieceSet: "pixel", palette: "maple" });
     expect(parseSettings(JSON.stringify({ pieceSet: "inconnu", palette: 3 }))).toMatchObject({ pieceSet: "arena", palette: "neon" });
   });
 });
