@@ -77,7 +77,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     return r.ok ? { token: ((await r.json()) as { token: string }).token } : {};
   }, [userId, flag, dev]);
 
-  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, chat, sendChat, rematch, rematchAction, spectators } = useGameSocket(userId, getAuth);
+  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, chat, sendChat, reportChat, rematch, rematchAction, spectators } = useGameSocket(userId, getAuth);
   const sng = useTournament(socket, userId, inviteId);
   const [settings, updateSettings] = useSettings();
   const playing = view.phase === "playing";
@@ -365,7 +365,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
               </div>
             ) : tab === "chat" ? (
               view.start ? (
-                <ChatPanel messages={chat} me={userId} onSend={sendChat}
+                <ChatPanel messages={chat} me={userId} onSend={sendChat} onReport={reportChat}
                   quick={view.phase === "over" ? ["Bien joué !", "Merci pour la partie", "gg"] : ["Bonne chance !", "Bien joué", "Oups"]}
                   empty={`Discute avec ${seat(opp)?.userId ?? "ton adversaire"}. Les spectateurs lisent ce chat, mais tu ne vois pas le leur.`} />
               ) : <p className="px-1 text-sm text-muted">Le chat s'ouvre pendant une partie.</p>

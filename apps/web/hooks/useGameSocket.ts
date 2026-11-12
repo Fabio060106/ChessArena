@@ -236,6 +236,12 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
     socket.emit("chat:send", { gameId: id, text }, (r) => { clearTimeout(t); resolve(r); });
   }), [socket]);
 
+  /** Signaler un message à l'organisateur. */
+  const reportChat = useCallback((m: ChatMessage) => new Promise<boolean>((resolve) => {
+    const t = setTimeout(() => resolve(false), 5_000);
+    socket.emit("chat:report", { gameId: m.gameId, messageId: m.id }, (r) => { clearTimeout(t); resolve(r.ok); });
+  }), [socket]);
+
   /** Revanche : proposer (ou accepter si l'adversaire l'a proposée), refuser / retirer. */
   const rematchAction = useCallback((action: "offer" | "decline") => new Promise<RematchAck>((resolve) => {
     const id = hot.current.start?.gameId;
@@ -246,7 +252,7 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
 
   return {
     view, socket, sync: syncRef.current, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw,
-    chat, sendChat, rematch, rematchAction, spectators,
+    chat, sendChat, reportChat, rematch, rematchAction, spectators,
   };
 }
 

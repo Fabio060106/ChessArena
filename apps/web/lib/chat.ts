@@ -14,6 +14,7 @@ export const CHAT_ERRORS: Record<string, string> = {
   EMPTY: "",
   NO_GAME: "Le chat de cette partie est fermé.",
   BAD_PAYLOAD: "Message refusé.",
+  MUTED: "L'organisateur a désactivé ton chat.",
 };
 
 /** Heure courte d'un message (« 21:04 »). */

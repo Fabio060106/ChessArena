@@ -44,7 +44,7 @@ export default function WatchPage() {
 
 function Watch({ gameId, me }: { gameId: string; me: string }) {
   const getAuth = useGameAuth();
-  const { view, sync, sendChat } = useWatch(gameId, getAuth);
+  const { view, sync, sendChat, reportChat } = useWatch(gameId, getAuth);
   const [settings] = useSettings();
   const [flipped, flip] = useFlip();
   const [tab, setTab] = useState<"moves" | "players" | "spectators">("moves");
@@ -142,9 +142,9 @@ function Watch({ gameId, me }: { gameId: string; me: string }) {
               <MoveList moves={view.moves} active={navPly - 1} onSelect={(p) => go(p + 1)} />
             </div>
           ) : tab === "players" ? (
-            <ChatPanel messages={playersChat} me={me} empty="Les joueurs n'ont rien écrit pour l'instant." />
+            <ChatPanel messages={playersChat} me={me} onReport={reportChat} empty="Les joueurs n'ont rien écrit pour l'instant." />
           ) : (
-            <ChatPanel messages={specChat} me={me} onSend={view.over ? undefined : sendChat}
+            <ChatPanel messages={specChat} me={me} onReport={reportChat} onSend={view.over ? undefined : sendChat}
               placeholder="Commenter avec les autres spectateurs…" quick={["Joli coup !", "Quelle partie", "😮"]}
               empty="Les joueurs ne voient pas ce chat : pas de conseils possibles pendant la partie." />
           )}

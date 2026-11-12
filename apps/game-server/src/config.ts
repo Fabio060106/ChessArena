@@ -8,6 +8,10 @@ export interface GameServerConfig {
   port: number;
   corsOrigin: string;
   jwtSecret: string;
+  /** organisateurs (pseudos) : codes de réinitialisation, modération du chat. ADMIN_USERS=a,b */
+  adminUsers: string[];
+  /** inscriptions maximum par heure et par adresse IP (un club ou une salle partagent la même IP) */
+  signupsPerIpHour: number;
   /** DEV uniquement : accepte `auth.userId` sans JWT. Forcé à false si NODE_ENV=production. */
   devAuth: boolean;
   databaseUrl: string;
@@ -63,6 +67,8 @@ export const defaultConfig: GameServerConfig = {
   port: 4000,
   corsOrigin: "http://localhost:3000",
   jwtSecret: "",
+  adminUsers: ["Fabio060106"],
+  signupsPerIpHour: 60,
   devAuth: false,
   databaseUrl: "",
   analysisUrl: "http://localhost:4100",
@@ -102,6 +108,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GameServerConf
     port: Number(env.PORT ?? defaultConfig.port),
     corsOrigin: env.CORS_ORIGIN ?? defaultConfig.corsOrigin,
     jwtSecret: env.JWT_SECRET ?? "",
+    adminUsers: env.ADMIN_USERS ? env.ADMIN_USERS.split(",").map((s) => s.trim()).filter(Boolean) : defaultConfig.adminUsers,
+    signupsPerIpHour: Number(env.SIGNUPS_PER_IP_HOUR ?? defaultConfig.signupsPerIpHour) || defaultConfig.signupsPerIpHour,
     devAuth: env.DEV_AUTH === "1" && !isProd,
     databaseUrl: env.DATABASE_URL ?? "",
     analysisUrl: env.ANALYSIS_URL ?? defaultConfig.analysisUrl,

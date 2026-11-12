@@ -113,7 +113,10 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const limits = pool ? new LimitsService(pool, audit) : null;
   const ledger: Ledger = deps.ledger ?? (pool ? new PgLedger(pool, { audit, policy: limits!.ledgerPolicy }) : new InMemoryLedger());
   const repo: GameRepository = deps.repo ?? (pool ? new PgGameRepository(pool) : new InMemoryGameRepository());
-  const accounts = new AccountService(deps.accountStore ?? (pool ? new PgAccountStore(pool) : new InMemoryAccountStore()));
+  const accounts = new AccountService(deps.accountStore ?? (pool ? new PgAccountStore(pool) : new InMemoryAccountStore()), { signupsPerIpHour: cfg.signupsPerIpHour });
+  // modération du chat : joueurs privés de chat (chargés au démarrage), signalements sans base
+  const chatMuted = new Set<string>();
+  const memoryReports: Array<{ reporter: string; reported: string; gameId: string; message: string; at: string }> = [];
   const store: TournamentStore = deps.tournamentStore ?? (pool ? new PgTournamentStore(pool) : new InMemoryTournamentStore());
 
   // ─── Argent réel, fair-play, modération (nécessitent PostgreSQL) ──────────────
@@ -143,7 +146,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null });
+      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports });
       return;
     }
     if (req.url === "/health") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
@@ -611,10 +614,24 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         if (pl?.includes(user.userId)) target = { channel: "players", emit: (m) => io.to(pl.map(userRoom)).emit("chat:msg", m) };
       }
       if (!target) return reply({ ok: false, code: "NO_GAME" });
+      if (chatMuted.has(user.userId)) return reply({ ok: false, code: "MUTED" });
       const m = chat.post(gameId, target.channel, user.userId, p.text);
       if (typeof m === "string") return reply({ ok: false, code: m });
       target.emit(m);
       reply({ ok: true });
+    }));
+
+    socket.on("chat:report", guard(socket, async (raw: unknown, ack?: unknown) => {
+      const reply = (ok: boolean) => { if (typeof ack === "function") (ack as (r: { ok: boolean }) => void)({ ok }); };
+      const p = raw as { gameId?: unknown; messageId?: unknown } | null;
+      if (!p || typeof p.gameId !== "string" || typeof p.messageId !== "number") return reply(false);
+      const m = chat.history(p.gameId, ["players", "spectators"]).find((x) => x.id === p.messageId);
+      if (!m || m.userId === user.userId) return reply(false);
+      const r = { reporter: user.userId, reported: m.userId, gameId: m.gameId, message: m.text };
+      if (pool) {
+        await pool.query("INSERT INTO chat_reports (reporter_id, reported_id, game_id, message) VALUES ($1,$2,$3,$4)", [r.reporter, r.reported, r.gameId, r.message]);
+      } else if (memoryReports.length < 1000) memoryReports.push({ ...r, at: new Date().toISOString() });
+      reply(true);
     }));
 
     // ─── Spectateurs ─────────────────────────────────────────────────────────
@@ -732,6 +749,9 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
    */
   async function recover(): Promise<void> {
     if (pool && cfg.migrateOnStart && cfg.databaseUrl) await migrate(cfg.databaseUrl, undefined, console.log);
+    if (pool) {
+      for (const r of (await pool.query<{ id: string }>("SELECT id FROM users WHERE chat_muted_at IS NOT NULL")).rows) chatMuted.add(r.id);
+    }
     const cancelled = await store.cancelInterrupted("server_restart");
     const refunded = await refundOrphanedEscrows(ledger, (acc) => {
       const id = acc.split(":")[1] ?? "";

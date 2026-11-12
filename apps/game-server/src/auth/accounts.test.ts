@@ -52,3 +52,37 @@ describe("comptes joueurs", () => {
     expect(await code(s.login({ pseudo: "cible", password: "bon-mot-de-passe" }))).toBe("TOO_MANY_ATTEMPTS");
   });
 });
+
+describe("mots de passe : changement et code de réinitialisation", () => {
+  it("changer son mot de passe exige l'ancien", async () => {
+    const s = new AccountService(new InMemoryAccountStore());
+    await s.signup({ pseudo: "papy_jo", password: "ancien-mdp-1", ...ok });
+    expect(await code(s.changePassword({ userId: "papy_jo", current: "faux-mdp", next: "nouveau-mdp-2" }))).toBe("INVALID_CREDENTIALS");
+    expect(await code(s.changePassword({ userId: "papy_jo", current: "ancien-mdp-1", next: "court" }))).toBe("WEAK_PASSWORD");
+    await s.changePassword({ userId: "papy_jo", current: "ancien-mdp-1", next: "nouveau-mdp-2" });
+    expect(await code(s.login({ pseudo: "papy_jo", password: "ancien-mdp-1" }))).toBe("INVALID_CREDENTIALS");
+    expect((await s.login({ pseudo: "papy_jo", password: "nouveau-mdp-2" })).userId).toBe("papy_jo");
+  });
+
+  it("code donné par l'organisateur : casse et tiret indifférents, usage unique, l'ancien code est annulé", async () => {
+    const s = new AccountService(new InMemoryAccountStore());
+    await s.signup({ pseudo: "Mamie_Lou", password: "oublie-1234", ...ok });
+    expect(await code(s.issueResetCode({ target: "personne", by: "Fabio060106" }))).toBe("UNKNOWN_PLAYER");
+    const first = await s.issueResetCode({ target: "mamie_lou", by: "Fabio060106" });
+    const { code: c, userId } = await s.issueResetCode({ target: "mamie_lou", by: "Fabio060106" });
+    expect(userId).toBe("Mamie_Lou");
+    expect(c).toMatch(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
+    expect(await code(s.resetWithCode({ pseudo: "mamie_lou", code: first.code, password: "tout-neuf-99" }))).toBe("BAD_RESET_CODE");
+    expect(await s.resetWithCode({ pseudo: "mamie_lou", code: c.toLowerCase().replace("-", " "), password: "tout-neuf-99" })).toEqual({ userId: "Mamie_Lou", flag: null });
+    expect((await s.login({ pseudo: "Mamie_Lou", password: "tout-neuf-99" })).userId).toBe("Mamie_Lou");
+    expect(await code(s.resetWithCode({ pseudo: "mamie_lou", code: c, password: "encore-autre-1" }))).toBe("BAD_RESET_CODE");
+  });
+
+  it("essais de code limités", async () => {
+    const s = new AccountService(new InMemoryAccountStore());
+    await s.signup({ pseudo: "cible_x", password: "mdp-solide-1", ...ok });
+    await s.issueResetCode({ target: "cible_x", by: "admin" });
+    for (let i = 0; i < 5; i++) expect(await code(s.resetWithCode({ pseudo: "cible_x", code: "AAAA-AAAA", password: "pirate-1234" }))).toBe("BAD_RESET_CODE");
+    expect(await code(s.resetWithCode({ pseudo: "cible_x", code: "AAAA-AAAA", password: "pirate-1234" }))).toBe("TOO_MANY_ATTEMPTS");
+  });
+});

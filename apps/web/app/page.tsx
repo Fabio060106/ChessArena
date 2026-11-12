@@ -19,7 +19,8 @@ const input = "w-full min-w-0 rounded-lg border border-line bg-surface-2 px-3 py
 /** Accueil : créer un compte (pseudo + mot de passe) ou se connecter. */
 export default function Home() {
   const router = useRouter();
-  const [mode, setMode] = useState<"signup" | "login">("signup");
+  const [mode, setMode] = useState<"signup" | "login" | "reset">("signup");
+  const [resetCode, setResetCode] = useState("");
   const [pseudo, setPseudo] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -45,8 +46,9 @@ export default function Home() {
     e.preventDefault();
     setBusy(true); setError(null); setSlow(false);
     slowTimer.current = setTimeout(() => setSlow(true), 3500);
-    const body = mode === "signup" ? { mode, pseudo, password, flag, email, adult, terms, code } : { mode, pseudo, password };
-    const r = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
+    const body = mode === "signup" ? { mode, pseudo, password, flag, email, adult, terms, code }
+      : mode === "reset" ? { action: "reset", pseudo, code: resetCode, password } : { mode, pseudo, password };
+    const r = await fetch(mode === "reset" ? "/api/account/password" : "/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
     clearTimeout(slowTimer.current);
     setBusy(false); setSlow(false);
     if (r?.ok) {
@@ -59,7 +61,7 @@ export default function Home() {
     setError(d.error ?? (r ? "Refusé" : "Réseau indisponible"));
   };
 
-  const switchTo = (m: "signup" | "login") => { setMode(m); setError(null); };
+  const switchTo = (m: "signup" | "login" | "reset") => { setMode(m); setError(null); };
 
   return (
     <main className="arena-app grid place-items-center overflow-x-hidden px-4 py-8">
@@ -71,6 +73,15 @@ export default function Home() {
         </div>
 
         <form onSubmit={submit} className="panel flex flex-col gap-4 p-6">
+          {mode === "reset" ? (
+            <div>
+              <h2 className="font-semibold">Mot de passe oublié</h2>
+              <p className="mt-1 text-sm text-muted">
+                Demande un <strong className="text-text">code de réinitialisation</strong> à l'organisateur (Fabio).
+                Entre-le ici avec ton pseudo, puis choisis un nouveau mot de passe. Le code est valable 48 h.
+              </p>
+            </div>
+          ) : (
           <div className="grid grid-cols-2 rounded-lg bg-surface-2 p-0.5" role="tablist">
             {(["signup", "login"] as const).map((m) => (
               <button key={m} type="button" role="tab" aria-selected={mode === m} onClick={() => switchTo(m)}
@@ -79,20 +90,28 @@ export default function Home() {
               </button>
             ))}
           </div>
+          )}
 
           <label className="flex min-w-0 flex-col gap-1.5 text-sm">
             <span className="text-muted">Pseudo</span>
             <input value={pseudo} onChange={(e) => setPseudo(e.target.value)} required minLength={3} maxLength={20}
               pattern="[A-Za-z0-9_\-]{3,20}" autoComplete="username" placeholder="magnus_06" autoCapitalize="none" className={input} />
           </label>
+          {mode === "reset" && (
+            <label className="flex min-w-0 flex-col gap-1.5 text-sm">
+              <span className="text-muted">Code de réinitialisation</span>
+              <input value={resetCode} onChange={(e) => setResetCode(e.target.value)} required minLength={8} maxLength={20}
+                autoComplete="one-time-code" autoCapitalize="characters" placeholder="ABCD-EFGH" className={`${input} font-mono tracking-widest`} />
+            </label>
+          )}
           <label className="flex min-w-0 flex-col gap-1.5 text-sm">
             <span className="flex justify-between text-muted">
-              Mot de passe
+              {mode === "reset" ? "Nouveau mot de passe" : "Mot de passe"}
               <button type="button" onClick={() => setShowPw((v) => !v)} className="text-xs hover:text-text">{showPw ? "masquer" : "afficher"}</button>
             </span>
-            <input value={password} onChange={(e) => setPassword(e.target.value)} required minLength={mode === "signup" ? 8 : 1} maxLength={128}
-              type={showPw ? "text" : "password"} autoComplete={mode === "signup" ? "new-password" : "current-password"} className={input} />
-            {mode === "signup" && <span className="text-xs text-muted">8 caractères minimum.</span>}
+            <input value={password} onChange={(e) => setPassword(e.target.value)} required minLength={mode === "login" ? 1 : 8} maxLength={128}
+              type={showPw ? "text" : "password"} autoComplete={mode === "login" ? "current-password" : "new-password"} className={input} />
+            {mode !== "login" && <span className="text-xs text-muted">8 caractères minimum.</span>}
           </label>
 
           {mode === "signup" && (
@@ -134,12 +153,27 @@ export default function Home() {
           {error && <p role="alert" className="text-sm text-danger">{error}</p>}
           {slow && <p className="text-sm text-muted">Le serveur se réveille, ça peut prendre jusqu'à une minute…</p>}
           <button type="submit" disabled={busy} className="neon-btn rounded-lg px-4 py-2.5 font-semibold disabled:opacity-60">
-            {busy ? (mode === "signup" ? "Création du compte…" : "Connexion…") : mode === "signup" ? "Créer mon compte" : "Entrer dans l'arène"}
+            {busy ? (mode === "signup" ? "Création du compte…" : "Connexion…") : mode === "signup" ? "Créer mon compte" : mode === "reset" ? "Changer le mot de passe et entrer" : "Entrer dans l'arène"}
           </button>
           {mode === "login" && (
-            <p className="text-center text-xs text-muted">Mot de passe oublié ? Contacte l'organisateur de la bêta.</p>
+            <button type="button" onClick={() => switchTo("reset")} className="text-center text-sm text-neon hover:underline">Mot de passe oublié ?</button>
+          )}
+          {mode === "reset" && (
+            <button type="button" onClick={() => switchTo("login")} className="text-center text-sm text-muted hover:text-text">← Retour à la connexion</button>
           )}
         </form>
+
+        {/* présentation publique (lue aussi par les moteurs de recherche) */}
+        <section className="mt-6 text-sm text-muted" aria-label="Présentation">
+          <h2 className="mb-2 text-center font-semibold text-text">Les échecs en ligne, entre amis ou en tournoi</h2>
+          <ul className="grid gap-1.5">
+            <li>♟ Parties rapides en bullet, blitz et rapide, avec classement Elo.</li>
+            <li>🏆 Tournois de 3 à 128 joueurs, à créer en un clic et à partager par lien.</li>
+            <li>🔍 Analyse de chaque partie avec Stockfish 19, et essai de tes propres coups.</li>
+            <li>📚 Répertoire d'ouvertures construit à partir de tes parties, avec exercices.</li>
+            <li>👁 Parties en direct, chat, revanche, profils et historique complet.</li>
+          </ul>
+        </section>
       </div>
     </main>
   );

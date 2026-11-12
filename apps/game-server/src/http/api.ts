@@ -63,6 +63,10 @@ export interface ApiDeps {
   accounts?: AccountService | null;
   /** partie en cours d'un joueur (profil : bouton « Regarder ») */
   liveGameOf?: (userId: string) => string | null;
+  /** modération du chat : privés de chat (mis à jour à chaud) */
+  chatMuted?: Set<string>;
+  /** signalements gardés en mémoire quand il n'y a pas de base */
+  memoryReports?: Array<{ reporter: string; reported: string; gameId: string; message: string; at: string }>;
 }
 
 class HttpError extends Error {
@@ -178,7 +182,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
     }
 
     // ─── Comptes : appelés par le serveur web avec un jeton de service ─────────────
-    if (url.pathname === "/auth/signup" || url.pathname === "/auth/login") {
+    if (url.pathname.startsWith("/auth/")) {
       if (req.method !== "POST") throw new HttpError(405, "METHOD_NOT_ALLOWED");
       const h = req.headers.authorization;
       try {
@@ -189,7 +193,54 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       const b = await body(req);
       const str = (v: unknown) => (typeof v === "string" ? v : "");
       const clientIp = str(b.clientIp).slice(0, 64);
+      const isAdmin = (u: string) => d.cfg.adminUsers.some((a) => a.toLowerCase() === u.toLowerCase());
       try {
+        // ─── mot de passe ───
+        if (url.pathname === "/auth/password/change") {
+          await accounts.changePassword({ userId: str(b.userId), current: str(b.current), next: str(b.next) });
+          send(200, { ok: true });
+          return true;
+        }
+        if (url.pathname === "/auth/password/reset") {
+          send(200, await accounts.resetWithCode({ pseudo: str(b.pseudo), code: str(b.code), password: str(b.password), clientIp }));
+          return true;
+        }
+        // ─── organisateur (le serveur web transmet le pseudo connecté dans `by`) ───
+        if (url.pathname.startsWith("/auth/admin/")) {
+          const by = str(b.by);
+          if (url.pathname === "/auth/admin/check") { send(200, { admin: isAdmin(by) }); return true; }
+          if (!isAdmin(by)) throw new AccountError("NOT_ADMIN", 403);
+          if (url.pathname === "/auth/admin/reset-code") {
+            send(200, await accounts.issueResetCode({ target: str(b.target), by }));
+            return true;
+          }
+          if (url.pathname === "/auth/admin/reports") {
+            const reports = d.pool
+              ? (await d.pool.query<{ id: string; reporter_id: string; reported_id: string; game_id: string; message: string; created_at: Date }>(
+                  "SELECT id, reporter_id, reported_id, game_id, message, created_at FROM chat_reports WHERE handled_at IS NULL ORDER BY created_at DESC LIMIT 100")).rows
+                  .map((r) => ({ id: String(r.id), reporter: r.reporter_id, reported: r.reported_id, gameId: r.game_id, message: r.message, at: r.created_at.toISOString() }))
+              : (d.memoryReports ?? []).map((r, i) => ({ id: String(i), ...r }));
+            send(200, { reports, muted: [...(d.chatMuted ?? [])].sort() });
+            return true;
+          }
+          if (url.pathname === "/auth/admin/report-done") {
+            if (d.pool) await d.pool.query("UPDATE chat_reports SET handled_at = now() WHERE id = $1", [str(b.id)]);
+            else d.memoryReports?.splice(Number(str(b.id)), 1);
+            send(200, { ok: true });
+            return true;
+          }
+          if (url.pathname === "/auth/admin/mute") {
+            const target = (await accounts.find(str(b.target)))?.id;
+            if (!target) throw new AccountError("UNKNOWN_PLAYER", 404);
+            const muted = b.muted === true;
+            if (d.pool) await d.pool.query(`UPDATE users SET chat_muted_at = ${muted ? "now()" : "NULL"} WHERE id = $1`, [target]);
+            if (muted) d.chatMuted?.add(target); else d.chatMuted?.delete(target);
+            send(200, { ok: true, userId: target, muted });
+            return true;
+          }
+          throw new HttpError(404, "NOT_FOUND");
+        }
+        if (url.pathname !== "/auth/signup" && url.pathname !== "/auth/login") throw new HttpError(404, "NOT_FOUND");
         const u = url.pathname === "/auth/signup"
           ? await accounts.signup({
               pseudo: str(b.pseudo), password: str(b.password), flag: str(b.flag) || null, email: str(b.email) || null,

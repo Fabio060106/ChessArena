@@ -107,7 +107,12 @@ export function useWatch(gameId: string, getAuth: AuthProvider) {
     socket.emit("chat:send", { gameId, text }, (r) => { clearTimeout(t); resolve(r); });
   }), [socket, gameId]);
 
-  return { view: v, sync: syncRef.current, sendChat, socket };
+  const reportChat = useCallback((m: ChatMessage) => new Promise<boolean>((resolve) => {
+    const t = setTimeout(() => resolve(false), 5_000);
+    socket.emit("chat:report", { gameId: m.gameId, messageId: m.id }, (r) => { clearTimeout(t); resolve(r.ok); });
+  }), [socket]);
+
+  return { view: v, sync: syncRef.current, sendChat, reportChat, socket };
 }
 
 function pickFinal(f: ReturnType<typeof finalFromPgn>): Partial<WatchView> {

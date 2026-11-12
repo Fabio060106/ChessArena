@@ -4,6 +4,7 @@ import type { GameHistoryItem } from "@chessarena/shared";
 import { useParams } from "next/navigation";
 import type { PlayerProfile } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
+import { AccountSettings } from "../../../components/AccountSettings";
 import { useMe } from "../../../hooks/useMe";
 import { avatarFor, countryName, flagEmoji } from "../../../lib/profile";
 import { relativeDate } from "../../../lib/replay";
@@ -46,6 +47,7 @@ export default function ProfilePage() {
         {err && <p role="alert" className="panel p-4 text-sm text-danger">{err} <a href="/classement" className="text-neon underline">Voir le classement</a></p>}
         {!err && !p && <p className="panel p-4 text-sm text-muted">Chargement du profil… (si le serveur dormait, cela peut prendre jusqu'à une minute)</p>}
         {p && <Profile p={p} mine={mine} />}
+        {p && mine && <AccountSettings />}
       </div>
     </main>
   );

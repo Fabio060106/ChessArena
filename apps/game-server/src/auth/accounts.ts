@@ -60,12 +60,19 @@ export interface AccountStore {
   create(a: NewAccount): Promise<"ok" | "taken" | "email_taken">;
   /** pose le mot de passe d'un pseudo de la bêta qui n'en a pas encore ; false si quelqu'un l'a fait avant */
   claim(a: NewAccount): Promise<"ok" | "taken" | "email_taken">;
+  setPassword(id: string, passwordHash: string): Promise<void>;
+  /** nouveau code de réinitialisation (les précédents non utilisés sont annulés) */
+  createReset(id: string, codeHash: string, by: string, expiresAt: Date): Promise<void>;
+  /** dernier code encore valable (non utilisé, non expiré) */
+  activeReset(id: string): Promise<{ resetId: string; codeHash: string } | null>;
+  /** marque le code utilisé ET pose le nouveau mot de passe, atomiquement ; false si déjà utilisé entre-temps */
+  consumeReset(resetId: string, id: string, passwordHash: string): Promise<boolean>;
 }
 
 export type AccountErrorCode =
   | "BAD_PSEUDO" | "RESERVED_PSEUDO" | "WEAK_PASSWORD" | "BAD_EMAIL" | "CONSENT_REQUIRED"
   | "PSEUDO_TAKEN" | "EMAIL_TAKEN" | "CLAIM_CODE_REQUIRED" | "INVALID_CREDENTIALS" | "NO_PASSWORD_YET"
-  | "TOO_MANY_ATTEMPTS" | "ACCOUNT_DISABLED";
+  | "TOO_MANY_ATTEMPTS" | "ACCOUNT_DISABLED" | "BAD_RESET_CODE" | "NOT_ADMIN" | "UNKNOWN_PLAYER";
 
 export class AccountError extends Error {
   constructor(readonly code: AccountErrorCode, readonly status = 400) { super(code); }
@@ -97,9 +104,77 @@ class FailureLimiter {
 export class AccountService {
   private byPseudo = new FailureLimiter(8, 15 * 60_000);
   private byIp = new FailureLimiter(30, 15 * 60_000);
-  private signupsByIp = new FailureLimiter(20, 60 * 60_000); // 20 comptes / heure / IP : une famille ou un club sur le même Wi-Fi passe
+  private signupsByIp: FailureLimiter;
+  private resetsByPseudo = new FailureLimiter(5, 60 * 60_000);
 
-  constructor(private store: AccountStore) {}
+  /** `signupsPerIpHour` : un club ou une salle de tournoi partagent la même adresse IP (défaut 60). */
+  constructor(private store: AccountStore, opts: { signupsPerIpHour?: number } = {}) {
+    this.signupsByIp = new FailureLimiter(opts.signupsPerIpHour ?? 60, 60 * 60_000);
+  }
+
+  private static checkPassword(pw: unknown, pseudo: string): string {
+    if (typeof pw !== "string" || pw.length < PASSWORD_MIN || pw.length > PASSWORD_MAX || pw.toLowerCase() === pseudo.toLowerCase()) {
+      throw new AccountError("WEAK_PASSWORD");
+    }
+    return pw;
+  }
+
+  /** Compte par pseudo (casse indifférente). */
+  find(pseudo: string): Promise<AccountRow | null> {
+    return this.store.find(String(pseudo ?? "").trim());
+  }
+
+  /** Changer son mot de passe (joueur connecté) : l'ancien est exigé. */
+  async changePassword(i: { userId: string; current: string; next: string }): Promise<void> {
+    const kp = i.userId.toLowerCase();
+    if (this.byPseudo.blocked(kp)) throw new AccountError("TOO_MANY_ATTEMPTS", 429);
+    const acc = await this.store.find(i.userId);
+    if (!acc || acc.id !== i.userId || !acc.passwordHash) throw new AccountError("INVALID_CREDENTIALS", 401);
+    if (!(await verifyPassword(String(i.current ?? ""), acc.passwordHash))) {
+      this.byPseudo.fail(kp);
+      throw new AccountError("INVALID_CREDENTIALS", 401);
+    }
+    await this.store.setPassword(acc.id, await hashPassword(AccountService.checkPassword(i.next, acc.id)));
+  }
+
+  /**
+   * L'organisateur génère un code de réinitialisation à donner au joueur (en main propre, par message…).
+   * Code de 8 caractères sans ambiguïté (pas de 0/O, 1/I), valable 48 h, à usage unique.
+   */
+  async issueResetCode(i: { target: string; by: string }): Promise<{ userId: string; code: string; expiresAt: string }> {
+    const acc = await this.store.find(String(i.target ?? "").trim());
+    if (!acc) throw new AccountError("UNKNOWN_PLAYER", 404);
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const bytes = randomBytes(8);
+    const raw = [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
+    const code = `${raw.slice(0, 4)}-${raw.slice(4)}`;
+    const expiresAt = new Date(Date.now() + 48 * 3600_000);
+    await this.store.createReset(acc.id, await hashPassword(raw), i.by, expiresAt);
+    return { userId: acc.id, code, expiresAt: expiresAt.toISOString() };
+  }
+
+  /** Le joueur choisit un nouveau mot de passe avec le code reçu. */
+  async resetWithCode(i: { pseudo: string; code: string; password: string; clientIp?: string }): Promise<SessionUser> {
+    const pseudo = String(i.pseudo ?? "").trim();
+    const kp = pseudo.toLowerCase();
+    const ip = i.clientIp ?? "";
+    if (this.resetsByPseudo.blocked(kp) || (ip && this.byIp.blocked(ip))) throw new AccountError("TOO_MANY_ATTEMPTS", 429);
+    const acc = await this.store.find(pseudo);
+    const reset = acc ? await this.store.activeReset(acc.id) : null;
+    const code = String(i.code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const ok = reset ? await verifyPassword(code, reset.codeHash) : (await verifyPassword(code, await (dummy ??= hashPassword("x".repeat(12)))), false);
+    if (!ok || !acc || !reset) {
+      this.resetsByPseudo.fail(kp);
+      if (ip) this.byIp.fail(ip);
+      throw new AccountError("BAD_RESET_CODE", 400);
+    }
+    if (acc.state === "closed" || acc.state === "banned") throw new AccountError("ACCOUNT_DISABLED", 403);
+    const hash = await hashPassword(AccountService.checkPassword(i.password, acc.id));
+    if (!(await this.store.consumeReset(reset.resetId, acc.id, hash))) throw new AccountError("BAD_RESET_CODE", 400);
+    this.resetsByPseudo.reset(kp);
+    this.byPseudo.reset(kp);
+    return { userId: acc.id, flag: acc.flag };
+  }
 
   async signup(i: SignupInput): Promise<SessionUser> {
     const pseudo = i.pseudo.trim();
@@ -189,6 +264,36 @@ export class PgAccountStore implements AccountStore {
     }
   }
 
+  async setPassword(id: string, passwordHash: string): Promise<void> {
+    await this.pool.query("UPDATE users SET password_hash = $2 WHERE id = $1", [id, passwordHash]);
+  }
+
+  async createReset(id: string, codeHash: string, by: string, expiresAt: Date): Promise<void> {
+    await this.pool.query("UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL", [id]);
+    await this.pool.query("INSERT INTO password_resets (user_id, code_hash, created_by, expires_at) VALUES ($1,$2,$3,$4)", [id, codeHash, by, expiresAt]);
+  }
+
+  async activeReset(id: string): Promise<{ resetId: string; codeHash: string } | null> {
+    const r = await this.pool.query<{ id: string; code_hash: string }>(
+      "SELECT id, code_hash FROM password_resets WHERE user_id = $1 AND used_at IS NULL AND expires_at > now() ORDER BY created_at DESC LIMIT 1", [id]);
+    return r.rows[0] ? { resetId: String(r.rows[0].id), codeHash: r.rows[0].code_hash } : null;
+  }
+
+  async consumeReset(resetId: string, id: string, passwordHash: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const u = await client.query("UPDATE password_resets SET used_at = now() WHERE id = $1 AND user_id = $2 AND used_at IS NULL AND expires_at > now()", [resetId, id]);
+      if (u.rowCount !== 1) { await client.query("ROLLBACK"); return false; }
+      await client.query("UPDATE users SET password_hash = $2 WHERE id = $1", [id, passwordHash]);
+      await client.query("COMMIT");
+      return true;
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally { client.release(); }
+  }
+
   async claim(a: NewAccount): Promise<"ok" | "taken" | "email_taken"> {
     try {
       const r = await this.pool.query(
@@ -222,6 +327,26 @@ export class InMemoryAccountStore implements AccountStore {
     if (!r || r.passwordHash) return "taken";
     this.rows.set(a.id, { ...r, passwordHash: a.passwordHash, flag: a.flag, email: a.email ?? r.email });
     return "ok";
+  }
+  resets: Array<{ resetId: string; id: string; codeHash: string; expiresAt: number; used: boolean }> = [];
+  async setPassword(id: string, passwordHash: string): Promise<void> {
+    const r = this.rows.get(id);
+    if (r) r.passwordHash = passwordHash;
+  }
+  async createReset(id: string, codeHash: string, _by: string, expiresAt: Date): Promise<void> {
+    for (const x of this.resets) if (x.id === id) x.used = true;
+    this.resets.push({ resetId: String(this.resets.length + 1), id, codeHash, expiresAt: +expiresAt, used: false });
+  }
+  async activeReset(id: string): Promise<{ resetId: string; codeHash: string } | null> {
+    const r = [...this.resets].reverse().find((x) => x.id === id && !x.used && x.expiresAt > Date.now());
+    return r ? { resetId: r.resetId, codeHash: r.codeHash } : null;
+  }
+  async consumeReset(resetId: string, id: string, passwordHash: string): Promise<boolean> {
+    const r = this.resets.find((x) => x.resetId === resetId && x.id === id && !x.used);
+    if (!r) return false;
+    r.used = true;
+    await this.setPassword(id, passwordHash);
+    return true;
   }
   /** pseudo créé pendant la bêta (sans mot de passe) */
   seedBeta(id: string) { this.rows.set(id, { id, passwordHash: null, flag: null, state: "active", email: null }); }

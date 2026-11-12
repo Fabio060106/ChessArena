@@ -323,7 +323,7 @@ export interface ChatMessage {
   at: number;
 }
 
-export type ChatAck = { ok: true } | { ok: false; code: "RATE_LIMITED" | "BAD_PAYLOAD" | "NO_GAME" | "TOO_LONG" | "EMPTY" };
+export type ChatAck = { ok: true } | { ok: false; code: "RATE_LIMITED" | "BAD_PAYLOAD" | "NO_GAME" | "TOO_LONG" | "EMPTY" | "MUTED" };
 
 /** Partie en cours, telle que listée pour les spectateurs. */
 export interface LiveGameView {
@@ -435,6 +435,8 @@ export interface ClientToServerEvents {
   /** le créateur lance son tournoi sans attendre qu'il soit complet (≥ 3 inscrits ; exempts au 1er tour) */
   "sng:start": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
   "chat:send": (p: { gameId: string; text: string }, ack?: (r: ChatAck) => void) => void;
+  /** signaler un message à l'organisateur */
+  "chat:report": (p: { gameId: string; messageId: number }, ack?: (r: { ok: boolean }) => void) => void;
   /** regarder une partie en cours */
   "watch:start": (p: { gameId: string }, ack: (r: WatchAck) => void) => void;
   "watch:stop": (p: { gameId: string }) => void;

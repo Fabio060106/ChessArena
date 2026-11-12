@@ -1,9 +1,17 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "../lib/site";
 
 export const metadata: Metadata = {
-  title: "ChessArena",
-  description: "Compétition d'échecs en temps réel",
+  metadataBase: new URL(SITE_URL),
+  title: { default: `${SITE_NAME} — échecs en ligne, tournois et analyse Stockfish`, template: `%s · ${SITE_NAME}` },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: ["échecs", "échecs en ligne", "jouer aux échecs", "tournoi d'échecs", "blitz", "bullet", "Stockfish", "analyse de partie", "répertoire d'ouvertures", "classement Elo"],
+  alternates: { canonical: "/" },
+  openGraph: { type: "website", locale: "fr_FR", url: SITE_URL, siteName: SITE_NAME, title: `${SITE_NAME} — échecs en ligne`, description: SITE_DESCRIPTION },
+  twitter: { card: "summary", title: `${SITE_NAME} — échecs en ligne`, description: SITE_DESCRIPTION },
+  robots: { index: true, follow: true },
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#0B0E14" };

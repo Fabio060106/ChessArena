@@ -375,6 +375,42 @@ describe("comptes via HTTP (jeton de service du serveur web)", () => {
   });
 });
 
+describe("organisateur : codes de réinitialisation, signalements et chat coupé", () => {
+  const svc = () => jwt.sign({ sub: "web" }, SECRET, { audience: "chessarena-auth-service", expiresIn: 60 });
+  const post = (path: string, body: unknown) => fetch(`${url}${path}`, {
+    method: "POST", headers: { authorization: `Bearer ${svc()}`, "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+
+  it("seul l'organisateur génère un code ; le joueur s'en sert ; signalement puis chat coupé", async () => {
+    await post("/auth/signup", { pseudo: "Oubli_Mdp", password: "premier-mdp-1", adult: true, terms: true });
+    expect(await (await post("/auth/admin/check", { by: "Fabio060106" })).json()).toEqual({ admin: true });
+    expect(await (await post("/auth/admin/check", { by: "Oubli_Mdp" })).json()).toEqual({ admin: false });
+    expect((await post("/auth/admin/reset-code", { by: "Oubli_Mdp", target: "Oubli_Mdp" })).status).toBe(403);
+    const r = (await (await post("/auth/admin/reset-code", { by: "fabio060106", target: "oubli_mdp" })).json()) as { code: string; userId: string };
+    expect(r.userId).toBe("Oubli_Mdp");
+    expect((await post("/auth/password/reset", { pseudo: "oubli_mdp", code: r.code, password: "second-mdp-2" })).status).toBe(200);
+    expect((await post("/auth/login", { pseudo: "Oubli_Mdp", password: "second-mdp-2" })).status).toBe(200);
+    expect((await post("/auth/password/change", { userId: "Oubli_Mdp", current: "second-mdp-2", next: "troisieme-mdp-3" })).status).toBe(200);
+    expect((await post("/auth/login", { pseudo: "Oubli_Mdp", password: "troisieme-mdp-3" })).status).toBe(200);
+
+    // signalement d'un message, puis l'organisateur coupe le chat du joueur
+    for (const pz of ["mod-a", "mod-b"]) await post("/auth/signup", { pseudo: pz, password: "mot-de-passe-1", adult: true, terms: true });
+    const { start, white, black } = await pair("mod-a", "mod-b");
+    const got = once(black, "chat:msg");
+    await new Promise<ChatAck>((res) => white.emit("chat:send", { gameId: start.gameId, text: "message insultant" }, res));
+    const m = (await got) as ChatMessage;
+    expect(await new Promise((res) => white.emit("chat:report", { gameId: start.gameId, messageId: m.id }, res))).toEqual({ ok: false }); // pas son propre message
+    expect(await new Promise((res) => black.emit("chat:report", { gameId: start.gameId, messageId: m.id }, res))).toEqual({ ok: true });
+    const rep = (await (await post("/auth/admin/reports", { by: "Fabio060106" })).json()) as { reports: Array<{ reported: string; message: string }> };
+    expect(rep.reports.at(-1)).toMatchObject({ reported: start.white.userId, message: "message insultant" });
+    expect((await post("/auth/admin/mute", { by: "Fabio060106", target: start.white.userId, muted: true })).status).toBe(200);
+    expect(await new Promise<ChatAck>((res) => white.emit("chat:send", { gameId: start.gameId, text: "encore" }, res))).toEqual({ ok: false, code: "MUTED" });
+    await post("/auth/admin/mute", { by: "Fabio060106", target: start.white.userId, muted: false });
+    expect(await new Promise<ChatAck>((res) => white.emit("chat:send", { gameId: start.gameId, text: "pardon" }, res))).toEqual({ ok: true });
+    white.emit("game:resign", { gameId: start.gameId });
+  });
+});
+
 describe("social : spectateurs, chat, revanche, profil, classement", () => {
   it("un spectateur suit la partie, les chats sont séparés, puis revanche couleurs inversées", async () => {
     const { start, white, black } = await pair("soc-a", "soc-b");
