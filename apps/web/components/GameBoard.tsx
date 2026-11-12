@@ -240,7 +240,7 @@ export const GameBoard = memo(function GameBoard(p: Props) {
       data-theme={p.theme}
       style={themeVars}
       role="application"
-      aria-label={`Échiquier, vous avez les ${p.myColor === "w" ? "blancs" : "noirs"}`}
+      aria-label={`Échiquier, vous avez les ${p.orientation === "w" ? "blancs" : "noirs"}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => endDrag(e, false)}

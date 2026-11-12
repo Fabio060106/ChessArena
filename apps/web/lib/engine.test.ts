@@ -93,3 +93,30 @@ describe("exempts dans le HUD", () => {
     expect(Object.fromEntries(liveStandings(s).map((r) => [r.userId, r.state]))).toEqual({ orga: "alive", ana: "playing", bob: "playing" });
   });
 });
+
+import { applyMove, atMain, currentStep, numbered, playOnBoard, previousStep } from "./variation";
+describe("variantes de l'analyse", () => {
+  const main = replayFromSans(["e4", "e5", "Nf3", "Nc6"]);
+  it("le coup de la partie avance dans la partie, un autre coup ouvre une variante", () => {
+    const same = applyMove(main[1]!.fen, "e7", "e5")!;
+    expect(playOnBoard(main, atMain(1), same)).toEqual(atMain(2));
+    const c5 = applyMove(main[1]!.fen, "c7", "c5")!;
+    const v = playOnBoard(main, atMain(1), c5);
+    expect(v.variation?.base).toBe(1);
+    expect(currentStep(main, v).san).toBe("c5");
+    expect(previousStep(main, v)!.fen).toBe(main[1]!.fen);
+    const nf3 = applyMove(currentStep(main, v).fen, "g1", "f3")!;
+    const v2 = playOnBoard(main, v, nf3);
+    expect(v2.variation!.steps.map((s) => s.san)).toEqual(["c5", "Nf3"]);
+    expect(numbered(main[1]!.fen, ["c5", "Nf3"])).toEqual(["1… c5", "2. Nf3"]);
+    // retour au début de la variante, puis le coup de la partie → on rejoint la partie
+    expect(playOnBoard(main, { ...v2, vply: 0 }, same)).toEqual(atMain(2));
+    // un autre coup au milieu de la variante la coupe et la prolonge
+    const d4 = applyMove(currentStep(main, v).fen, "d2", "d4")!;
+    expect(playOnBoard(main, { ...v2, vply: 1 }, d4).variation!.steps.map((s) => s.san)).toEqual(["c5", "d4"]);
+  });
+  it("refuse les coups illégaux et gère la promotion", () => {
+    expect(applyMove(main[0]!.fen, "e2", "e5")).toBeNull();
+    expect(applyMove("8/P7/8/8/8/8/8/k6K w - - 0 1", "a7", "a8", "n")!.san).toBe("a8=N");
+  });
+});
