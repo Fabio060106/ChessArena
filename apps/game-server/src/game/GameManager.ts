@@ -49,6 +49,12 @@ export class GameManager {
   private readonly rooms = new Map<string, GameRoom>();
   private readonly activeByUser = new Map<string, string>();
   private readonly onFinishedListeners: Array<(g: FinishedGame, rec: RecordedGame | null) => void | Promise<void>> = [];
+  /**
+   * Parties terminées pas encore enregistrées (base indisponible) : JAMAIS abandonnées.
+   * Nouvel essai toutes les 30 s jusqu'au succès (l'enregistrement est idempotent), et à l'arrêt du serveur.
+   */
+  private readonly unrecorded = new Map<string, FinishedGame>();
+  private recordTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly io: IO,
@@ -195,7 +201,37 @@ export class GameManager {
     sendResync(room);
   }
 
+  /** Parties en attente d'enregistrement (supervision, tests). */
+  get pendingRecords(): number {
+    return this.unrecorded.size;
+  }
+
+  private keepForRetry(g: FinishedGame): void {
+    this.unrecorded.set(g.gameId, g);
+    if (!this.recordTimer) {
+      this.recordTimer = setInterval(() => void this.flushUnrecorded(), 30_000);
+      this.recordTimer.unref();
+    }
+  }
+
+  /** Réessaie d'enregistrer les parties en attente ; retourne le nombre encore en attente. */
+  async flushUnrecorded(): Promise<number> {
+    for (const [id, g] of this.unrecorded) {
+      try {
+        await this.repo.recordGame(g);
+        this.unrecorded.delete(id);
+        console.log("[game] partie enregistrée après coup", id);
+      } catch (e) {
+        console.error("[game] enregistrement toujours impossible", id, (e as Error).message);
+        break; // base encore indisponible : inutile d'insister sur les suivantes maintenant
+      }
+    }
+    if (this.unrecorded.size === 0 && this.recordTimer) { clearInterval(this.recordTimer); this.recordTimer = null; }
+    return this.unrecorded.size;
+  }
+
   disposeAll(): void {
+    if (this.recordTimer) { clearInterval(this.recordTimer); this.recordTimer = null; }
     for (const r of this.rooms.values()) r.dispose();
     this.rooms.clear();
     this.activeByUser.clear();
@@ -219,7 +255,8 @@ export class GameManager {
     try {
       rec = await retry("enregistrement", () => this.repo.recordGame(g), 4);
     } catch (e) {
-      console.error("[game] partie non enregistrée", g.gameId, e);
+      console.error("[game] partie pas encore enregistrée, nouvel essai dans 30 s", g.gameId, (e as Error).message);
+      this.keepForRetry(g);
     }
 
     this.audit.append("game.end", {

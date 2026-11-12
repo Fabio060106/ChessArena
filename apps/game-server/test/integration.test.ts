@@ -2,7 +2,7 @@
  * Test d'intégration : vrai serveur socket.io sur port éphémère, vrais clients,
  * vrais JWT. Vérifie le chemin complet file → partie → règlement → game:over.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -486,4 +486,36 @@ describe("social : spectateurs, chat, revanche, profil, classement", () => {
     expect(await withdrawn).toEqual({ gameId: id, offeredBy: null });
     black.emit("queue:leave");
   });
+});
+
+describe("historique : aucune partie perdue", () => {
+  it("si la base refuse l'enregistrement, la partie est gardée et enregistrée dès que la base revient", async () => {
+    const { InMemoryGameRepository } = await import("../src/persistence/GameRepository.js");
+    class FlakyRepo extends InMemoryGameRepository {
+      down = true;
+      override async recordGame(g: Parameters<InMemoryGameRepository["recordGame"]>[0]) {
+        if (this.down) throw new Error("base indisponible");
+        return super.recordGame(g);
+      }
+    }
+    const repo = new FlakyRepo();
+    const s2 = createGameServer(cfg, { ledger: new InMemoryLedger(), repo });
+    const u2 = `http://localhost:${await s2.listen(0)}`;
+    const mk = (sub: string) => { const c: Client = connect(u2, { transports: ["websocket"], auth: { token: token({ sub }) }, reconnection: false, forceNew: true }); clients.push(c); return c; };
+    const a = mk("flaky-a"); const b = mk("flaky-b");
+    await Promise.all([connected(a), connected(b)]);
+    const st = once(a, "game:start");
+    a.emit("queue:join", { timeControl: "rapid_5_0", stake: { currency: "PLAY", buyInCents: 0 } });
+    b.emit("queue:join", { timeControl: "rapid_5_0", stake: { currency: "PLAY", buyInCents: 0 } });
+    const start = (await st) as GameStartEvent;
+    const over = once(a, "game:over", 10_000);
+    a.emit("game:resign", { gameId: start.gameId });
+    await over;
+    await vi.waitFor(() => expect(s2.games.pendingRecords).toBe(1), { timeout: 8_000 });
+    expect(repo.games.size).toBe(0);
+    repo.down = false;
+    expect(await s2.games.flushUnrecorded()).toBe(0);
+    expect(repo.games.has(start.gameId)).toBe(true);
+    await s2.close();
+  }, 20_000);
 });

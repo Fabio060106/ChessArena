@@ -6,6 +6,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { useMe } from "../../hooks/useMe";
 import { flagEmoji } from "../../lib/profile";
 import { TC_LABEL, TC_ORDER } from "../../lib/social";
+import { fetchWake } from "../../lib/wake";
 
 export default function LeaderboardPage() {
   return <Suspense><Leaderboard /></Suspense>;
@@ -24,8 +25,8 @@ function Leaderboard() {
     if (!me) return;
     setData(null); setErr(null);
     window.history.replaceState(null, "", `/classement?tc=${tc}`);
-    fetch(`/api/leaderboard?tc=${tc}`, { cache: "no-store" })
-      .then(async (r) => (r.ok ? setData((await r.json()) as LeaderboardResponse) : setErr("Impossible de charger le classement (le serveur se réveille peut-être : réessaie dans une minute).")))
+    fetchWake(`/api/leaderboard?tc=${tc}`)
+      .then(async (r) => (r?.ok ? setData((await r.json()) as LeaderboardResponse) : setErr("Impossible de charger le classement (le serveur se réveille peut-être : réessaie dans une minute).")))
       .catch(() => setErr("Impossible de charger le classement."));
   }, [me, tc]);
 

@@ -8,6 +8,7 @@ import { useMe } from "../../../hooks/useMe";
 import { avatarFor, countryName, flagEmoji } from "../../../lib/profile";
 import { relativeDate } from "../../../lib/replay";
 import { pct, TC_LABEL, TC_ORDER } from "../../../lib/social";
+import { fetchWake } from "../../../lib/wake";
 
 const OUTCOME = {
   win: { label: "Victoire", cls: "bg-win/15 text-win" },
@@ -27,8 +28,9 @@ export default function ProfilePage() {
   useEffect(() => {
     if (!me) return;
     setP(null); setErr(null);
-    fetch(`/api/players/${encodeURIComponent(pseudo)}`, { cache: "no-store" })
+    fetchWake(`/api/players/${encodeURIComponent(pseudo)}`)
       .then(async (r) => {
+        if (!r) return setErr("Le serveur ne répond pas pour le moment. Réessaie dans quelques minutes.");
         if (r.status === 404) return setErr("Ce joueur n'existe pas.");
         if (!r.ok) return setErr("Impossible de charger ce profil (le serveur se réveille peut-être : réessaie dans une minute).");
         setP((await r.json()) as PlayerProfile);
@@ -42,7 +44,7 @@ export default function ProfilePage() {
       <PageHeader title={p ? `Profil de ${p.userId}` : "Profil"} active={mine ? "/profil" : undefined} />
       <div className="mx-auto flex max-w-[900px] flex-col gap-3 px-2 pb-8 sm:px-3">
         {err && <p role="alert" className="panel p-4 text-sm text-danger">{err} <a href="/classement" className="text-neon underline">Voir le classement</a></p>}
-        {!err && !p && <p className="panel p-4 text-sm text-muted">Chargement du profil…</p>}
+        {!err && !p && <p className="panel p-4 text-sm text-muted">Chargement du profil… (si le serveur dormait, cela peut prendre jusqu'à une minute)</p>}
         {p && <Profile p={p} mine={mine} />}
       </div>
     </main>

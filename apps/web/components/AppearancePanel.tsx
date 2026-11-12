@@ -3,7 +3,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import {
   BOARD_THEMES, PALETTE_ORDER, PIECE_PALETTES, PIECE_SETS, THEME_ORDER, boardVars,
 } from "../lib/boardThemes";
-import { DEFAULT_SETTINGS, useSettings } from "../lib/settings";
+import { ARENA_PRESET, DEFAULT_SETTINGS, SOBER_PRESET, useSettings } from "../lib/settings";
 import { GameBoard } from "./GameBoard";
 import { PieceSvg } from "./Pieces";
 
@@ -59,12 +59,38 @@ export function AppearancePanel({ onClose }: { onClose: () => void }) {
               <input type="checkbox" checked={s.coordinates} onChange={(e) => update({ coordinates: e.target.checked })} /> Coordonnées (a-h, 1-8)
             </label>
             <button type="button" className="text-xs text-muted underline hover:text-text"
-              onClick={() => update({ boardTheme: DEFAULT_SETTINGS.boardTheme, pieceSet: DEFAULT_SETTINGS.pieceSet, palette: DEFAULT_SETTINGS.palette })}>
+              onClick={() => update({ boardTheme: DEFAULT_SETTINGS.boardTheme, pieceSet: DEFAULT_SETTINGS.pieceSet, palette: DEFAULT_SETTINGS.palette, ui: DEFAULT_SETTINGS.ui, largeText: false })}>
               Revenir à l'apparence d'origine
             </button>
           </div>
 
           <div className="flex min-w-0 flex-col gap-5">
+            <section aria-label="Préréglages">
+              <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">En un clic</h3>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button type="button" onClick={() => update(SOBER_PRESET)}
+                  className={`rounded-lg border p-3 text-left hover:bg-surface-2 ${s.ui === "sobre" && s.boardTheme === "brown" && s.pieceSet === "classic" ? "border-neon ring-2 ring-neon" : "border-line"}`}>
+                  <span className="block font-semibold">Classique sobre</span>
+                  <span className="block text-xs text-muted">Interface claire et calme, échiquier marron, pièces traditionnelles. Idéal si les couleurs vives gênent.</span>
+                </button>
+                <button type="button" onClick={() => update(ARENA_PRESET)}
+                  className={`rounded-lg border p-3 text-left hover:bg-surface-2 ${s.ui === "arena" && s.boardTheme === "cyberpunk" && s.pieceSet === "arena" ? "border-neon ring-2 ring-neon" : "border-line"}`}>
+                  <span className="block font-semibold">Arena (d'origine)</span>
+                  <span className="block text-xs text-muted">Interface sombre, néons, style e-sport.</span>
+                </button>
+              </div>
+              <div className="mt-3 flex flex-col gap-2 text-sm">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" className="size-4" checked={s.ui === "sobre"} onChange={(e) => update({ ui: e.target.checked ? "sobre" : "arena" })} />
+                  Interface claire et sobre (sans néons)
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" className="size-4" checked={s.largeText} onChange={(e) => update({ largeText: e.target.checked })} />
+                  Texte plus grand
+                </label>
+              </div>
+            </section>
+
             <section aria-label="Échiquier">
               <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Échiquier</h3>
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">

@@ -14,6 +14,7 @@ import { MoveNav, usePlyKeys } from "../../components/MoveNav";
 import { PageHeader } from "../../components/PageHeader";
 import { FlipButton } from "../../components/SiteNav";
 import { useFlip } from "../../hooks/useFlip";
+import { fetchWake, localCache } from "../../lib/wake";
 import { applyMove, atMain, currentStep, numbered, playOnBoard, previousStep, type Cursor } from "../../lib/variation";
 import { moveSound, sound } from "../../lib/sound";
 import { accuracy, classify, Engine, ENGINE_NAME, formatScore, pvToSan, scoreToCp, terminalScore, winPct, type EngineLine, type MoveMark, type Score } from "../../lib/engine";
@@ -46,21 +47,39 @@ export default function HistoryPage() {
       .catch(() => router.replace(`/?next=${encodeURIComponent(window.location.pathname + window.location.search)}`));
   }, [router]);
 
+  const [waking, setWaking] = useState(false);
+  const [fromCache, setFromCache] = useState(false);
+  // copie locale : affichée tout de suite, remplacée dès que le serveur répond
+  useEffect(() => {
+    if (!me) return;
+    const cached = localCache.get<GameHistoryItem[]>(`history.${me}`);
+    if (cached?.length) {
+      setGames((g) => g ?? cached);
+      setFromCache(true);
+      const wanted = new URLSearchParams(window.location.search).get("g");
+      setSelected((sel) => sel ?? (wanted && /^[0-9a-f-]{36}$/i.test(wanted) ? wanted : cached[0]!.gameId));
+    }
+  }, [me]);
   const load = useCallback(async (before?: string) => {
     setError(null);
-    const r = await fetch(`/api/history${before ? `?before=${encodeURIComponent(before)}` : ""}`, { cache: "no-store" }).catch(() => null);
+    const r = await fetchWake(`/api/history${before ? `?before=${encodeURIComponent(before)}` : ""}`, { onWaiting: setWaking });
     if (!r?.ok) {
-      setError(r?.status === 503 ? "L'historique nécessite la base de données du serveur." : "Impossible de charger l'historique (le serveur se réveille peut-être : réessaie dans une minute).");
+      setError(r?.status === 503 ? "L'historique nécessite la base de données du serveur." : "Le serveur ne répond pas pour le moment. Réessaie dans quelques minutes.");
       setGames((g) => g ?? []);
       return;
     }
     const page = ((await r.json()) as { games: GameHistoryItem[] }).games;
-    setGames((g) => [...(before ? g ?? [] : []), ...page]);
+    setFromCache(false);
+    setGames((g) => {
+      const next = [...(before ? g ?? [] : []), ...page];
+      if (me) localCache.set(`history.${me}`, next.slice(0, 500));
+      return next;
+    });
     setMore(page.length === 30);
     const wanted = new URLSearchParams(window.location.search).get("g");
     if (!before && wanted && /^[0-9a-f-]{36}$/i.test(wanted)) setSelected((s) => s ?? wanted);
     else if (!before && page[0]) setSelected((s) => s ?? page[0]!.gameId);
-  }, []);
+  }, [me]);
   useEffect(() => { if (me) void load(); }, [me, load]);
 
   // bilan sur TOUTES les parties (pas seulement celles déjà chargées)
@@ -99,6 +118,8 @@ export default function HistoryPage() {
               <a href="/api/history/export" className="font-semibold text-neon hover:underline">⬇ Télécharger tout (PGN)</a>
             </p>
           )}
+          {waking && <p role="status" className="rounded-lg border border-gold/30 bg-gold/10 p-2.5 text-sm text-gold">Le serveur se réveille (jusqu'à une minute)… tes parties arrivent.</p>}
+          {fromCache && !waking && <p className="px-1 text-xs text-muted">Copie enregistrée sur cet appareil — mise à jour en cours…</p>}
           {error && <p role="alert" className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{error}</p>}
           {games === null && <p className="px-1 text-sm text-muted">Chargement…</p>}
           {games?.length === 0 && !error && (
@@ -166,10 +187,14 @@ function Replay({ gameId, me }: { gameId: string; me: string }) {
   const [flipped, flip] = useFlip(gameId);
 
   useEffect(() => {
-    fetch(`/api/history/${gameId}`, { cache: "no-store" })
+    const cached = localCache.get<GameHistoryDetail>(`game.${gameId}`);
+    if (cached) { setG(cached); setCur(atMain(replayFromPgn(cached.pgn).length - 1)); }
+    fetchWake(`/api/history/${gameId}`)
       .then(async (r) => {
-        if (!r.ok) throw new Error();
+        if (!r?.ok) { if (cached) return; throw new Error(); }
         const d = (await r.json()) as GameHistoryDetail;
+        localCache.set(`game.${gameId}`, d);
+        if (cached) return; // déjà affichée (une partie terminée ne change plus)
         setG(d);
         setCur(atMain(replayFromPgn(d.pgn).length - 1)); // on arrive sur la position finale
       })

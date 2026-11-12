@@ -153,3 +153,32 @@
     --viz-black-side: #2a2927;
   }
 }
+
+/* ─── Interface « sobre » : claire, calme, sans néons (réglage Apparence) ──────
+   Mêmes jetons de couleur, autres valeurs : toutes les pages suivent sans changer de code. */
+:root[data-ui="sobre"] {
+  --color-ink: #F6F3EC;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE7DD;
+  --color-line: #D6CFC2;
+  --color-text: #1E1E1E;
+  --color-muted: #5B564D;
+  --color-neon: #2E6B3A;
+  --color-neon-2: #8A5A2B;
+  --color-win: #2E7D32;
+  --color-danger: #C62828;
+  --color-gold: #8A5F00;
+}
+:root[data-ui="sobre"] .arena-app { background: #F6F3EC; color: #1E1E1E; color-scheme: light; }
+:root[data-ui="sobre"] .panel { background: #FFFFFF; border-color: #D6CFC2; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+:root[data-ui="sobre"] .neon-btn { background: #2E6B3A; border: 1px solid #245530; color: #FFFFFF; box-shadow: none; }
+:root[data-ui="sobre"] .neon-btn:hover { background: #245530; box-shadow: none; }
+:root[data-ui="sobre"] .clock.active { background: #1E1E1E; color: #FFFFFF; box-shadow: none; }
+:root[data-ui="sobre"] .clock.idle { background: #ECE7DD; color: #5B564D; }
+:root[data-ui="sobre"] .clock.low.active { background: #C62828; color: #fff; }
+:root[data-ui="sobre"] .clock.low.idle { color: #C62828; }
+:root[data-ui="sobre"] .arena-promo { background: #FFFFFF; border-color: #2E6B3A; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
+:root[data-ui="sobre"] .arena-promo-btn:hover { background: rgba(46,107,58,.12); }
+
+/* Texte plus grand (réglage Apparence) : toutes les tailles en rem suivent */
+:root[data-text="large"] { font-size: 112.5%; }

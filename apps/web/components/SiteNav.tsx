@@ -1,5 +1,6 @@
 "use client";
 import { AppearanceButton } from "./AppearancePanel";
+import { useSettings } from "../lib/settings";
 
 const LINKS = [
   ["/play", "Jouer"],
@@ -12,6 +13,7 @@ const LINKS = [
 
 /** Navigation principale : une rangée de liens, défilable sur mobile. */
 export function SiteNav({ active }: { active?: (typeof LINKS)[number][0] }) {
+  useSettings(); // applique l'interface choisie (sobre, texte plus grand) sur chaque page
   return (
     <nav aria-label="Navigation" className="mx-auto max-w-[1400px] overflow-x-auto px-2 pb-2 sm:px-3 lg:px-6">
       <ul className="flex w-max gap-1">

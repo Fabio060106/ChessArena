@@ -16,10 +16,19 @@ export interface Settings {
   soundOn: boolean;
   volume: number;
   coordinates: boolean;
+  /** interface : « arena » (sombre, néons) ou « sobre » (claire, calme) */
+  ui: "arena" | "sobre";
+  /** texte plus grand partout */
+  largeText: boolean;
 }
 
 const KEY = "arena.settings.v1";
-export const DEFAULT_SETTINGS: Settings = { boardTheme: "cyberpunk", pieceSet: "arena", palette: "neon", soundOn: true, volume: 0.7, coordinates: true };
+export const DEFAULT_SETTINGS: Settings = { boardTheme: "cyberpunk", pieceSet: "arena", palette: "neon", soundOn: true, volume: 0.7, coordinates: true, ui: "arena", largeText: false };
+
+/** Préréglage « Classique sobre » : échiquier marron, pièces classiques ivoire et ébène, interface claire. */
+export const SOBER_PRESET: Partial<Settings> = { ui: "sobre", boardTheme: "brown", pieceSet: "classic", palette: "ivory", coordinates: true };
+/** Préréglage d'origine. */
+export const ARENA_PRESET: Partial<Settings> = { ui: "arena", boardTheme: "cyberpunk", pieceSet: "arena", palette: "neon" };
 
 export function parseSettings(raw: string | null): Settings {
   try {
@@ -33,6 +42,8 @@ export function parseSettings(raw: string | null): Settings {
       soundOn: typeof v.soundOn === "boolean" ? v.soundOn : DEFAULT_SETTINGS.soundOn,
       volume: typeof v.volume === "number" && v.volume >= 0 && v.volume <= 1 ? v.volume : DEFAULT_SETTINGS.volume,
       coordinates: typeof v.coordinates === "boolean" ? v.coordinates : DEFAULT_SETTINGS.coordinates,
+      ui: v.ui === "sobre" ? "sobre" : "arena",
+      largeText: v.largeText === true,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -53,11 +64,20 @@ function load(): Settings {
 
 export function useSettings() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     setSettings(load());
+    setLoaded(true);
     listeners.add(setSettings);
     return () => { listeners.delete(setSettings); };
   }, []);
+  // interface sobre / texte plus grand : posés sur <html> (le script du layout le fait déjà avant l'affichage)
+  useEffect(() => {
+    if (!loaded) return; // pas d'effacement avant lecture des réglages (sinon flash)
+    const el = document.documentElement;
+    if (settings.ui === "sobre") el.dataset.ui = "sobre"; else delete el.dataset.ui;
+    if (settings.largeText) el.dataset.text = "large"; else delete el.dataset.text;
+  }, [loaded, settings.ui, settings.largeText]);
   useEffect(() => {
     sound.setMuted(!settings.soundOn);
     sound.setVolume(settings.volume);

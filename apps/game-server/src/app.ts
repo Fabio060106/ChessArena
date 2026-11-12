@@ -768,6 +768,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     async close() {
       clearInterval(probeTimer);
       killSwitch.stop();
+      // dernière chance d'enregistrer les parties en attente avant l'arrêt (redéploiement)
+      if (games.pendingRecords > 0) await games.flushUnrecorded().catch(() => {});
       if (withdrawalTimer) clearInterval(withdrawalTimer);
       await verdictWorker?.close();
       await analysisProducer?.close();
