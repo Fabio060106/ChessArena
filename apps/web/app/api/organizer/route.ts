@@ -5,7 +5,7 @@ import { callAuth } from "../../../lib/authService";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const ACTIONS = new Set(["check", "reset-code", "reports", "report-done", "mute"]);
+const ACTIONS = new Set(["check", "reset-code", "reports", "report-done", "mute", "fairplay", "game", "fairplay-review", "suspend"]);
 
 /**
  * Espace organisateur : { action, ... }. Le pseudo connecté est transmis au serveur de jeu, qui seul
@@ -20,7 +20,10 @@ export async function POST(req: NextRequest) {
   const action = typeof b.action === "string" ? b.action : "";
   if (!ACTIONS.has(action)) return NextResponse.json({ error: "action inconnue" }, { status: 400 });
   const str = (v: unknown) => (typeof v === "string" ? v.slice(0, 64) : "");
-  const r = await callAuth(`/auth/admin/${action}`, { by: s.userId, target: str(b.target), id: str(b.id), muted: b.muted === true }, key);
+  const r = await callAuth(`/auth/admin/${action}`, {
+    by: s.userId, target: str(b.target), id: str(b.id), muted: b.muted === true,
+    gameId: str(b.gameId), userId: str(b.userId), verdict: str(b.verdict), suspended: b.suspended === true,
+  }, key);
   if (!r) return NextResponse.json({ error: "Le serveur ne répond pas : réessaie dans une minute." }, { status: 502 });
   return NextResponse.json(r.data, { status: r.status });
 }

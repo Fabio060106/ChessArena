@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { PageHeader } from "../../components/PageHeader";
 import { useMe } from "../../hooks/useMe";
+import type { GameHistoryDetail } from "@chessarena/shared";
+import { reviewGame, type CheatMetrics } from "../../lib/fairplay";
 
 interface Report { id: string; reporter: string; reported: string; gameId: string; message: string; at: string }
 const input = "w-full min-w-0 rounded-lg border border-line bg-surface-2 px-3 py-2 text-text outline-none focus:border-neon/60";
@@ -22,7 +24,7 @@ export default function OrganizerPage() {
       <div className="mx-auto flex max-w-[760px] flex-col gap-3 px-2 pb-8 sm:px-3">
         {admin === null && <p className="panel p-4 text-sm text-muted">Chargement…</p>}
         {admin === false && <p className="panel p-4 text-sm text-danger">Cette page est réservée aux organisateurs.</p>}
-        {admin && <><ResetCode /><Moderation /></>}
+        {admin && <><FairPlay /><ResetCode /><Moderation /></>}
       </div>
     </main>
   );
@@ -98,5 +100,100 @@ function Moderation() {
         <button type="submit" className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm hover:bg-surface-2">Couper le chat</button>
       </form>
     </section>
+  );
+}
+
+interface FairCase {
+  gameId: string; userId: string; reasons: string[]; reports: string[]; focusLosses: number; timeCv: number | null; moves: number;
+  at: string; white: string; black: string; result: string; timeControl: string;
+}
+
+/** Anti-triche : parties signalées (sorties d'onglet, temps métronomiques, signalements), revue avec Stockfish, décision. */
+function FairPlay() {
+  const [data, setData] = useState<{ cases: FairCase[]; suspended: string[] } | null>(null);
+  const [err, setErr] = useState(false);
+  const load = useCallback(async () => {
+    const r = await call("fairplay").catch(() => null);
+    if (r?.ok) { setData((await r.json()) as { cases: FairCase[]; suspended: string[] }); setErr(false); } else setErr(true);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const reinstate = async (u: string) => { await call("suspend", { target: u, suspended: false }); await load(); };
+  return (
+    <section className="panel p-4">
+      <h2 className="font-semibold">Anti-triche</h2>
+      <p className="mt-1 text-sm text-muted">
+        Parties à revoir : un joueur est sorti plusieurs fois de l'onglet, a joué à un rythme métronomique, ou a été signalé par son adversaire.
+        Ce ne sont que des indices : lance l'analyse Stockfish, puis décide. Rien n'est sanctionné automatiquement.
+      </p>
+      {err && <p role="alert" className="mt-2 text-sm text-danger">Impossible de charger la liste (serveur indisponible ?).</p>}
+      {!data && !err && <p className="mt-2 text-sm text-muted">Chargement…</p>}
+      {data && data.cases.length === 0 && <p className="mt-2 text-sm text-muted">Aucune partie à revoir. 👍</p>}
+      <ul className="mt-2 flex flex-col gap-2">
+        {data?.cases.map((c) => <FairCaseRow key={`${c.gameId}:${c.userId}`} c={c} onDone={load} />)}
+      </ul>
+      {data && data.suspended.length > 0 && (
+        <>
+          <h3 className="mt-4 text-sm font-semibold">Comptes suspendus</h3>
+          <ul className="mt-1 flex flex-wrap gap-2">
+            {data.suspended.map((u) => (
+              <li key={u} className="flex items-center gap-1.5 rounded-full bg-surface-2 px-3 py-1 text-sm">
+                {u}<button type="button" onClick={() => void reinstate(u)} className="text-xs text-neon hover:underline">réactiver</button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+function FairCaseRow({ c, onDone }: { c: FairCase; onDone: () => Promise<void> }) {
+  const [progress, setProgress] = useState<number | null>(null);
+  const [m, setM] = useState<CheatMetrics | null>(null);
+  const [busy, setBusy] = useState(false);
+  const color: "w" | "b" = c.userId === c.white ? "w" : "b";
+  const analyse = async () => {
+    setProgress(0);
+    const r = await call("game", { gameId: c.gameId }).catch(() => null);
+    if (!r?.ok) { setProgress(null); return; }
+    const g = (await r.json()) as GameHistoryDetail;
+    setM(await reviewGame(g.pgn, color, setProgress));
+    setProgress(null);
+  };
+  const decide = async (verdict: "clean" | "cheat") => {
+    if (verdict === "cheat" && !window.confirm(`Suspendre le compte de ${c.userId} ? Il ne pourra plus jouer (tu pourras le réactiver).`)) return;
+    setBusy(true);
+    await call("fairplay-review", { gameId: c.gameId, userId: c.userId, verdict });
+    setBusy(false);
+    await onDone();
+  };
+  const levelCls = m?.level === "suspect" ? "text-danger" : m?.level === "watch" ? "text-gold" : "text-win";
+  return (
+    <li className="rounded-lg border border-line p-3 text-sm">
+      <p>
+        <strong>{c.userId}</strong> <span className="text-muted">({color === "w" ? "Blancs" : "Noirs"})</span>
+        <span className="text-muted"> · {c.white} – {c.black} · {c.result} · {new Date(c.at).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })}</span>
+      </p>
+      <ul className="mt-1 list-disc pl-5 text-muted">
+        {c.reasons.map((x) => <li key={x}>{x}</li>)}
+        {c.reports.map((x) => <li key={x}>signalé par {x}</li>)}
+      </ul>
+      {m && (
+        <div className="mt-2 rounded-lg bg-surface-2 p-2">
+          <p className={`font-semibold ${levelCls}`}>{m.summary}</p>
+          <p className="tabular text-xs text-muted">
+            {m.counted} coups analysés (hors ouverture) · coups du moteur : {m.matchPct ?? "–"} % · perte moyenne : {m.acpl ?? "–"} centipions · précision : {m.accuracy ?? "–"} %
+          </p>
+        </div>
+      )}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <a href={`/partie/${c.gameId}`} target="_blank" rel="noreferrer" className="rounded-lg border border-line px-2.5 py-1 text-xs hover:bg-surface-2">Voir la partie</a>
+        <button type="button" disabled={progress !== null} onClick={() => void analyse()} className="rounded-lg border border-neon/50 px-2.5 py-1 text-xs font-semibold text-neon hover:bg-neon/10 disabled:opacity-60">
+          {progress !== null ? `Analyse Stockfish… ${Math.round(progress * 100)} %` : m ? "Relancer l'analyse" : "Analyser avec Stockfish"}
+        </button>
+        <button type="button" disabled={busy} onClick={() => void decide("clean")} className="rounded-lg border border-line px-2.5 py-1 text-xs text-muted hover:text-text">Rien à signaler</button>
+        <button type="button" disabled={busy} onClick={() => void decide("cheat")} className="rounded-lg border border-danger/60 px-2.5 py-1 text-xs text-danger hover:bg-danger/10">Triche : suspendre le compte</button>
+      </div>
+    </li>
   );
 }

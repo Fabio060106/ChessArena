@@ -1,5 +1,6 @@
 "use client";
 import { memo, useState } from "react";
+import { SITE_NAME } from "../lib/site";
 import { SNG_MAX_SIZE, SNG_MIN_SIZE, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
 import { bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
 
@@ -317,7 +318,7 @@ function InviteBox({ t }: { t: SngSnapshot }) {
   const missing = t.size - registeredCount(t);
   const share = async () => {
     try {
-      if (navigator.share) await navigator.share({ title: "ChessArena", text: `Rejoins mon tournoi d'échecs « ${titleOf(t)} »`, url: link });
+      if (navigator.share) await navigator.share({ title: SITE_NAME, text: `Rejoins mon tournoi d'échecs « ${titleOf(t)} »`, url: link });
       else { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000); }
     } catch { /* partage annulé */ }
   };

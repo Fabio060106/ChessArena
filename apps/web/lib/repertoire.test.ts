@@ -75,7 +75,7 @@ describe("répertoire", () => {
     const key = fenKey(fenAfter("e4", "Nf6", "e5", "Nd5", "Bc4", "Nb6"));
     const doc = review(syncCards(t, evaluated()), key, true, { uci: "c4b3", san: "Bb3" });
     const pgn = exportPgn(t, doc, "fabio", new Date("2026-11-04"));
-    expect(pgn).toContain('[Event "Répertoire ChessArena - Blancs"]');
+    expect(pgn).toContain('[Event "Répertoire ChessAurum - Blancs"]');
     expect(pgn).toContain('[White "fabio"]');
     const flat = pgn.replace(/\s+/g, " ");
     expect(flat).toMatch(/4\. Bb3 \{coup de répertoire \(appris à l'entraînement\)\}/);

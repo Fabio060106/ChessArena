@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import jwt from "jsonwebtoken";
 import type pg from "pg";
-import { REPERTOIRE_MAX_BYTES, type GameRepository } from "../persistence/GameRepository.js";
+import { REPERTOIRE_MAX_BYTES, SETTINGS_MAX_BYTES, type GameRepository } from "../persistence/GameRepository.js";
 import { TIME_CONTROLS, type ArenaJwtClaims, type DecisionRequest, type RgLimitKind, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "../config.js";
 import { CaseAlreadyResolvedError, CaseNotFoundError, type ModerationService } from "../fairplay/ModerationService.js";
@@ -67,6 +67,13 @@ export interface ApiDeps {
   chatMuted?: Set<string>;
   /** signalements gardés en mémoire quand il n'y a pas de base */
   memoryReports?: Array<{ reporter: string; reported: string; gameId: string; message: string; at: string }>;
+  /** anti-triche de base sans base de données (tests, développement) */
+  fairplayMem?: {
+    signals: Array<{ gameId: string; userId: string; white: string; black: string; result: string; timeControl: string; reasons: string[]; focusLosses: number; timeCv: number | null; moves: number; flagged: boolean; at: string; reviewed: boolean }>;
+    reports: Array<{ reporter: string; reported: string; gameId: string; reason: string; at: string; reviewed: boolean }>;
+  };
+  /** coupe immédiatement les connexions d'un joueur (compte suspendu) */
+  kickUser?: (userId: string) => void;
 }
 
 class HttpError extends Error {
@@ -238,6 +245,75 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
             send(200, { ok: true, userId: target, muted });
             return true;
           }
+          // ─── anti-triche : parties à revoir, revue, suspension ───
+          if (url.pathname === "/auth/admin/fairplay") {
+            if (d.pool) {
+              const r = await d.pool.query<{
+                game_id: string; user_id: string; reasons: string[]; focus_losses: number; time_cv: number | null; moves: number; created_at: Date;
+                white_id: string; black_id: string; result: string; time_control: string; reports: string[] | null;
+              }>(
+                `SELECT s.game_id, s.user_id, s.reasons, s.focus_losses, s.time_cv, s.moves, s.created_at,
+                        g.white_id, g.black_id, g.result, g.time_control,
+                        (SELECT array_agg(r.reporter_id || ' : ' || coalesce(nullif(r.reason, ''), '(sans précision)'))
+                           FROM cheat_reports r WHERE r.game_id = s.game_id AND r.reported_id = s.user_id AND r.reviewed_at IS NULL) AS reports
+                   FROM cheat_signals s JOIN games g ON g.id::text = s.game_id
+                  WHERE s.reviewed_at IS NULL
+                    AND (s.flagged OR EXISTS (SELECT 1 FROM cheat_reports r WHERE r.game_id = s.game_id AND r.reported_id = s.user_id AND r.reviewed_at IS NULL))
+                  ORDER BY s.created_at DESC LIMIT 100`);
+              const sus = await d.pool.query<{ id: string }>("SELECT id FROM users WHERE state = 'suspended' ORDER BY id LIMIT 200");
+              send(200, {
+                cases: r.rows.map((x) => ({
+                  gameId: x.game_id, userId: x.user_id, reasons: x.reasons, focusLosses: x.focus_losses, timeCv: x.time_cv, moves: x.moves,
+                  at: x.created_at.toISOString(), white: x.white_id, black: x.black_id, result: x.result, timeControl: x.time_control, reports: x.reports ?? [],
+                })),
+                suspended: sus.rows.map((x) => x.id),
+              });
+            } else {
+              const m = d.fairplayMem ?? { signals: [], reports: [] };
+              const reportsOf = (gameId: string, userId: string) => m.reports.filter((r) => !r.reviewed && r.gameId === gameId && r.reported === userId).map((r) => `${r.reporter} : ${r.reason || "(sans précision)"}`);
+              send(200, {
+                cases: m.signals.filter((x) => !x.reviewed && (x.flagged || reportsOf(x.gameId, x.userId).length > 0))
+                  .map((x) => ({ ...x, reports: reportsOf(x.gameId, x.userId) })).reverse().slice(0, 100),
+                suspended: [],
+              });
+            }
+            return true;
+          }
+          if (url.pathname === "/auth/admin/game") {
+            const gameId = str(b.gameId);
+            const g = d.repo ? await d.repo.getGamePublic(gameId, "") : null;
+            if (!g) throw new HttpError(404, "NOT_FOUND");
+            send(200, g);
+            return true;
+          }
+          if (url.pathname === "/auth/admin/fairplay-review") {
+            const gameId = str(b.gameId), userId = str(b.userId), verdict = str(b.verdict);
+            if (verdict !== "clean" && verdict !== "cheat") throw new HttpError(400, "BAD_VERDICT");
+            if (d.pool) {
+              await d.pool.query("UPDATE cheat_signals SET reviewed_at = now(), verdict = $3 WHERE game_id = $1 AND user_id = $2", [gameId, userId, verdict]);
+              await d.pool.query("UPDATE cheat_reports SET reviewed_at = now() WHERE game_id = $1 AND reported_id = $2", [gameId, userId]);
+              if (verdict === "cheat") await d.pool.query("UPDATE users SET state = 'suspended' WHERE id = $1 AND state IN ('active', 'withdrawal_hold')", [userId]);
+            } else if (d.fairplayMem) {
+              for (const x of d.fairplayMem.signals) if (x.gameId === gameId && x.userId === userId) x.reviewed = true;
+              for (const x of d.fairplayMem.reports) if (x.gameId === gameId && x.reported === userId) x.reviewed = true;
+            }
+            if (verdict === "cheat") d.kickUser?.(userId);
+            send(200, { ok: true });
+            return true;
+          }
+          if (url.pathname === "/auth/admin/suspend") {
+            const target = (await accounts.find(str(b.target)))?.id;
+            if (!target) throw new AccountError("UNKNOWN_PLAYER", 404);
+            const suspended = b.suspended === true;
+            if (d.pool) {
+              await d.pool.query(suspended
+                ? "UPDATE users SET state = 'suspended' WHERE id = $1 AND state IN ('active', 'withdrawal_hold')"
+                : "UPDATE users SET state = 'active' WHERE id = $1 AND state = 'suspended'", [target]);
+            }
+            if (suspended) d.kickUser?.(target);
+            send(200, { ok: true, userId: target, suspended });
+            return true;
+          }
           throw new HttpError(404, "NOT_FOUND");
         }
         if (url.pathname !== "/auth/signup" && url.pathname !== "/auth/login") throw new HttpError(404, "NOT_FOUND");
@@ -336,6 +412,13 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       send(200, { games: await need(d.repo).listGames(claims.sub, Number.isFinite(limit) ? limit : 30, before ?? undefined) });
       return true;
     }
+    const pub = url.pathname.match(/^\/account\/games\/([0-9a-f-]{36})\/public$/i);
+    if (pub && req.method === "GET") {
+      const g = await need(d.repo).getGamePublic(pub[1]!, claims.sub);
+      if (!g) throw new HttpError(404, "NOT_FOUND");
+      send(200, g);
+      return true;
+    }
     const gm = url.pathname.match(/^\/account\/games\/([0-9a-f-]{36})$/i);
     if (gm && req.method === "GET") {
       const g = await need(d.repo).getGame(claims.sub, gm[1]!);
@@ -381,6 +464,19 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
     }
 
     // ─── Compte joueur : répertoire d'ouvertures et exercices ───────────────────
+    // ─── Réglages du joueur (apparence, son), synchronisés entre ses appareils ──────
+    if (url.pathname === "/account/settings" && req.method === "GET") {
+      send(200, { data: await need(d.repo).getSettings(claims.sub) });
+      return true;
+    }
+    if (url.pathname === "/account/settings" && req.method === "PUT") {
+      const b = await body(req, SETTINGS_MAX_BYTES + 512);
+      if (!b.data || typeof b.data !== "object" || Array.isArray(b.data)) throw new HttpError(400, "BAD_PAYLOAD");
+      if (Buffer.byteLength(JSON.stringify(b.data)) > SETTINGS_MAX_BYTES) throw new HttpError(413, "TOO_LARGE");
+      await need(d.repo).saveSettings(claims.sub, b.data);
+      send(200, { ok: true });
+      return true;
+    }
     if (url.pathname === "/account/repertoire" && req.method === "GET") {
       const repo = need(d.repo);
       const [games, saved] = await Promise.all([repo.listRepertoireGames(claims.sub, 500), repo.getRepertoire(claims.sub)]);

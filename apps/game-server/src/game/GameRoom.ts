@@ -122,8 +122,8 @@ export class GameRoom {
     this.chess = new Chess(o.initialFen);
     this.clock = new ServerClock(o.timeControl, (c) => this.onFlag(c), this.now);
     this.chess.header(
-      "Event", `ChessArena ${o.timeControl.id}`,
-      "Site", "ChessArena",
+      "Event", `ChessAurum ${o.timeControl.id}`,
+      "Site", "ChessAurum",
       "Date", new Date(this.now()).toISOString().slice(0, 10).replace(/-/g, "."),
       "White", o.white.userId, "Black", o.black.userId,
       "WhiteElo", String(o.white.rating), "BlackElo", String(o.black.rating),

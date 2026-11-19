@@ -19,7 +19,7 @@ export const FLAG_RE = /^[A-Z]{2}$/;
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
 export const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 128;
-const RESERVED = /^(admin|administrateur|moderat(eur|or)|support|chessarena|system|root|arbitre)$/i;
+const RESERVED = /^(admin|administrateur|moderat(eur|or)|support|chessarena|chessaurum|system|root|arbitre)$/i;
 
 const SCRYPT = { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 } satisfies ScryptOptions;
 const KEYLEN = 32;

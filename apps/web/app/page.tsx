@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Logo } from "../components/Logo";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useRouter } from "next/navigation";
 
@@ -11,7 +12,7 @@ const flagEmoji = (c: string) => (c ? String.fromCodePoint(...[...c].map((x) => 
 function nextPath(): string {
   if (typeof window === "undefined") return "/play";
   const n = new URLSearchParams(window.location.search).get("next") ?? "";
-  return /^\/(play|history|repertoire|direct|classement|profil)(\/[\w-]{1,64})?(\?[\w=&%-]*)?$/.test(n) ? n : "/play";
+  return /^\/(play|history|repertoire|direct|classement|profil|partie)(\/[\w-]{1,64})?(\?[\w=&%,-]*)?$/.test(n) ? n : "/play";
 }
 
 const KNOWN = "arena_has_account"; // ce navigateur a déjà un compte : on propose « Se connecter » d'abord
@@ -69,7 +70,7 @@ export default function Home() {
       <ThemeToggle className="absolute right-3 top-3" />
       <div className="w-full max-w-sm">
         <div className="mb-4 text-center">
-          <h1 className="font-display text-4xl font-bold tracking-tight">Chess<span className="text-neon">Arena</span></h1>
+          <h1 className="font-display text-4xl font-bold tracking-tight"><Logo /></h1>
           <p className="mt-1 text-sm text-muted">Duels et tournois d'échecs · bêta en jetons, sans valeur</p>
           {invited && <p className="mt-2 rounded-lg border border-neon/30 bg-neon/10 px-3 py-2 text-sm text-neon">Tu es invité à un tournoi : crée ton compte (30 secondes) pour le rejoindre.</p>}
         </div>

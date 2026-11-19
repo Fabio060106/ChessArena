@@ -1,4 +1,4 @@
-export const metadata = { title: "Conditions de la bêta · ChessArena" };
+export const metadata = { title: "Conditions de la bêta" };
 
 /** Conditions de participation à la bêta (jetons sans valeur). */
 export default function Conditions() {

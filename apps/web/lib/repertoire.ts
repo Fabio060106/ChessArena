@@ -285,10 +285,10 @@ export function exportPgn(tree: Tree, doc: RepertoireDoc, player: string, date =
 
   const d = date.toISOString().slice(0, 10).replace(/-/g, ".");
   const headers = [
-    `[Event "Répertoire ChessArena - ${color === "w" ? "Blancs" : "Noirs"}"]`,
-    `[Site "ChessArena"]`, `[Date "${d}"]`, `[Round "-"]`,
+    `[Event "Répertoire ChessAurum - ${color === "w" ? "Blancs" : "Noirs"}"]`,
+    `[Site "ChessAurum"]`, `[Date "${d}"]`, `[Round "-"]`,
     `[White "${color === "w" ? player : "Répertoire"}"]`, `[Black "${color === "b" ? player : "Répertoire"}"]`,
-    `[Result "*"]`, `[Annotator "ChessArena - Stockfish 19"]`,
+    `[Result "*"]`, `[Annotator "ChessAurum - Stockfish 19"]`,
   ].join("\n");
   const body = walk(START, 0, false, new Set());
   return `${headers}\n\n${wrap(`${body}${body ? " " : ""}*`)}\n`;

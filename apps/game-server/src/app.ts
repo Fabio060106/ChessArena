@@ -10,6 +10,7 @@ import { Matchmaker } from "./matchmaking/Matchmaker.js";
 import { GameManager, userRoom } from "./game/GameManager.js";
 import { InMemoryLedger, PgLedger, lockStakes, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
 import { ChatService } from "./social/ChatService.js";
+import { basicSignals, type BasicSignal } from "./fairplay/basicSignals.js";
 import { RematchService } from "./social/RematchService.js";
 import { randomUUID } from "node:crypto";
 import { FileAuditLog, PgAuditLog, type AuditSink } from "./audit/auditLog.js";
@@ -117,6 +118,11 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   // modération du chat : joueurs privés de chat (chargés au démarrage), signalements sans base
   const chatMuted = new Set<string>();
   const memoryReports: Array<{ reporter: string; reported: string; gameId: string; message: string; at: string }> = [];
+  // anti-triche de base (sans base de données : en mémoire, pour les tests et le développement)
+  const fairplayMem = {
+    signals: [] as Array<BasicSignal & { gameId: string; white: string; black: string; result: string; timeControl: string; at: string; reviewed: boolean }>,
+    reports: [] as Array<{ reporter: string; reported: string; gameId: string; reason: string; at: string; reviewed: boolean }>,
+  };
   const store: TournamentStore = deps.tournamentStore ?? (pool ? new PgTournamentStore(pool) : new InMemoryTournamentStore());
 
   // ─── Argent réel, fair-play, modération (nécessitent PostgreSQL) ──────────────
@@ -146,7 +152,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports });
+      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
+      fairplayMem, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
       return;
     }
     if (req.url === "/health") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
@@ -206,6 +213,21 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     for (const w of rematches.withdrawAll(userId)) io.to(w.players.map(userRoom)).emit("rematch", { gameId: w.gameId, offeredBy: null });
   };
   const announceSpectators = (gameId: string) => io.to(gameId).emit("game:spectators", { gameId, count: spectatorCount(gameId) });
+  games.onGameFinished(async (g) => {
+    if (g.aborted) return;
+    const sigs = basicSignals({ ...g, timeControl: g.timeControl.id });
+    if (pool) {
+      for (const s of sigs) {
+        await pool.query(
+          `INSERT INTO cheat_signals (game_id, user_id, focus_losses, moves, time_cv, reasons, flagged)
+           VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`,
+          [g.gameId, s.userId, s.focusLosses, s.moves, s.timeCv, s.reasons, s.flagged]);
+      }
+    } else {
+      for (const s of sigs) fairplayMem.signals.push({ ...s, gameId: g.gameId, white: g.white.userId, black: g.black.userId, result: g.result, timeControl: g.timeControl.id, at: new Date().toISOString(), reviewed: false });
+      if (fairplayMem.signals.length > 5000) fairplayMem.signals.splice(0, 1000);
+    }
+  });
   games.onGameFinished((g) => {
     chat.ended(g.gameId);
     if (!g.tournament) {
@@ -631,6 +653,31 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       if (pool) {
         await pool.query("INSERT INTO chat_reports (reporter_id, reported_id, game_id, message) VALUES ($1,$2,$3,$4)", [r.reporter, r.reported, r.gameId, r.message]);
       } else if (memoryReports.length < 1000) memoryReports.push({ ...r, at: new Date().toISOString() });
+      reply(true);
+    }));
+
+    // ─── Signalement de triche (par un joueur de la partie, contre son adversaire) ──
+    socket.on("cheat:report", guard(socket, async (raw: unknown, ack?: unknown) => {
+      const reply = (ok: boolean, code?: string) => { if (typeof ack === "function") (ack as (r: { ok: boolean; code?: string }) => void)({ ok, ...(code ? { code } : {}) }); };
+      const p = raw as { gameId?: unknown; reason?: unknown } | null;
+      if (!p || typeof p.gameId !== "string" || !/^[0-9a-f-]{36}$/i.test(p.gameId)) return reply(false, "BAD_PAYLOAD");
+      const reason = typeof p.reason === "string" ? p.reason.replace(/\s+/g, " ").trim().slice(0, 300) : "";
+      let players: [string, string] | null = null;
+      if (pool) {
+        const r = await pool.query<{ white_id: string; black_id: string }>("SELECT white_id, black_id FROM games WHERE id = $1", [p.gameId]);
+        if (r.rows[0]) players = [r.rows[0].white_id, r.rows[0].black_id];
+      } else {
+        const s = fairplayMem.signals.find((x) => x.gameId === p.gameId);
+        if (s) players = [s.white, s.black];
+      }
+      if (!players || !players.includes(user.userId)) return reply(false, "NOT_A_PLAYER");
+      const reported = players[0] === user.userId ? players[1] : players[0];
+      if (pool) {
+        await pool.query("INSERT INTO cheat_reports (reporter_id, reported_id, game_id, reason) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+          [user.userId, reported, p.gameId, reason]);
+      } else if (!fairplayMem.reports.some((x) => x.reporter === user.userId && x.gameId === p.gameId)) {
+        fairplayMem.reports.push({ reporter: user.userId, reported, gameId: p.gameId, reason, at: new Date().toISOString(), reviewed: false });
+      }
       reply(true);
     }));
 

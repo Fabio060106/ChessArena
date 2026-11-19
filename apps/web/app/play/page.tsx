@@ -18,7 +18,9 @@ import { MoveList } from "../../components/MoveList";
 import { MoveNav, usePlyKeys } from "../../components/MoveNav";
 import { replayFromSans } from "../../lib/replay";
 import { Lobby } from "../../components/Lobby";
+import { Logo } from "../../components/Logo";
 import { ChatPanel } from "../../components/ChatPanel";
+import { CheatReport } from "../../components/CheatReport";
 import { FlipButton, SiteNav } from "../../components/SiteNav";
 import { useFlip } from "../../hooks/useFlip";
 
@@ -77,7 +79,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     return r.ok ? { token: ((await r.json()) as { token: string }).token } : {};
   }, [userId, flag, dev]);
 
-  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, chat, sendChat, reportChat, rematch, rematchAction, spectators } = useGameSocket(userId, getAuth);
+  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators } = useGameSocket(userId, getAuth);
   const sng = useTournament(socket, userId, inviteId);
   const [settings, updateSettings] = useSettings();
   const playing = view.phase === "playing";
@@ -125,6 +127,8 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     const r = await rematchAction(action);
     if (!r.ok) setRematchErr(REMATCH_ERRORS[r.code] ?? "La revanche n'est plus possible.");
   };
+  // signalement de triche : après une vraie partie (pas une partie annulée)
+  const canReportCheat = view.phase === "over" && !!view.start && !!view.over && view.over.termination !== "aborted";
   const rematchByOpp = !!rematch?.offeredBy && rematch.offeredBy !== userId;
   const rematchByMe = rematch?.offeredBy === userId;
 
@@ -192,7 +196,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     <main className="arena-app">
       <header className="mx-auto flex h-13 max-w-[1400px] items-center gap-3 px-3 lg:px-6">
         <h1 className="font-display text-lg font-bold tracking-tight">
-          Chess<span className="text-neon">Arena</span>
+          <Logo />
         </h1>
         <span className={`flex items-center gap-1.5 text-xs ${view.connected ? "text-win" : "text-gold"}`}>
           <span className={`size-1.5 rounded-full ${view.connected ? "bg-win" : "animate-pulse bg-gold"}`} />
@@ -276,6 +280,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
                       Voir l'échiquier
                     </button>
                   </div>
+                  {canReportCheat && <div className="mt-3 text-left"><CheatReport opponent={seat(opp)?.userId ?? "ton adversaire"} onReport={reportCheat} resetKey={gameId ?? undefined} /></div>}
                   {view.over.termination !== "aborted" && view.start && (
                     <a href={`/history?g=${view.start.gameId}`} className="mt-3 block text-sm text-neon hover:underline">Analyser avec Stockfish 19 →</a>
                   )}
@@ -300,10 +305,11 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
             </div>
           )}
 
-          {canRematch && !showResult && (
-            <div className="panel p-3">
-              <RematchBox byOpp={rematchByOpp} byMe={rematchByMe} declined={!!rematch?.declined} error={rematchErr}
-                opponent={seat(opp)?.userId ?? "Ton adversaire"} onAction={doRematch} />
+          {(canRematch || canReportCheat) && !showResult && (
+            <div className="panel flex flex-col gap-2 p-3">
+              {canRematch && <RematchBox byOpp={rematchByOpp} byMe={rematchByMe} declined={!!rematch?.declined} error={rematchErr}
+                opponent={seat(opp)?.userId ?? "Ton adversaire"} onAction={doRematch} />}
+              {canReportCheat && <CheatReport opponent={seat(opp)?.userId ?? "ton adversaire"} onReport={reportCheat} resetKey={gameId ?? undefined} />}
             </div>
           )}
 

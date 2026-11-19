@@ -20,10 +20,12 @@ export interface Settings {
   ui: "arena" | "sobre" | "auto";
   /** texte plus grand partout */
   largeText: boolean;
+  /** date du dernier changement (ms) : la version la plus récente gagne entre les appareils */
+  updatedAt: number;
 }
 
 const KEY = "arena.settings.v1";
-export const DEFAULT_SETTINGS: Settings = { boardTheme: "cyberpunk", pieceSet: "arena", palette: "neon", soundOn: true, volume: 0.7, coordinates: true, ui: "arena", largeText: false };
+export const DEFAULT_SETTINGS: Settings = { boardTheme: "cyberpunk", pieceSet: "arena", palette: "neon", soundOn: true, volume: 0.7, coordinates: true, ui: "arena", largeText: false, updatedAt: 0 };
 
 /** Préréglage « Classique sobre » : échiquier marron, pièces classiques ivoire et ébène, interface claire. */
 export const SOBER_PRESET: Partial<Settings> = { ui: "sobre", boardTheme: "brown", pieceSet: "classic", palette: "ivory", coordinates: true };
@@ -44,6 +46,7 @@ export function parseSettings(raw: string | null): Settings {
       coordinates: typeof v.coordinates === "boolean" ? v.coordinates : DEFAULT_SETTINGS.coordinates,
       ui: v.ui === "sobre" || v.ui === "auto" ? v.ui : "arena",
       largeText: v.largeText === true,
+      updatedAt: typeof v.updatedAt === "number" && v.updatedAt > 0 && Number.isFinite(v.updatedAt) ? v.updatedAt : 0,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -61,6 +64,42 @@ export function isLight(ui: Settings["ui"]): boolean {
 let current: Settings | null = null;
 const listeners = new Set<(s: Settings) => void>();
 
+/** Applique de nouveaux réglages : mémoire de l'onglet, stockage local, tous les composants abonnés. */
+function commit(next: Settings): void {
+  current = next;
+  try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { /* best-effort */ }
+  for (const l of listeners) l(next);
+}
+
+// ─── Synchronisation avec le compte : mêmes réglages sur l'ordinateur et le téléphone ──
+let synced = false;
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function pushSoon(): void {
+  if (pushTimer) clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => {
+    pushTimer = null;
+    void fetch("/api/settings", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ data: load() }) }).catch(() => {});
+  }, 800);
+}
+
+/** Une fois par onglet : la version la plus récente (cet appareil ou le compte) l'emporte. */
+function syncOnce(): void {
+  if (synced || typeof window === "undefined") return;
+  synced = true;
+  if (window.location.pathname === "/" || window.location.pathname === "/conditions") return; // pas encore connecté
+  void fetch("/api/settings", { cache: "no-store" })
+    .then(async (r) => (r.ok ? ((await r.json()) as { data: unknown }) : null))
+    .then((d) => {
+      if (!d) return;
+      const local = load();
+      const srv = d.data && typeof d.data === "object" ? parseSettings(JSON.stringify(d.data)) : null;
+      if (srv && srv.updatedAt > local.updatedAt) commit(srv);
+      else if (local.updatedAt > 0 && (!srv || local.updatedAt > srv.updatedAt)) pushSoon();
+    })
+    .catch(() => {});
+}
+
 function load(): Settings {
   if (current) return current;
   let raw: string | null = null;
@@ -76,6 +115,7 @@ export function useSettings() {
     setSettings(load());
     setLoaded(true);
     listeners.add(setSettings);
+    syncOnce();
     return () => { listeners.delete(setSettings); };
   }, []);
   // interface sobre / texte plus grand : posés sur <html> (le script du layout le fait déjà avant l'affichage)
@@ -96,10 +136,8 @@ export function useSettings() {
     sound.setVolume(settings.volume);
   }, [settings.soundOn, settings.volume]);
   const update = useCallback((patch: Partial<Settings>) => {
-    const next = { ...load(), ...patch };
-    current = next;
-    try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { /* best-effort */ }
-    for (const l of listeners) l(next);
+    commit({ ...load(), ...patch, updatedAt: Date.now() });
+    pushSoon(); // sans compte (page de connexion), le serveur refuse : sans conséquence
   }, []);
   return [settings, update] as const;
 }

@@ -555,3 +555,43 @@ describe("historique : aucune partie perdue", () => {
     await s2.close();
   }, 20_000);
 });
+
+describe("anti-triche de base : signaux, signalement, revue par l'organisateur", () => {
+  const svc = () => jwt.sign({ sub: "web" }, SECRET, { audience: "chessarena-auth-service", expiresIn: 60 });
+  const post = (path: string, body: unknown) => fetch(`${url}${path}`, {
+    method: "POST", headers: { authorization: `Bearer ${svc()}`, "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+
+  it("sorties d'onglet → partie à revoir ; l'adversaire signale ; l'organisateur juge ; le tricheur est déconnecté", async () => {
+    const { start, white, black } = await pair("fp-honnete", "fp-suspect");
+    const id = start.gameId;
+    const suspect = start.white.userId === "fp-suspect" ? white : black;
+    const honest = suspect === white ? black : white;
+    for (let i = 0; i < 4; i++) suspect.emit("game:signal", { gameId: id, kind: "focus_lost", clientTs: Date.now() });
+    await move(white, id, "e2e4", 0);
+    await move(black, id, "e7e5", 1);
+    const over = once(honest, "game:over");
+    suspect.emit("game:resign", { gameId: id });
+    await over;
+    await new Promise((r) => setTimeout(r, 150));
+
+    // seul un joueur de la partie peut signaler
+    const intrus = client({ token: token({ sub: "fp-intrus" }) });
+    await connected(intrus);
+    expect(await new Promise((r) => intrus.emit("cheat:report", { gameId: id, reason: "?" }, r))).toEqual({ ok: false, code: "NOT_A_PLAYER" });
+    expect(await new Promise((r) => honest.emit("cheat:report", { gameId: id, reason: "il jouait comme un moteur" }, r))).toEqual({ ok: true });
+
+    expect((await post("/auth/admin/fairplay", { by: "fp-honnete" })).status).toBe(403);
+    const list = (await (await post("/auth/admin/fairplay", { by: "Fabio060106" })).json()) as { cases: Array<{ gameId: string; userId: string; reasons: string[]; reports: string[] }> };
+    const c = list.cases.find((x) => x.gameId === id && x.userId === "fp-suspect")!;
+    expect(c.reasons).toEqual(["a quitté l'onglet de la partie 4 fois"]);
+    expect(c.reports).toEqual(["fp-honnete : il jouait comme un moteur"]);
+    expect(list.cases.some((x) => x.gameId === id && x.userId === "fp-honnete")).toBe(false);
+
+    const gone = once(suspect, "disconnect");
+    expect((await post("/auth/admin/fairplay-review", { by: "Fabio060106", gameId: id, userId: "fp-suspect", verdict: "cheat" })).status).toBe(200);
+    await gone;
+    const after = (await (await post("/auth/admin/fairplay", { by: "Fabio060106" })).json()) as { cases: Array<{ gameId: string }> };
+    expect(after.cases.some((x) => x.gameId === id)).toBe(false);
+  });
+});

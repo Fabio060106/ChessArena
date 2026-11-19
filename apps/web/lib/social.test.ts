@@ -18,3 +18,24 @@ describe("chat côté client", () => {
     expect(pct(0, 0)).toBe(0);
   });
 });
+
+import { cheatMetrics } from "./fairplay";
+describe("revue anti-triche (organisateur)", () => {
+  const n = 60;
+  const played = Array.from({ length: n }, (_, i) => `m${i}`);
+  it("coups identiques au moteur sans perte → très suspect ; jeu humain → normal ; partie trop courte → pas de jugement", () => {
+    const flat = Array(n + 1).fill(20);
+    const engineLike = cheatMetrics(flat, played, played, "w");
+    expect(engineLike).toMatchObject({ level: "suspect", matchPct: 100, acpl: 0 });
+    // l'ouverture n'est jamais comptée
+    expect(engineLike.counted).toBe((n - 16) / 2);
+    const evals = Array.from({ length: n + 1 }, (_, i) => (i % 4 === 1 ? -60 : 20));
+    const human = cheatMetrics(evals, played.map((m, i) => (i % 3 === 0 ? m : "autre")), played, "w");
+    expect(human.level).toBe("normal");
+    expect(cheatMetrics(flat.slice(0, 21), played.slice(0, 20), played.slice(0, 20), "w").level).toBe("normal");
+  });
+  it("les positions déjà décidées (± 10) ne comptent pas", () => {
+    const won = Array(n + 1).fill(1500);
+    expect(cheatMetrics(won, played, played, "w").counted).toBe(0);
+  });
+});

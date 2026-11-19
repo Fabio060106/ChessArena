@@ -10,6 +10,7 @@ import { avatarFor, countryName, flagEmoji } from "../../../lib/profile";
 import { relativeDate } from "../../../lib/replay";
 import { pct, TC_LABEL, TC_ORDER } from "../../../lib/social";
 import { fetchWake } from "../../../lib/wake";
+import { SITE_NAME } from "../../../lib/site";
 
 const OUTCOME = {
   win: { label: "Victoire", cls: "bg-win/15 text-win" },
@@ -84,7 +85,7 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
             {mine && <span className="text-sm font-normal text-muted">(toi)</span>}
           </h1>
           <p className="text-sm text-muted">
-            {p.memberSince ? `Membre depuis ${new Date(p.memberSince).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}` : "Joueur ChessArena"}
+            {p.memberSince ? `Membre depuis ${new Date(p.memberSince).toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}` : `Joueur ${SITE_NAME}`}
             {best ? ` · ${TC_LABEL[best]} ${p.ratings[best].rating}` : ""}
           </p>
         </div>
@@ -151,7 +152,7 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
                     {g.ratingAfter >= g.ratingBefore ? "+" : ""}{g.ratingAfter - g.ratingBefore}
                   </span>
                 )}
-                {mine && <a href={`/history?g=${g.gameId}`} className="shrink-0 text-xs text-neon hover:underline">Analyser</a>}
+                <a href={mine ? `/history?g=${g.gameId}` : `/partie/${g.gameId}`} className="shrink-0 text-xs text-neon hover:underline">{mine ? "Analyser" : "Voir la partie"}</a>
               </li>
             ))}
           </ul>

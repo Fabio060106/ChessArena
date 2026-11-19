@@ -265,6 +265,8 @@ export interface RepertoireResponse {
 }
 
 export interface GameHistoryDetail extends GameHistoryItem {
+  /** joueur du point de vue duquel la partie est décrite (parties consultées par lien partagé) */
+  player?: string;
   pgn: string;
   /** temps facturé par demi-coup (ms) */
   moveTimesMs: number[];
@@ -437,6 +439,8 @@ export interface ClientToServerEvents {
   "chat:send": (p: { gameId: string; text: string }, ack?: (r: ChatAck) => void) => void;
   /** signaler un message à l'organisateur */
   "chat:report": (p: { gameId: string; messageId: number }, ack?: (r: { ok: boolean }) => void) => void;
+  /** signaler son adversaire pour soupçon de triche (après la partie) */
+  "cheat:report": (p: { gameId: string; reason: string }, ack?: (r: { ok: boolean; code?: string }) => void) => void;
   /** regarder une partie en cours */
   "watch:start": (p: { gameId: string }, ack: (r: WatchAck) => void) => void;
   "watch:stop": (p: { gameId: string }) => void;

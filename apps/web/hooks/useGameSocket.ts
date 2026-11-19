@@ -242,6 +242,14 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
     socket.emit("chat:report", { gameId: m.gameId, messageId: m.id }, (r) => { clearTimeout(t); resolve(r.ok); });
   }), [socket]);
 
+  /** Signaler son adversaire pour soupçon de triche (partie courante ou qui vient de se terminer). */
+  const reportCheat = useCallback((reason: string) => new Promise<boolean>((resolve) => {
+    const id = hot.current.start?.gameId;
+    if (!id) return resolve(false);
+    const t = setTimeout(() => resolve(false), 8_000);
+    socket.emit("cheat:report", { gameId: id, reason }, (r) => { clearTimeout(t); resolve(r.ok); });
+  }), [socket]);
+
   /** Revanche : proposer (ou accepter si l'adversaire l'a proposée), refuser / retirer. */
   const rematchAction = useCallback((action: "offer" | "decline") => new Promise<RematchAck>((resolve) => {
     const id = hot.current.start?.gameId;
@@ -252,7 +260,7 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
 
   return {
     view, socket, sync: syncRef.current, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw,
-    chat, sendChat, reportChat, rematch, rematchAction, spectators,
+    chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators,
   };
 }
 
