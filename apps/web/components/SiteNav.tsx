@@ -1,11 +1,13 @@
 "use client";
 import { AppearanceButton } from "./AppearancePanel";
 import { ThemeToggle } from "./ThemeToggle";
+import { ChallengeCenter } from "./ChallengeCenter";
 import { useSettings } from "../lib/settings";
 
 const LINKS = [
   ["/play", "Jouer"],
   ["/direct", "En direct"],
+  ["/amis", "Amis"],
   ["/classement", "Classement"],
   ["/history", "Mes parties"],
   ["/repertoire", "Répertoire"],
@@ -29,6 +31,7 @@ export function SiteNav({ active }: { active?: (typeof LINKS)[number][0] }) {
         <li><ThemeToggle /></li>
         <li><AppearanceButton /></li>
       </ul>
+      <ChallengeCenter />
     </nav>
   );
 }

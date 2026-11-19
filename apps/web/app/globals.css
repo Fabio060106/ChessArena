@@ -182,3 +182,8 @@
 
 /* Texte plus grand (réglage Apparence) : toutes les tailles en rem suivent */
 :root[data-text="large"] { font-size: 112.5%; }
+
+/* alerte « peu de temps » : la pendule clignote deux fois au franchissement du seuil */
+@keyframes clock-flash { 0%, 100% { filter: none; } 25%, 75% { filter: brightness(1.8) saturate(1.6); transform: scale(1.06); } }
+.clock.flash { animation: clock-flash .9s ease-in-out 2; }
+@media (prefers-reduced-motion: reduce) { .clock.flash { animation: none; } }

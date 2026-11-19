@@ -595,3 +595,77 @@ describe("anti-triche de base : signaux, signalement, revue par l'organisateur",
     expect(after.cases.some((x) => x.gameId === id)).toBe(false);
   });
 });
+
+describe("amis et défis directs", () => {
+  const svc = () => jwt.sign({ sub: "web" }, SECRET, { audience: "chessarena-auth-service", expiresIn: 60 });
+  const signup = (pseudo: string) => fetch(`${url}/auth/signup`, {
+    method: "POST", headers: { authorization: `Bearer ${svc()}`, "content-type": "application/json" },
+    body: JSON.stringify({ pseudo, password: "mot-de-passe-1", adult: true, terms: true }),
+  });
+  const api = (method: string, path: string, user: string, body?: unknown) => fetch(`${url}${path}`, {
+    method, headers: { authorization: `Bearer ${token({ sub: user })}`, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
+  });
+  type Friend = { userId: string; online: boolean; liveGameId: string | null };
+
+  it("ajout par pseudo, présence, défi accepté → partie ; refus ; défi expiré si hors ligne", async () => {
+    for (const p of ["Ami_A", "Ami_B", "Ami_C"]) await signup(p);
+    expect((await api("POST", "/account/friends", "Ami_A", { pseudo: "inconnu_xyz" })).status).toBe(404);
+    expect((await api("POST", "/account/friends", "Ami_A", { pseudo: "ami_a" })).status).toBe(400);
+    expect(await (await api("POST", "/account/friends", "Ami_A", { pseudo: "ami_b" })).json()).toEqual({ ok: true, userId: "Ami_B" });
+    await api("POST", "/account/friends", "Ami_A", { pseudo: "Ami_C" });
+    let list = (await (await api("GET", "/account/friends", "Ami_A")).json()) as { friends: Friend[] };
+    expect(list.friends.map((f) => [f.userId, f.online])).toEqual([["Ami_B", false], ["Ami_C", false]]);
+
+    const a = client({ token: token({ sub: "Ami_A" }) });
+    const b = client({ token: token({ sub: "Ami_B" }) });
+    await Promise.all([connected(a), connected(b)]);
+    list = (await (await api("GET", "/account/friends", "Ami_A")).json()) as { friends: Friend[] };
+    expect(list.friends.find((f) => f.userId === "Ami_B")!.online).toBe(true);
+
+    // hors ligne : refus immédiat
+    expect(await new Promise((r) => a.emit("challenge:send", { to: "Ami_C", timeControl: "blitz_3_0" }, r))).toEqual({ ok: false, code: "OFFLINE" });
+    // refus
+    let incoming = once(b, "challenge:incoming");
+    const sent = await new Promise<unknown>((r) => a.emit("challenge:send", { to: "ami_b", timeControl: "rapid_5_0" }, r));
+    expect(sent).toMatchObject({ ok: true, challenge: { from: "Ami_A", to: "Ami_B", timeControl: "rapid_5_0" } });
+    const c1 = await incoming;
+    const declined = once(a, "challenge:update");
+    expect(await new Promise((r) => b.emit("challenge:answer", { id: c1.id, accept: false }, r))).toEqual({ ok: true });
+    expect(await declined).toEqual({ id: c1.id, status: "declined" });
+    // accepté → partie classée PLAY sans mise
+    incoming = once(b, "challenge:incoming");
+    await new Promise((r) => a.emit("challenge:send", { to: "Ami_B", timeControl: "blitz_3_0" }, r));
+    const c2 = await incoming;
+    const starts = Promise.all([once(a, "game:start"), once(b, "game:start")]);
+    const upd = once(a, "challenge:update");
+    expect(await new Promise((r) => b.emit("challenge:answer", { id: c2.id, accept: true }, r))).toEqual({ ok: true });
+    const u = await upd;
+    expect(u).toMatchObject({ id: c2.id, status: "accepted" });
+    const [s] = (await starts) as [GameStartEvent, GameStartEvent];
+    expect(s.gameId).toBe(u.gameId);
+    expect(s.stake).toEqual({ currency: "PLAY", buyInCents: 0 });
+    expect([s.white.userId, s.black.userId].sort()).toEqual(["Ami_A", "Ami_B"]);
+    // double réponse : sans effet
+    expect(await new Promise((r) => b.emit("challenge:answer", { id: c2.id, accept: true }, r))).toEqual({ ok: false, code: "EXPIRED" });
+    list = (await (await api("GET", "/account/friends", "Ami_A")).json()) as { friends: Friend[] };
+    expect(list.friends.find((f) => f.userId === "Ami_B")!.liveGameId).toBe(s.gameId);
+    // en partie : on ne peut plus défier
+    expect(await new Promise((r) => a.emit("challenge:send", { to: "Ami_B", timeControl: "blitz_3_0" }, r))).toEqual({ ok: false, code: "IN_GAME" });
+    const over = once(a, "game:over");
+    b.emit("game:resign", { gameId: s.gameId });
+    await over;
+
+    // retrait de la liste
+    expect((await api("DELETE", "/account/friends/Ami_C", "Ami_A")).status).toBe(200);
+    list = (await (await api("GET", "/account/friends", "Ami_A")).json()) as { friends: Friend[] };
+    expect(list.friends.map((f) => f.userId)).toEqual(["Ami_B"]);
+
+    // défi annulé quand le défieur se déconnecte
+    incoming = once(b, "challenge:incoming");
+    await new Promise((r) => a.emit("challenge:send", { to: "Ami_B", timeControl: "blitz_3_0" }, r));
+    const c3 = await incoming;
+    const cancelled = once(b, "challenge:update");
+    a.disconnect();
+    expect(await cancelled).toEqual({ id: c3.id, status: "cancelled", reason: "OFFLINE" });
+  });
+});

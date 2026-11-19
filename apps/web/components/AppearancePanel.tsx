@@ -94,6 +94,20 @@ export function AppearancePanel({ onClose }: { onClose: () => void }) {
               </div>
             </section>
 
+            <section aria-label="Pendant la partie">
+              <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Pendant la partie</h3>
+              <div className="flex flex-col gap-2 text-sm">
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" className="mt-0.5 size-4" checked={s.autoQueen} onChange={(e) => update({ autoQueen: e.target.checked })} />
+                  <span>Promotion automatique en dame <span className="block text-xs text-muted">Un pion qui arrive au bout devient dame directement, sans fenêtre de choix.</span></span>
+                </label>
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" className="mt-0.5 size-4" checked={s.timeAlert} onChange={(e) => update({ timeAlert: e.target.checked })} />
+                  <span>Alerte quand il reste peu de temps <span className="block text-xs text-muted">Son, vibration et pendule qui clignote : sous 10 s en bullet, 20 s en blitz, 30 s en rapide.</span></span>
+                </label>
+              </div>
+            </section>
+
             <section aria-label="Échiquier">
               <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Échiquier</h3>
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">

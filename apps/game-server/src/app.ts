@@ -2,12 +2,13 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { performance } from "node:perf_hooks";
 import { Server, type Socket } from "socket.io";
 import pg from "pg";
-import { TIME_CONTROLS, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
+import { TIME_CONTROLS, type ChallengeAck, type ChallengeView, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "./config.js";
 import { authenticate, canPlay, type AuthUser } from "./auth.js";
 import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
 import { Matchmaker } from "./matchmaking/Matchmaker.js";
 import { GameManager, userRoom } from "./game/GameManager.js";
+import { CHALLENGE_TTL_MS, ChallengeService, type Challenge } from "./social/ChallengeService.js";
 import { InMemoryLedger, PgLedger, lockStakes, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
 import { ChatService } from "./social/ChatService.js";
 import { basicSignals, type BasicSignal } from "./fairplay/basicSignals.js";
@@ -153,7 +154,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
       void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
-      fairplayMem, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
+      fairplayMem, isOnline: (u) => (io.of("/").adapter.rooms.get(userRoom(u))?.size ?? 0) > 0, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
       return;
     }
     if (req.url === "/health") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
@@ -208,6 +209,11 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   // ─── Social : chat, spectateurs, revanche ─────────────────────────────────
   const chat = new ChatService();
   const rematches = new RematchService();
+  // défis directs (amis) : sans réponse en 60 s, le défi expire
+  const challenges = new ChallengeService((c) => {
+    io.to([userRoom(c.from), userRoom(c.to)]).emit("challenge:update", { id: c.id, status: "expired" });
+  });
+  const challengeView = (c: Challenge): ChallengeView => ({ id: c.id, from: c.from, to: c.to, timeControl: c.timeControl, expiresAt: c.createdAt + CHALLENGE_TTL_MS });
   const spectatorCount = (gameId: string) => io.of("/").adapter.rooms.get(spectatorRoom(gameId))?.size ?? 0;
   const withdrawRematches = (userId: string) => {
     for (const w of rematches.withdrawAll(userId)) io.to(w.players.map(userRoom)).emit("rematch", { gameId: w.gameId, offeredBy: null });
@@ -419,6 +425,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         socket.emit("game:spectators", { gameId: room.id, count: spectatorCount(room.id) });
       },
     );
+    // défis reçus encore ouverts (nouvelle page, autre appareil)
+    for (const c of challenges.incomingFor(user.userId)) socket.emit("challenge:incoming", challengeView(c));
     // … et de ses tournois en cours.
     for (const t of tournaments.activeFor(user.userId)) {
       void socket.join(tournamentRoom(t.id));
@@ -776,6 +784,76 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       reply({ ok: true, started: true });
     }));
 
+    // ─── Défis directs ───────────────────────────────────────────────────────
+    const busyCode = (u: string) => games.activeGameOf(u) ? "IN_GAME" : tournaments.isBusy(u) ? "IN_TOURNAMENT" : null;
+    const isOnline = (u: string) => (io.of("/").adapter.rooms.get(userRoom(u))?.size ?? 0) > 0;
+
+    socket.on("challenge:send", guard(socket, async (raw: unknown, ack?: unknown) => {
+      const reply = (r: ChallengeAck) => { if (typeof ack === "function") (ack as (r: ChallengeAck) => void)(r); };
+      const p = raw as { to?: unknown; timeControl?: unknown } | null;
+      if (!p || typeof p.to !== "string" || typeof p.timeControl !== "string" || !(p.timeControl in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const acc = await accounts.find(p.to);
+      if (!acc || acc.state === "suspended" || acc.state === "closed") return reply({ ok: false, code: "NOT_FOUND" });
+      const to = acc.id;
+      if (to === user.userId) return reply({ ok: false, code: "SELF" });
+      const gate = canPlay(user, "PLAY", socket.data.mode);
+      if (!gate.ok) return reply({ ok: false, code: gate.code });
+      const mine = busyCode(user.userId);
+      if (mine) return reply({ ok: false, code: mine });
+      if (!isOnline(to)) return reply({ ok: false, code: "OFFLINE" });
+      if (busyCode(to)) return reply({ ok: false, code: "OPPONENT_BUSY" });
+      for (const old of challenges.involving(user.userId).filter((c) => c.from === user.userId)) {
+        io.to(userRoom(old.to)).emit("challenge:update", { id: old.id, status: "cancelled" });
+      }
+      const c = challengeView(challenges.create(user.userId, to, p.timeControl as TimeControlId));
+      io.to(userRoom(to)).emit("challenge:incoming", c);
+      reply({ ok: true, challenge: c });
+    }));
+
+    socket.on("challenge:cancel", guard(socket, (raw: unknown) => {
+      const id = (raw as { id?: unknown } | null)?.id;
+      if (typeof id !== "string") return;
+      const c = challenges.get(id);
+      if (!c || c.from !== user.userId || !challenges.remove(id)) return;
+      io.to([userRoom(c.from), userRoom(c.to)]).emit("challenge:update", { id, status: "cancelled" });
+    }));
+
+    socket.on("challenge:answer", guard(socket, async (raw: unknown, ack?: unknown) => {
+      const reply = (r: { ok: boolean; code?: string }) => { if (typeof ack === "function") (ack as (r: { ok: boolean; code?: string }) => void)(r); };
+      const p = raw as { id?: unknown; accept?: unknown } | null;
+      if (!p || typeof p.id !== "string" || typeof p.accept !== "boolean") return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const c = challenges.get(p.id);
+      if (!c || c.to !== user.userId) return reply({ ok: false, code: "EXPIRED" });
+      const both = [userRoom(c.from), userRoom(c.to)];
+      if (!p.accept) {
+        if (challenges.remove(c.id)) io.to(both).emit("challenge:update", { id: c.id, status: "declined" });
+        return reply({ ok: true });
+      }
+      const gate = canPlay(user, "PLAY", socket.data.mode);
+      if (!gate.ok) return reply({ ok: false, code: gate.code });
+      const busy = busyCode(c.to) ?? (busyCode(c.from) ? "OPPONENT_BUSY" : null) ?? (isOnline(c.from) ? null : "OFFLINE");
+      if (busy) {
+        if (challenges.remove(c.id)) io.to(both).emit("challenge:update", { id: c.id, status: "cancelled", reason: busy });
+        return reply({ ok: false, code: busy });
+      }
+      if (!challenges.remove(c.id)) return reply({ ok: false, code: "EXPIRED" }); // déjà traité (double clic, 2e onglet)
+      for (const u of [c.from, c.to]) {
+        if (matchmaker.dequeue(u)) io.to(userRoom(u)).emit("queue:left");
+        withdrawRematches(u);
+        // ses autres défis tombent : il est en partie
+        for (const o of challenges.involving(u)) if (challenges.remove(o.id)) io.to([userRoom(o.from), userRoom(o.to)]).emit("challenge:update", { id: o.id, status: "cancelled", reason: "IN_GAME" });
+      }
+      const [white, black] = Math.random() < 0.5 ? [c.from, c.to] : [c.to, c.from];
+      const [rw, rb] = await Promise.all([repo.getRatings(white), repo.getRatings(black)]);
+      const gameId = randomUUID();
+      io.to(both).emit("challenge:update", { id: c.id, status: "accepted", gameId });
+      await games.createGame({
+        gameId, timeControl: c.timeControl, stake: { currency: "PLAY", buyInCents: 0 }, rated: true,
+        white: { userId: white, rating: rw[c.timeControl].rating }, black: { userId: black, rating: rb[c.timeControl].rating },
+      });
+      reply({ ok: true });
+    }));
+
     socket.on("disconnect", () => {
       stopWatching();
       // Plusieurs onglets possibles : on ne considère le joueur parti qu'au DERNIER socket.
@@ -784,6 +862,9 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         matchmaker.dequeue(user.userId);
         games.onUserOffline(user.userId);
         withdrawRematches(user.userId);
+        for (const c of challenges.involving(user.userId)) {
+          if (challenges.remove(c.id)) io.to([userRoom(c.from), userRoom(c.to)]).emit("challenge:update", { id: c.id, status: "cancelled", reason: "OFFLINE" });
+        }
       }
     });
   });

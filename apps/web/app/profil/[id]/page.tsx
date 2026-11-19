@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import type { PlayerProfile } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
 import { AccountSettings } from "../../../components/AccountSettings";
+import { AddFriendButton, ChallengeButton } from "../../../components/ChallengeButton";
 import { useMe } from "../../../hooks/useMe";
 import { avatarFor, countryName, flagEmoji } from "../../../lib/profile";
 import { relativeDate } from "../../../lib/replay";
@@ -93,6 +94,12 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
           <a href={`/direct/${p.liveGameId}`} className="neon-btn rounded-lg px-3 py-2 text-sm font-semibold">
             <span className="mr-1.5 inline-block size-1.5 animate-pulse rounded-full bg-danger align-middle" />Regarder sa partie
           </a>
+        )}
+        {!mine && (
+          <div className="flex flex-wrap items-start gap-2">
+            <AddFriendButton userId={p.userId} />
+            {!p.liveGameId && <ChallengeButton to={p.userId} />}
+          </div>
         )}
         {p.liveGameId && mine && <a href="/play" className="neon-btn rounded-lg px-3 py-2 text-sm font-semibold">Reprendre ma partie</a>}
       </section>

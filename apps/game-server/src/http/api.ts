@@ -74,6 +74,8 @@ export interface ApiDeps {
   };
   /** coupe immédiatement les connexions d'un joueur (compte suspendu) */
   kickUser?: (userId: string) => void;
+  /** joueur connecté en ce moment (liste d'amis) */
+  isOnline?: (userId: string) => boolean;
 }
 
 class HttpError extends Error {
@@ -142,7 +144,7 @@ function securityHeaders(res: ServerResponse, cfg: GameServerConfig): void {
   res.setHeader("access-control-allow-origin", cfg.corsOrigin);
   res.setHeader("vary", "origin");
   res.setHeader("access-control-allow-headers", "authorization, content-type");
-  res.setHeader("access-control-allow-methods", "GET, POST, PUT, OPTIONS");
+  res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS");
   res.setHeader("cache-control", "no-store");
   res.setHeader("x-content-type-options", "nosniff");
   res.setHeader("x-frame-options", "DENY");
@@ -453,6 +455,31 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       const p = await need(d.repo).getProfile(pseudo);
       if (!p) throw new HttpError(404, "NOT_FOUND");
       send(200, { ...p, liveGameId: d.liveGameOf?.(p.userId) ?? null });
+      return true;
+    }
+    // ─── Amis : liste personnelle avec présence (en ligne, en partie) ─────────────
+    if (url.pathname === "/account/friends" && req.method === "GET") {
+      const list = await need(d.repo).listFriends(claims.sub);
+      send(200, { friends: list.map((f) => ({ ...f, online: d.isOnline?.(f.userId) ?? false, liveGameId: d.liveGameOf?.(f.userId) ?? null })) });
+      return true;
+    }
+    if (url.pathname === "/account/friends" && req.method === "POST") {
+      const b = await body(req);
+      const pseudo = typeof b.pseudo === "string" ? b.pseudo.trim() : "";
+      if (!pseudo || pseudo.length > 40) throw new HttpError(400, "BAD_PSEUDO");
+      const acc = await need(d.accounts).find(pseudo);
+      if (!acc || acc.state === "suspended" || acc.state === "closed") throw new HttpError(404, "NOT_FOUND");
+      if (acc.id === claims.sub) throw new HttpError(400, "SELF");
+      if ((await need(d.repo).addFriend(claims.sub, acc.id)) === "full") throw new HttpError(409, "TOO_MANY_FRIENDS");
+      send(200, { ok: true, userId: acc.id });
+      return true;
+    }
+    const fm = url.pathname.match(/^\/account\/friends\/([^/]{1,200})$/);
+    if (fm && req.method === "DELETE") {
+      let id: string;
+      try { id = decodeURIComponent(fm[1]!); } catch { throw new HttpError(400, "BAD_PSEUDO"); }
+      await need(d.repo).removeFriend(claims.sub, id);
+      send(200, { ok: true });
       return true;
     }
     if (url.pathname === "/account/leaderboard" && req.method === "GET") {

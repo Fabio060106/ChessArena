@@ -101,3 +101,13 @@ export function formatClock(ms: number): string {
   const s = totalSec % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
+/**
+ * Seuil d'alerte « peu de temps » selon la cadence : 10 s en bullet, 20 s en blitz, 30 s en rapide
+ * (un même seuil de 10 s arrive bien trop tard en rapide, et trop tôt en bullet).
+ */
+export function lowTimeThreshold(initialMs: number): number {
+  if (initialMs <= 60_000) return 10_000;
+  if (initialMs <= 180_000) return 20_000;
+  return 30_000;
+}

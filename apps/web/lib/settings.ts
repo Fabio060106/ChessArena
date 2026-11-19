@@ -20,12 +20,16 @@ export interface Settings {
   ui: "arena" | "sobre" | "auto";
   /** texte plus grand partout */
   largeText: boolean;
+  /** promotion automatique en dame (sans fenêtre de choix) */
+  autoQueen: boolean;
+  /** son + vibration quand il reste peu de temps (seuil selon la cadence) */
+  timeAlert: boolean;
   /** date du dernier changement (ms) : la version la plus récente gagne entre les appareils */
   updatedAt: number;
 }
 
 const KEY = "arena.settings.v1";
-export const DEFAULT_SETTINGS: Settings = { boardTheme: "cyberpunk", pieceSet: "arena", palette: "neon", soundOn: true, volume: 0.7, coordinates: true, ui: "arena", largeText: false, updatedAt: 0 };
+export const DEFAULT_SETTINGS: Settings = { boardTheme: "cyberpunk", pieceSet: "arena", palette: "neon", soundOn: true, volume: 0.7, coordinates: true, ui: "arena", largeText: false, autoQueen: false, timeAlert: true, updatedAt: 0 };
 
 /** Préréglage « Classique sobre » : échiquier marron, pièces classiques ivoire et ébène, interface claire. */
 export const SOBER_PRESET: Partial<Settings> = { ui: "sobre", boardTheme: "brown", pieceSet: "classic", palette: "ivory", coordinates: true };
@@ -46,6 +50,8 @@ export function parseSettings(raw: string | null): Settings {
       coordinates: typeof v.coordinates === "boolean" ? v.coordinates : DEFAULT_SETTINGS.coordinates,
       ui: v.ui === "sobre" || v.ui === "auto" ? v.ui : "arena",
       largeText: v.largeText === true,
+      autoQueen: v.autoQueen === true,
+      timeAlert: v.timeAlert !== false,
       updatedAt: typeof v.updatedAt === "number" && v.updatedAt > 0 && Number.isFinite(v.updatedAt) ? v.updatedAt : 0,
     };
   } catch {

@@ -49,7 +49,15 @@ export interface GameRepository {
   /** Toutes les parties terminées d'un joueur (PGN), de la plus ancienne à la plus récente : export complet. */
   exportPgns(userId: string, max: number): Promise<string[]>;
   leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }>;
+  /** Liste d'amis (comptes suspendus ou clôturés exclus), par ordre alphabétique. */
+  listFriends(userId: string): Promise<Array<{ userId: string; flag: string | null; rating: number }>>;
+  /** Ajoute un ami ; "full" au-delà de FRIENDS_MAX. Déjà présent : sans effet. */
+  addFriend(userId: string, friendId: string): Promise<"ok" | "full">;
+  removeFriend(userId: string, friendId: string): Promise<void>;
 }
+
+/** Nombre maximal d'amis par joueur. */
+export const FRIENDS_MAX = 200;
 
 /** Comptes exclus des classements (suspendus, clôturés). */
 const HIDDEN_STATES = ["suspended", "closed"];
@@ -330,6 +338,30 @@ export class PgGameRepository implements GameRepository {
     );
     return { updatedAt: r.rows[0]!.updated_at.toISOString() };
   }
+  async listFriends(userId: string): Promise<Array<{ userId: string; flag: string | null; rating: number }>> {
+    const r = await this.pool.query<{ id: string; display_flag: string | null; rating: number | null }>(
+      `SELECT u.id, u.display_flag, r.rating FROM friendships f
+         JOIN users u ON u.id = f.friend_id
+         LEFT JOIN ratings r ON r.user_id = u.id AND r.time_control = 'blitz_3_0'
+       WHERE f.user_id = $1 AND u.state::text NOT IN ('suspended', 'closed')
+       ORDER BY lower(u.id)`, [userId]);
+    return r.rows.map((x) => ({ userId: x.id, flag: x.display_flag, rating: x.rating ?? DEFAULT_RATING }));
+  }
+
+  async addFriend(userId: string, friendId: string): Promise<"ok" | "full"> {
+    await this.ensureUser(userId);
+    const n = await this.pool.query<{ n: string }>("SELECT count(*) AS n FROM friendships WHERE user_id = $1", [userId]);
+    if (Number(n.rows[0]!.n) >= FRIENDS_MAX) {
+      const has = await this.pool.query("SELECT 1 FROM friendships WHERE user_id = $1 AND friend_id = $2", [userId, friendId]);
+      if (!has.rowCount) return "full";
+    }
+    await this.pool.query("INSERT INTO friendships (user_id, friend_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [userId, friendId]);
+    return "ok";
+  }
+
+  async removeFriend(userId: string, friendId: string): Promise<void> {
+    await this.pool.query("DELETE FROM friendships WHERE user_id = $1 AND friend_id = $2", [userId, friendId]);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -459,5 +491,22 @@ export class InMemoryGameRepository implements GameRepository {
       .sort((a, b) => b.rating - a.rating || b.games - a.games || a.userId.localeCompare(b.userId));
     const ranked = rows.map((r) => ({ rank: rows.filter((o) => o.rating > r.rating).length + 1, userId: r.userId, flag: null, rating: r.rating, games: r.games, peak: r.peak }));
     return { entries: ranked.slice(0, Math.min(Math.max(1, limit), 200)), me: ranked.find((e) => e.userId === me) ?? null };
+  }
+
+  private friends = new Map<string, Set<string>>();
+  async listFriends(userId: string): Promise<Array<{ userId: string; flag: string | null; rating: number }>> {
+    const ids = [...(this.friends.get(userId) ?? [])].filter((id) => !HIDDEN_STATES.includes(this.states.get(id) ?? "active"));
+    ids.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    return Promise.all(ids.map(async (id) => ({ userId: id, flag: null, rating: (await this.getRatings(id)).blitz_3_0.rating })));
+  }
+  async addFriend(userId: string, friendId: string): Promise<"ok" | "full"> {
+    const set = this.friends.get(userId) ?? new Set<string>();
+    if (!set.has(friendId) && set.size >= FRIENDS_MAX) return "full";
+    set.add(friendId);
+    this.friends.set(userId, set);
+    return "ok";
+  }
+  async removeFriend(userId: string, friendId: string): Promise<void> {
+    this.friends.get(userId)?.delete(friendId);
   }
 }

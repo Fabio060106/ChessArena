@@ -29,6 +29,8 @@ interface Props {
   coordinates: boolean;
   /** true = coup joué ou pré-move ajouté */
   onMove: (from: string, to: string, promotion?: PromotionPiece) => boolean;
+  /** promotion automatique en dame (réglage du joueur) */
+  autoQueen?: boolean;
   onCancelPremoves: () => void;
   /** flèches d'analyse (relecture uniquement), ex. meilleur coup du moteur */
   arrows?: ReadonlyArray<{ from: string; to: string; color?: string }>;
@@ -115,6 +117,7 @@ export const GameBoard = memo(function GameBoard(p: Props) {
   // ─── Coups ────────────────────────────────────────────────────────────────
   const attempt = useCallback((from: string, to: string): boolean => {
     if (!premoving && isPromotion(p.serverFen, from, to)) {
+      if (p.autoQueen) return p.onMove(from, to, "q");
       setPromo({ from, to });
       return false;
     }

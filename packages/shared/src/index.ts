@@ -390,6 +390,37 @@ export interface LeaderboardResponse {
   me: LeaderboardEntry | null;
 }
 
+/** Ami (liste personnelle) avec sa présence. */
+export interface FriendView {
+  userId: string;
+  flag: string | null;
+  /** Elo en blitz 3+0 (repère) */
+  rating: number;
+  online: boolean;
+  /** partie en cours (à regarder), sinon null */
+  liveGameId: string | null;
+}
+
+export interface ChallengeView {
+  id: string;
+  from: string;
+  to: string;
+  timeControl: TimeControlId;
+  /** expiration (ms depuis epoch) */
+  expiresAt: number;
+}
+
+/** Suivi d'un défi envoyé : accepté (avec la partie), refusé, expiré, annulé. */
+export interface ChallengeUpdate {
+  id: string;
+  status: "accepted" | "declined" | "expired" | "cancelled";
+  gameId?: string;
+  /** pour un défi impossible au moment d'accepter */
+  reason?: string;
+}
+
+export type ChallengeAck = { ok: true; challenge: ChallengeView } | { ok: false; code: string };
+
 export interface ServerToClientEvents {
   "queue:joined": (p: { timeControl: TimeControlId; stake: Stake }) => void;
   "queue:left": () => void;
@@ -413,6 +444,9 @@ export interface ServerToClientEvents {
   "chat:history": (p: { gameId: string; messages: ChatMessage[] }) => void;
   "game:spectators": (p: { gameId: string; count: number }) => void;
   "rematch": (p: RematchEvent) => void;
+  /** défi reçu (aussi renvoyé à la connexion s'il est encore ouvert) */
+  "challenge:incoming": (c: ChallengeView) => void;
+  "challenge:update": (u: ChallengeUpdate) => void;
 }
 
 export interface ClientToServerEvents {
@@ -447,6 +481,10 @@ export interface ClientToServerEvents {
   "watch:list": (ack: (games: LiveGameView[]) => void) => void;
   /** revanche : proposer (ou accepter si l'adversaire l'a déjà proposée), refuser / retirer */
   "rematch": (p: { gameId: string; action: "offer" | "decline" }, ack?: (r: RematchAck) => void) => void;
+  /** défier un joueur (en ligne) à la cadence choisie, partie classée en jetons PLAY sans mise */
+  "challenge:send": (p: { to: string; timeControl: TimeControlId }, ack: (r: ChallengeAck) => void) => void;
+  "challenge:answer": (p: { id: string; accept: boolean }, ack?: (r: { ok: boolean; code?: string }) => void) => void;
+  "challenge:cancel": (p: { id: string }) => void;
 }
 
 /** Claims du JWT émis par l'API d'auth (le game-server ne fait que vérifier). */

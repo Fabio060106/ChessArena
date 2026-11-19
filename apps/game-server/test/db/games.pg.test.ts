@@ -176,5 +176,20 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect(small.me!.rank).toBe(lb.me!.rank); // calculée même hors du top affiché
     expect((await repo.leaderboard("rapid_5_0", 10)).entries.find((e) => e.userId === "Lb_Top")).toBeUndefined();
   });
-});
 
+  it("amis : ajout idempotent, ordre alphabétique, Elo blitz, comptes suspendus masqués, retrait", async () => {
+    await repo.recordGame(game("zoe_f", "Max_f", "1-0"));
+    for (const u of ["moi_f", "zoe_f", "Max_f"]) await repo.ensureUser(u);
+    expect(await repo.addFriend("moi_f", "zoe_f")).toBe("ok");
+    expect(await repo.addFriend("moi_f", "zoe_f")).toBe("ok");
+    await repo.addFriend("moi_f", "Max_f");
+    expect(await repo.listFriends("moi_f")).toEqual([
+      { userId: "Max_f", flag: null, rating: 1480 }, { userId: "zoe_f", flag: null, rating: 1520 },
+    ]);
+    expect(await repo.listFriends("zoe_f")).toEqual([]); // liste personnelle, pas réciproque
+    await db.pool.query("UPDATE users SET state = 'suspended' WHERE id = 'zoe_f'");
+    expect((await repo.listFriends("moi_f")).map((f) => f.userId)).toEqual(["Max_f"]);
+    await repo.removeFriend("moi_f", "Max_f");
+    expect(await repo.listFriends("moi_f")).toEqual([]);
+  });
+});

@@ -180,7 +180,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
       userId={view.start ? (seat(me)?.userId ?? userId) : userId} rating={seat(me)?.rating} flag={seat(me)?.flag ?? (flag || undefined)}
       pingMs={pingOf(me)} isMe toMove={running === me}
       materialAdvantage={view.start ? materialAdvantage(fen, me) : 0} captured={view.start ? mat[me].captured : undefined}
-      clock={<ChessClock color={me} subscribe={subscribe} active={running === me} initialMs={initialMs} alert />}
+      clock={<ChessClock color={me} subscribe={subscribe} active={running === me} initialMs={initialMs} alert={settings.timeAlert} />}
     />
   );
 
@@ -238,6 +238,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
               premoves={browsing ? [] : view.premoves}
               theme={settings.boardTheme}
               pieceSet={settings.pieceSet}
+              autoQueen={settings.autoQueen}
               palette={settings.palette}
               coordinates={settings.coordinates}
               onMove={playOrPremove}

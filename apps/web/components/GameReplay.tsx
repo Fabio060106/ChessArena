@@ -140,7 +140,7 @@ export function GameReplay({ gameId, me: viewer, publicView = false, initial }: 
       {an.on && <EvalBar score={an.viewScore} flip={(g.color === "b") !== flipped} />}
       <GameBoard
         fen={fen} serverFen={fen} orientation={flipped ? opp : g.color} myColor={toMove} interactive myTurn
-        lastMove={shown.uci} premoves={[]} theme={settings.boardTheme} pieceSet={settings.pieceSet} palette={settings.palette} coordinates={settings.coordinates}
+        lastMove={shown.uci} premoves={[]} theme={settings.boardTheme} pieceSet={settings.pieceSet} palette={settings.palette} autoQueen={settings.autoQueen} coordinates={settings.coordinates}
         onMove={onMove} onCancelPremoves={() => {}} arrows={arrows}
       />
       {flipped ? oppCard : myCard}
