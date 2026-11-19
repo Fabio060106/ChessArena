@@ -11,20 +11,28 @@ export const ENGINE_NAME = "Stockfish 19";
 export interface Score { cp: number | null; mate: number | null }
 export interface EngineLine { depth: number; score: Score; pv: string[] }
 
-/** Analyse d'une ligne « info » UCI. Le score UCI est du point de vue du trait : on le ramène aux Blancs. */
-export function parseInfo(line: string, turn: "w" | "b"): EngineLine | null {
+/** Analyse d'une ligne « info » UCI (toutes les lignes MultiPV) ; le score est ramené au point de vue des Blancs. */
+export function parseInfoN(line: string, turn: "w" | "b"): (EngineLine & { multipv: number }) | null {
   if (!line.startsWith("info ") || !line.includes(" pv ")) return null;
   const depth = Number(/ depth (\d+)/.exec(line)?.[1]);
   const cp = / score cp (-?\d+)/.exec(line)?.[1];
   const mate = / score mate (-?\d+)/.exec(line)?.[1];
   if (!depth || (cp === undefined && mate === undefined)) return null;
-  if (/ multipv (\d+)/.exec(line)?.[1] && / multipv (\d+)/.exec(line)![1] !== "1") return null;
+  if (/ (lowerbound|upperbound)/.test(line)) return null; // borne provisoire : pas une évaluation
   const sign = turn === "w" ? 1 : -1;
   return {
     depth,
+    multipv: Number(/ multipv (\d+)/.exec(line)?.[1] ?? 1),
     score: { cp: cp !== undefined ? sign * Number(cp) : null, mate: mate !== undefined ? sign * Number(mate) : null },
     pv: line.split(" pv ")[1]!.trim().split(/\s+/),
   };
+}
+
+/** Meilleure ligne seulement (MultiPV 1). */
+export function parseInfo(line: string, turn: "w" | "b"): EngineLine | null {
+  const r = parseInfoN(line, turn);
+  if (!r || r.multipv !== 1) return null;
+  return { depth: r.depth, score: r.score, pv: r.pv };
 }
 
 /** Score pour la barre et les calculs : un mat compte comme ±100 pions. */
@@ -71,6 +79,16 @@ export function accuracy(evals: number[], mover: "w" | "b"): number | null {
   return acc.length ? Math.round(acc.reduce((a, b) => a + b, 0) / acc.length) : null;
 }
 
+/** Précision (0–100) d'une liste de coups (évaluation avant / après, joueur) : même formule, tout point de départ. */
+export function accuracyOf(moves: ReadonlyArray<{ before: number; after: number; mover: "w" | "b" }>): number | null {
+  if (!moves.length) return null;
+  const acc = moves.map(({ before, after, mover }) => {
+    const loss = Math.max(0, mover === "w" ? winPct(before) - winPct(after) : winPct(after) - winPct(before));
+    return Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * loss) - 3.1669));
+  });
+  return Math.round(acc.reduce((a, b) => a + b, 0) / acc.length);
+}
+
 /** Ligne principale lisible (SAN), limitée à `max` demi-coups. */
 export function pvToSan(fen: string, pv: string[], max = 8): string[] {
   const c = new Chess(fen);
@@ -81,7 +99,12 @@ export function pvToSan(fen: string, pv: string[], max = 8): string[] {
   return out;
 }
 
-interface Job { fen: string; depth: number; onInfo?: (l: EngineLine) => void; resolve: (l: EngineLine | null) => void }
+interface Job {
+  fen: string; depth: number; multiPv: number;
+  onInfo?: (l: EngineLine) => void;
+  onLines?: (lines: EngineLine[]) => void;
+  resolve: (l: EngineLine | null) => void;
+}
 
 /** Un moteur, une recherche à la fois ; une nouvelle demande interrompt la précédente (stop). */
 export class Engine {
@@ -90,6 +113,8 @@ export class Engine {
   private cur: Job | null = null;
   private next: Job | null = null;
   private best: EngineLine | null = null;
+  private lines: EngineLine[] = [];
+  private mpv = 1;
 
   constructor(url = ENGINE_URL) {
     this.w = new Worker(url);
@@ -107,19 +132,38 @@ export class Engine {
         void this.pump();
         return;
       }
-      const info = parseInfo(line, job.fen.split(" ")[1] === "b" ? "b" : "w");
-      if (info) { this.best = info; job.onInfo?.(info); }
+      const info = parseInfoN(line, job.fen.split(" ")[1] === "b" ? "b" : "w");
+      if (!info) return;
+      const l: EngineLine = { depth: info.depth, score: info.score, pv: info.pv };
+      if (info.multipv === 1) {
+        this.best = l;
+        job.onInfo?.(l);
+        // nouvelle profondeur : les autres lignes seront remplacées au fur et à mesure
+        this.lines = [l, ...this.lines.slice(1).filter((x) => x.depth >= l.depth - 1)];
+      } else {
+        this.lines[info.multipv - 1] = l;
+      }
+      if (job.onLines) job.onLines(this.lines.filter(Boolean).slice(0, job.multiPv));
     };
     this.w.postMessage("uci");
     this.w.postMessage("setoption name Hash value 32");
   }
 
-  /** Analyse `fen` jusqu'à `depth` ; résout avec la dernière ligne (ou null si interrompue par une autre demande). */
+  /** Analyse `fen` jusqu'à `depth` ; résout avec la meilleure ligne (ou null si interrompue par une autre demande). */
   analyse(fen: string, depth: number, onInfo?: (l: EngineLine) => void): Promise<EngineLine | null> {
+    return this.enqueue({ fen, depth, multiPv: 1, onInfo });
+  }
+
+  /** Plusieurs meilleures suites (MultiPV) : `onLines` reçoit les lignes triées, la meilleure d'abord. */
+  analyseLines(fen: string, depth: number, multiPv: number, onLines: (lines: EngineLine[]) => void): Promise<EngineLine | null> {
+    return this.enqueue({ fen, depth, multiPv: Math.max(1, Math.min(5, multiPv)), onLines });
+  }
+
+  private enqueue(j: Omit<Job, "resolve">): Promise<EngineLine | null> {
     return new Promise((resolve) => {
       if (this.next) this.next.resolve(null);
-      this.next = { fen, depth, onInfo, resolve };
-      if (this.cur) { this.cur.onInfo = undefined; this.w.postMessage("stop"); }
+      this.next = { ...j, resolve };
+      if (this.cur) { this.cur.onInfo = undefined; this.cur.onLines = undefined; this.w.postMessage("stop"); }
       else void this.pump();
     });
   }
@@ -127,8 +171,9 @@ export class Engine {
   private async pump() {
     await this.ready;
     if (this.cur || !this.next) return;
-    const job = this.next; this.next = null; this.cur = job; this.best = null;
+    const job = this.next; this.next = null; this.cur = job; this.best = null; this.lines = [];
     if (new Chess(job.fen).isGameOver()) { this.cur = null; job.resolve(null); return void this.pump(); }
+    if (job.multiPv !== this.mpv) { this.w.postMessage(`setoption name MultiPV value ${job.multiPv}`); this.mpv = job.multiPv; }
     this.w.postMessage(`position fen ${job.fen}`);
     this.w.postMessage(`go depth ${job.depth}`);
   }
