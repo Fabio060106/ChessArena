@@ -2,7 +2,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Color } from "@chessarena/shared";
-import { overText } from "../../lib/overText";
+import { overText, tournamentIntro } from "../../lib/overText";
 import { useClockTicker, useGameSocket } from "../../hooks/useGameSocket";
 import { useTournament } from "../../hooks/useTournament";
 import { ERROR_MESSAGES, isMyTurn, sessionBanner, START_FEN } from "../../lib/gameReducer";
@@ -198,7 +198,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
   const plyLabel = (p: number) => (p === 0 ? "position de départ" : `${Math.ceil(p / 2)}${p % 2 === 1 ? "." : "…"} ${steps[p]?.san ?? ""}`);
   const status = !playing ? null
     : browsing ? `Vous regardez ${plyLabel(browse!)} — la partie continue. ⏭, → ou un clic sur l'échiquier pour revenir.`
-    : view.server && view.server.ply < 2 ? `Jouez votre premier coup dans les ${Math.round((view.start?.firstMoveMs ?? 20_000) / 1000)} s, sinon ${tournamentGame ? "vous perdez ce match du tournoi" : "la partie est annulée"}.`
+    : view.server && view.server.ply < 2 ? `${tournamentIntro(view.start?.tournament?.kind, view.start?.tournament?.round)}Jouez votre premier coup dans les ${Math.round((view.start?.firstMoveMs ?? 20_000) / 1000)} s, sinon ${tournamentGame ? "vous perdez ce match du tournoi" : "la partie est annulée"}.`
     : isMyTurn(view) ? "À vous de jouer."
     : view.premoves.length ? `${view.premoves.length} pré-move${view.premoves.length > 1 ? "s" : ""} en file · clic droit ou Échap pour annuler`
     : "L'adversaire réfléchit…";

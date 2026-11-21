@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GameOverEvent, GameStartEvent } from "@chessarena/shared";
-import { overText } from "./overText";
+import { overText, tournamentIntro } from "./overText";
 
 const over = (o: Partial<GameOverEvent>): GameOverEvent => ({ gameId: "g", result: "1/2-1/2", termination: "aborted", pgn: "", payouts: {}, rakeCents: 0, ...o });
 const start = (kind?: "main" | "rematch" | "armageddon") => ({ tournament: kind ? { tournamentId: "t", round: 1, kind } : null } as unknown as GameStartEvent);
@@ -24,5 +24,15 @@ describe("résultat affiché", () => {
     expect(overText(d, start("armageddon"), "b", null).title).toBe("Qualifié");
     expect(overText(d, start("armageddon"), "w", null).title).toBe("Éliminé");
     expect(overText(over({ termination: "checkmate", result: "1-0" }), start(), "w", true).title).toBe("Victoire");
+  });
+});
+
+describe("début d'une partie de départage", () => {
+  it("rappelle la raison de la revanche et la règle de l'Armageddon", () => {
+    expect(tournamentIntro("rematch")).toMatch(/Revanche du tournoi après la nulle/);
+    expect(tournamentIntro("armageddon")).toMatch(/une nulle qualifie les Noirs/);
+    expect(tournamentIntro("main")).toBe("");
+    expect(tournamentIntro("main", 2)).toMatch(/Qualifié/);
+    expect(tournamentIntro(undefined)).toBe("");
   });
 });

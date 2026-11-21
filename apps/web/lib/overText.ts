@@ -30,3 +30,13 @@ export function overText(over: GameOverEvent, start: GameStartEvent | null, me: 
   }
   return { title: iWon === null ? "Nulle" : iWon ? "Victoire" : "Défaite", tone: iWon === null ? "neutral" : iWon ? "win" : "loss" };
 }
+
+/**
+ * En tournoi, la partie suivante démarre aussitôt (le résultat précédent disparaît) : on rappelle pourquoi on rejoue.
+ */
+export function tournamentIntro(kind: "main" | "rematch" | "armageddon" | undefined, round = 1): string {
+  if (kind === "main" && round > 1) return "Qualifié ! Voici ton match du tour suivant. ";
+  if (kind === "rematch") return "Revanche du tournoi après la nulle, couleurs inversées. ";
+  if (kind === "armageddon") return "Armageddon après deux nulles : les Blancs doivent gagner, une nulle qualifie les Noirs. ";
+  return "";
+}

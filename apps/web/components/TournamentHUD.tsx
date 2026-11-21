@@ -140,30 +140,37 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
       </div>
 
       {/* Appariements */}
-      {pairings && (
-        <div className="panel p-3">
-          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">{pairings.label}</h3>
+      {/* tour en cours puis tours précédents : on garde la trace de chaque match (nulles, revanches, Armageddon) */}
+      {pairings && Array.from({ length: pairings.round + 1 }, (_, i) => pairings.round - i).map((r) => (
+        <div key={r} className="panel p-3">
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">{roundLabel(r, t.rounds.length - 1)}</h3>
           <ul className="flex max-h-[50vh] flex-col gap-1.5 overflow-y-auto">
-            {pairings.matches.map((m) => {
+            {(t.rounds[r] ?? []).map((m) => {
               const mine = m.p1 === p.userId || m.p2 === p.userId;
               const last = m.games[m.games.length - 1];
+              const d0 = matchDetail(m);
+              // plusieurs parties ou explication : sur une ligne à part, pour ne pas écraser les pseudos
+              const detail = { ...d0, long: !!d0.why || d0.score.length > 8 };
               return (
-                <li key={m.slot} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${mine ? "bg-neon/10 ring-1 ring-neon/40" : "bg-surface-2"}`}>
+                <li key={m.slot} className={`flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg px-2 py-1.5 text-sm ${mine ? "bg-neon/10 ring-1 ring-neon/40" : "bg-surface-2"}`}>
                   <Seat name={m.p1} winner={m.winner} />
                   <span className="text-xs text-muted">vs</span>
                   <Seat name={m.p2} winner={m.winner} bye={m.round === 1 && m.p1 !== null && m.p2 === null} />
                   <span className="ml-auto shrink-0 text-xs">
                     {m.status === "playing" ? <span className="text-neon">● en jeu{last && last.kind !== "main" ? ` (${last.kind === "rematch" ? "revanche" : "armageddon"})` : ""}
                       {!mine && last && !last.result && <a href={`/direct/${last.gameId}`} target="_blank" rel="noreferrer" className="ml-1.5 rounded bg-neon/15 px-1.5 py-0.5 font-semibold hover:bg-neon/25" title="Regarder la partie">👁 Regarder</a>}</span>
-                      : m.status === "done" ? (() => { const d = matchDetail(m); return <span className="text-right text-muted" title={d.why ?? undefined}>{d.score}{d.why && <span className="block text-[10px] text-muted/80">{d.why}</span>}</span>; })()
+                      : m.status === "done" ? (detail.long ? null : <span className="text-muted">{detail.score}</span>)
                       : <span className="text-muted">à venir</span>}
                   </span>
+                  {m.status === "done" && detail.long && (
+                    <span className="w-full pl-1 text-xs text-muted">{detail.score}{detail.why && <span className="block text-[11px] text-muted/80">{detail.why}</span>}</span>
+                  )}
                 </li>
               );
             })}
           </ul>
         </div>
-      )}
+      ))}
 
       {t.status === "registering" && <InviteBox t={t} />}
       {t.status === "registering" && t.createdBy === p.userId && (
