@@ -1,6 +1,7 @@
 import { Chess } from "chess.js";
 import { randomUUID } from "node:crypto";
 import type {
+  GameStartEvent,
   Color, DrawOfferEvent, ErrorCode, GameResult, GameStateEvent, PresenceEvent, Stake, Termination, TimeControl,
 } from "@chessarena/shared";
 import { ServerClock } from "./clock.js";
@@ -154,6 +155,15 @@ export class GameRoom {
   /** Coups joués (SAN), pour un spectateur qui arrive en cours de partie. */
   sans(): string[] {
     return this.chess.history();
+  }
+
+  /** Événement « game:start » (création, reprise après reconnexion). */
+  startEvent(): GameStartEvent {
+    return {
+      gameId: this.id, white: this.white, black: this.black, timeControl: this.timeControl, stake: this.stake, fen: this.fen,
+      tournament: this.tournament ? { tournamentId: this.tournament.tournamentId, round: this.tournament.round, kind: this.tournament.kind } : null,
+      firstMoveMs: this.firstMoveTimeoutMs,
+    };
   }
 
   get tournamentId(): string | null {

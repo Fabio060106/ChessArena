@@ -2,7 +2,7 @@
 import { memo, useState } from "react";
 import { SITE_NAME } from "../lib/site";
 import { SNG_MAX_SIZE, SNG_MIN_SIZE, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
-import { bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
+import { KNOCKOUT_RULES, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
 
 const TC_LABEL: Record<TimeControlId, string> = {
   bullet_1_0: "Bullet 1+0", blitz_3_0: "Blitz 3+0", blitz_3_2: "Blitz 3+2", rapid_5_0: "Rapide 5+0",
@@ -121,6 +121,11 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
       </div>
       )}
 
+      <details className="panel p-3 text-xs text-muted">
+        <summary className="cursor-pointer font-semibold text-text">Comment se joue le tournoi ?</summary>
+        <ul className="mt-2 list-disc space-y-1 pl-4">{KNOCKOUT_RULES.map((r) => <li key={r}>{r}</li>)}</ul>
+      </details>
+
       {/* Classement live */}
       <div className="panel p-3">
         <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Classement live</h3>
@@ -150,7 +155,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
                   <span className="ml-auto shrink-0 text-xs">
                     {m.status === "playing" ? <span className="text-neon">● en jeu{last && last.kind !== "main" ? ` (${last.kind === "rematch" ? "revanche" : "armageddon"})` : ""}
                       {!mine && last && !last.result && <a href={`/direct/${last.gameId}`} target="_blank" rel="noreferrer" className="ml-1.5 rounded bg-neon/15 px-1.5 py-0.5 font-semibold hover:bg-neon/25" title="Regarder la partie">👁 Regarder</a>}</span>
-                      : m.status === "done" ? <span className="text-muted">{last?.result ?? (m.p2 === null ? "qualifié" : "—")}</span>
+                      : m.status === "done" ? (() => { const d = matchDetail(m); return <span className="text-right text-muted" title={d.why ?? undefined}>{d.score}{d.why && <span className="block text-[10px] text-muted/80">{d.why}</span>}</span>; })()
                       : <span className="text-muted">à venir</span>}
                   </span>
                 </li>

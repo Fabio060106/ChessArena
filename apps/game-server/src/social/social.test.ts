@@ -61,4 +61,13 @@ describe("revanche", () => {
     t += REMATCH_WINDOW_MS + 1;
     expect(r.offer("g1", "bob")).toEqual({ kind: "error", code: "EXPIRED" });
   });
+
+  it("un joueur parti : plus de revanche sur ses parties", () => {
+    const r = new RematchService();
+    r.finished("g1", { white: "ana", black: "bob", timeControl: "blitz_3_0", stake: { currency: "PLAY", buyInCents: 0 }, rated: true });
+    r.finished("g2", { white: "cy", black: "dan", timeControl: "blitz_3_0", stake: { currency: "PLAY", buyInCents: 0 }, rated: true });
+    expect(r.leave("bob")).toEqual([{ gameId: "g1", players: ["ana", "bob"] }]);
+    expect(r.offer("g1", "ana")).toEqual({ kind: "error", code: "NO_GAME" });
+    expect(r.offer("g2", "cy")).toEqual({ kind: "offered", by: "cy" });
+  });
 });

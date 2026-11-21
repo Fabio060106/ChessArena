@@ -131,3 +131,33 @@ export function myTournament(snapshots: Iterable<SngSnapshot>, userId: string): 
   }
   return best;
 }
+
+/**
+ * Détail d'un match à élimination directe : chaque partie jouée (« ½-½ · revanche ½-½ · Armageddon ½-½ »)
+ * et pourquoi le vainqueur passe, pour qu'une nulle finale ne paraisse pas absurde.
+ */
+export function matchDetail(m: SngMatchView): { score: string; why: string | null } {
+  if (m.p2 === null && m.round === 1) return { score: "qualifié", why: "exempt au premier tour" };
+  const played = m.games.filter((g) => g.result !== null);
+  if (!played.length) return { score: "—", why: null };
+  const score = played.map((g) => {
+    const tag = g.kind === "rematch" ? "revanche " : g.kind === "armageddon" ? "Armageddon " : "";
+    if (g.termination === "aborted") return `${tag}1er coup non joué`;
+    return tag + (g.result === "1/2-1/2" ? "½-½" : g.result!);
+  }).join(" · ");
+  const last = played.at(-1)!;
+  let why: string | null = null;
+  if (m.status === "done" && m.winner) {
+    if (last.termination === "aborted") why = `${m.winner === last.white ? last.black : last.white} n'a pas joué son premier coup`;
+    else if (last.kind === "armageddon" && last.result === "1/2-1/2") why = "nulle à l'Armageddon : les Noirs passent";
+  }
+  return { score, why };
+}
+
+/** Règles du tableau, en clair. */
+export const KNOCKOUT_RULES = [
+  "Élimination directe : une partie par match, le vainqueur passe au tour suivant.",
+  "Nulle : revanche avec les couleurs inversées ; encore nulle : Armageddon (les Noirs passent en cas de nulle).",
+  "Chaque partie démarre toute seule : 45 s pour jouer son premier coup, sinon le match est perdu.",
+  "Pas de revanche hors tableau pendant le tournoi ; une revanche après coup est une partie normale, hors tournoi.",
+];

@@ -30,6 +30,7 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [rematch, setRematch] = useState<RematchEvent | null>(null);
   const [spectators, setSpectators] = useState(0);
+  const [queueStats, setQueueStats] = useState<Record<string, number>>({});
 
   const hot = useRef<{
     start: GameStartEvent | null;
@@ -135,12 +136,13 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
     socket.on("chat:history", (p) => { if (p.gameId === hot.current.start?.gameId) setChat((c) => mergeChat(c, p.messages)); });
     socket.on("game:spectators", (p) => { if (p.gameId === hot.current.start?.gameId) setSpectators(p.count); });
     socket.on("rematch", (r) => { if (r.gameId === hot.current.start?.gameId) setRematch(r); });
+    socket.on("queue:stats", (st) => setQueueStats(st));
     socket.on("session:mode", (session) => dispatch({ type: "session_mode", session }));
     if (socket.connected) onConnect();
     return () => {
       for (const ev of ["connect", "disconnect", "queue:joined", "queue:left", "game:start", "game:state",
         "game:presence", "game:net", "game:draw", "game:over", "error", "session:mode",
-        "chat:msg", "chat:history", "game:spectators", "rematch"] as const) socket.off(ev);
+        "chat:msg", "chat:history", "game:spectators", "rematch", "queue:stats"] as const) socket.off(ev);
     };
   }, [socket, userId, firePremove]);
 
@@ -260,7 +262,7 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
 
   return {
     view, socket, sync: syncRef.current, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw,
-    chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators,
+    chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators, queueStats,
   };
 }
 

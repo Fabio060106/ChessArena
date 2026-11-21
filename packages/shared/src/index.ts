@@ -79,6 +79,10 @@ export interface GameStartEvent {
   timeControl: TimeControl;
   stake: Stake;
   fen: string;
+  /** partie de tournoi : pas de revanche, le tableau décide de la suite */
+  tournament?: { tournamentId: string; round: number; kind: "main" | "rematch" | "armageddon" } | null;
+  /** délai pour jouer son premier coup (ms) */
+  firstMoveMs?: number;
 }
 
 export interface GameStateEvent {
@@ -103,6 +107,8 @@ export interface GameOverEvent {
   rakeCents: Cents;
   /** variations Elo par userId (absent si partie non classée) */
   ratingChanges?: Record<string, { before: number; after: number }>;
+  /** partie annulée : camp qui n'a pas joué son premier coup (null = personne en cause) */
+  abortedBy?: Color | null;
 }
 
 export interface PresenceEvent {
@@ -137,7 +143,7 @@ export type ErrorCode =
   | "BAD_STAKE" | "IN_GAME" | "ALREADY_QUEUED" | "STAKE_LOCK_FAILED"
   | "NO_GAME" | "GAME_OVER" | "NOT_A_PLAYER" | "NOT_YOUR_TURN" | "STALE_PLY" | "BAD_FORMAT"
   | "ILLEGAL_MOVE" | "FLAGGED" | "IN_TOURNAMENT"
-  | "SELF_EXCLUDED" | "LIMIT_EXCEEDED" | "LIMITS_REQUIRED" | "PLAY_MONEY_ONLY";
+  | "SELF_EXCLUDED" | "LIMIT_EXCEEDED" | "LIMITS_REQUIRED" | "PLAY_MONEY_ONLY" | "MATCH_FAILED";
 
 export type MoveAck = { ok: true; ply: number } | { ok: false; code: ErrorCode };
 
@@ -358,6 +364,8 @@ export interface RematchEvent {
   offeredBy: string | null;
   /** la proposition a été refusée (ou n'est plus possible) */
   declined?: boolean;
+  /** l'adversaire est parti (déconnecté, autre partie, file d'attente) : plus de revanche possible */
+  unavailable?: boolean;
 }
 
 export type RematchAck = { ok: true; started: boolean } | { ok: false; code: string };
@@ -424,6 +432,8 @@ export type ChallengeAck = { ok: true; challenge: ChallengeView } | { ok: false;
 export interface ServerToClientEvents {
   "queue:joined": (p: { timeControl: TimeControlId; stake: Stake }) => void;
   "queue:left": () => void;
+  /** joueurs en attente par file « cadence|devise|mise » (pour se retrouver entre amis) */
+  "queue:stats": (s: Record<string, number>) => void;
   "game:start": (p: GameStartEvent) => void;
   "game:state": (p: GameStateEvent) => void;
   "game:over": (p: GameOverEvent) => void;

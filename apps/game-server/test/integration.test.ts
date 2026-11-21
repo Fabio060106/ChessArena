@@ -273,6 +273,9 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     for (const c of cs.slice(1)) expect((await sng(c, "sng:join", { tournamentId: t.id })).ok).toBe(true);
     const games = (await Promise.all(starts)) as GameStartEvent[];
     expect(new Set(games.map((g) => g.gameId)).size).toBe(2); // 2 demi-finales
+    // l'interface sait que c'est une partie de tournoi (pas de revanche) ; premier coup : 45 s
+    expect(games[0]!.tournament).toMatchObject({ tournamentId: t.id, round: 1, kind: "main" });
+    expect(games[0]!.firstMoveMs).toBe(45_000);
     expect(games[0]!.white.flag ?? games[0]!.black.flag).toBe("FR");
     // la table a quitté le lobby
     const after = await new Promise<SngSnapshot[]>((res) => cs[0]!.emit("sng:list", res));
@@ -515,11 +518,12 @@ describe("social : spectateurs, chat, revanche, profil, classement", () => {
     const declined = once(white, "rematch");
     await new Promise<RematchAck>((r) => black.emit("rematch", { gameId: id, action: "decline" }, r));
     expect(await declined).toEqual({ gameId: id, offeredBy: null, declined: true });
-    // les Noirs repartent en file : la proposition qu'ils feraient est retirée
+    // les Noirs repartent en file : plus de revanche possible, les Blancs le voient
     await new Promise<RematchAck>((r) => black.emit("rematch", { gameId: id, action: "offer" }, r));
     const withdrawn = once(white, "rematch");
     black.emit("queue:join", { timeControl: "rapid_5_0", stake: { currency: "PLAY", buyInCents: 0 } });
-    expect(await withdrawn).toEqual({ gameId: id, offeredBy: null });
+    expect(await withdrawn).toEqual({ gameId: id, offeredBy: null, declined: true, unavailable: true });
+    expect(await new Promise<RematchAck>((r) => white.emit("rematch", { gameId: id, action: "offer" }, r))).toMatchObject({ ok: false });
     black.emit("queue:leave");
   });
 });
@@ -667,5 +671,38 @@ describe("amis et défis directs", () => {
     const cancelled = once(b, "challenge:update");
     a.disconnect();
     expect(await cancelled).toEqual({ id: c3.id, status: "cancelled", reason: "OFFLINE" });
+  });
+});
+
+describe("file d'attente : coupure de connexion et compteurs", () => {
+  it("garde la place pendant une courte coupure, la réaffiche, et diffuse le nombre de joueurs en attente", async () => {
+    const a = client({ token: token({ sub: "File_A" }) });
+    await connected(a);
+    const joined = once(a, "queue:joined");
+    a.emit("queue:join", { timeControl: "rapid_5_0", stake: { currency: "PLAY", buyInCents: 0 } });
+    await joined;
+    const obs = client({ token: token({ sub: "File_Obs" }) });
+    await connected(obs);
+    const st = await new Promise<Record<string, number>>((resolve) => {
+      const h = (s: Record<string, number>) => { if (s["rapid_5_0|PLAY|0"] === 1) { obs.off("queue:stats", h); resolve(s); } };
+      obs.on("queue:stats", h);
+    });
+    expect(st["rapid_5_0|PLAY|0"]).toBe(1);
+    // coupure (téléphone en veille) puis retour : toujours en file, l'interface le sait
+    a.disconnect();
+    await new Promise((r) => setTimeout(r, 300));
+    const a2 = client({ token: token({ sub: "File_A" }) });
+    const back = once(a2, "queue:joined");
+    await connected(a2);
+    expect(await back).toEqual({ timeControl: "rapid_5_0", stake: { currency: "PLAY", buyInCents: 0 } });
+    // un adversaire arrive : la partie se crée
+    const b = client({ token: token({ sub: "File_B" }) });
+    await connected(b);
+    const start = once(a2, "game:start");
+    b.emit("queue:join", { timeControl: "rapid_5_0", stake: { currency: "PLAY", buyInCents: 0 } });
+    const s = (await start) as GameStartEvent;
+    expect(s.tournament ?? null).toBeNull();
+    expect(s.firstMoveMs).toBeGreaterThan(0);
+    for (const c of [a2, b, obs]) c.disconnect();
   });
 });

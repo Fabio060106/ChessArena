@@ -1,7 +1,7 @@
 import type { Stake, TimeControlId } from "@chessarena/shared";
 
 /** Délai pendant lequel une revanche peut être proposée après la partie. */
-export const REMATCH_WINDOW_MS = 5 * 60_000;
+export const REMATCH_WINDOW_MS = 2 * 60_000;
 
 interface Finished {
   white: string;
@@ -65,6 +65,18 @@ export class RematchService {
     const out: Array<{ gameId: string; players: [string, string] }> = [];
     for (const [gameId, g] of this.games) {
       if (g.offeredBy === userId) { g.offeredBy = null; out.push({ gameId, players: [g.white, g.black] }); }
+    }
+    return out;
+  }
+
+  /**
+   * Le joueur n'est plus disponible (parti, nouvelle partie, file d'attente) : plus aucune revanche possible
+   * pour ses parties terminées. Retourne les parties retirées, pour prévenir l'adversaire.
+   */
+  leave(userId: string): Array<{ gameId: string; players: [string, string] }> {
+    const out: Array<{ gameId: string; players: [string, string] }> = [];
+    for (const [gameId, g] of this.games) {
+      if (g.white === userId || g.black === userId) { this.games.delete(gameId); out.push({ gameId, players: [g.white, g.black] }); }
     }
     return out;
   }

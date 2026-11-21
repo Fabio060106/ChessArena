@@ -2,6 +2,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { Color } from "@chessarena/shared";
+import { overText } from "../../lib/overText";
 import { useClockTicker, useGameSocket } from "../../hooks/useGameSocket";
 import { useTournament } from "../../hooks/useTournament";
 import { ERROR_MESSAGES, isMyTurn, sessionBanner, START_FEN } from "../../lib/gameReducer";
@@ -79,7 +80,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     return r.ok ? { token: ((await r.json()) as { token: string }).token } : {};
   }, [userId, flag, dev]);
 
-  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators } = useGameSocket(userId, getAuth);
+  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators, queueStats } = useGameSocket(userId, getAuth);
   const sng = useTournament(socket, userId, inviteId);
   const [settings, updateSettings] = useSettings();
   const playing = view.phase === "playing";
@@ -120,8 +121,17 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
   const unread = tab === "chat" ? 0 : Math.max(0, othersMsgs - readCount);
   const [rematchErr, setRematchErr] = useState<string | null>(null);
   useEffect(() => { setRematchErr(null); }, [gameId]);
-  // pas de revanche en tournoi (le tableau décide du prochain adversaire)
-  const canRematch = view.phase === "over" && !!view.start && sng.current?.status !== "running";
+  // pas de revanche en tournoi (le tableau décide du prochain adversaire) ; revanche possible 2 min, tant que l'adversaire est là
+  const tournamentGame = !!view.start?.tournament;
+  const [rematchExpired, setRematchExpired] = useState(false);
+  useEffect(() => {
+    setRematchExpired(false);
+    if (view.phase !== "over") return;
+    const t = setTimeout(() => setRematchExpired(true), 120_000);
+    return () => clearTimeout(t);
+  }, [view.phase, gameId]);
+  const rematchOver = view.phase === "over" && !!view.start && !tournamentGame && (rematchExpired || !!rematch?.unavailable);
+  const canRematch = view.phase === "over" && !!view.start && !tournamentGame && sng.current?.status !== "running" && !rematchOver;
   const doRematch = async (action: "offer" | "decline") => {
     setRematchErr(null);
     const r = await rematchAction(action);
@@ -155,7 +165,8 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
     <Lobby
       queued={view.queue?.timeControl ?? null}
       queuedStake={view.queue?.stake.buyInCents ?? null}
-      defaultStake={view.queue?.stake.buyInCents ?? view.start?.stake.buyInCents}
+      defaultStake={view.queue?.stake.buyInCents ?? (view.start && !view.start.tournament ? view.start.stake.buyInCents : undefined)}
+      stats={queueStats}
       disabled={!view.connected}
       onJoin={(timeControl, buyInCents) => joinQueue({ timeControl, stake: { currency: "PLAY", buyInCents } })}
       onLeave={leaveQueue}
@@ -187,7 +198,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
   const plyLabel = (p: number) => (p === 0 ? "position de départ" : `${Math.ceil(p / 2)}${p % 2 === 1 ? "." : "…"} ${steps[p]?.san ?? ""}`);
   const status = !playing ? null
     : browsing ? `Vous regardez ${plyLabel(browse!)} — la partie continue. ⏭, → ou un clic sur l'échiquier pour revenir.`
-    : view.server && view.server.ply < 2 ? "Jouez votre premier coup dans les 20 s, sinon la partie est annulée."
+    : view.server && view.server.ply < 2 ? `Jouez votre premier coup dans les ${Math.round((view.start?.firstMoveMs ?? 20_000) / 1000)} s, sinon ${tournamentGame ? "vous perdez ce match du tournoi" : "la partie est annulée"}.`
     : isMyTurn(view) ? "À vous de jouer."
     : view.premoves.length ? `${view.premoves.length} pré-move${view.premoves.length > 1 ? "s" : ""} en file · clic droit ou Échap pour annuler`
     : "L'adversaire réfléchit…";
@@ -253,10 +264,16 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
             {view.phase === "over" && view.over && showResult && (
               <div className="absolute inset-0 z-50 grid place-items-center bg-ink/55 backdrop-blur-[2px]">
                 <div className="panel w-[min(86%,340px)] p-5 text-center shadow-2xl">
-                  <p className={`font-display text-3xl font-bold ${view.over.termination === "aborted" || iWon === null ? "text-text" : iWon ? "text-win" : "text-danger"}`}>
-                    {view.over.termination === "aborted" ? "Partie annulée" : iWon === null ? "Nulle" : iWon ? "Victoire" : "Défaite"}
-                  </p>
-                  <p className="mt-1 text-sm text-muted">{view.over.result} · {RESULT_LABEL[view.over.termination] ?? view.over.termination}</p>
+                  {(() => {
+                    const o = overText(view.over, view.start, me, iWon);
+                    return (
+                      <>
+                        <p className={`font-display text-3xl font-bold ${o.tone === "win" ? "text-win" : o.tone === "loss" ? "text-danger" : "text-text"}`}>{o.title}</p>
+                        <p className="mt-1 text-sm text-muted">{o.line ?? `${view.over.result} · ${RESULT_LABEL[view.over.termination] ?? view.over.termination}`}</p>
+                        {o.note && <p className="mt-2 rounded-lg bg-surface-2 px-2.5 py-2 text-left text-xs leading-relaxed">{o.note}</p>}
+                      </>
+                    );
+                  })()}
                   {view.over.ratingChanges?.[userId] && (() => {
                     const r = view.over!.ratingChanges![userId]!;
                     const d = r.after - r.before;
@@ -270,8 +287,13 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
                   )}
                   {canRematch && <RematchBox byOpp={rematchByOpp} byMe={rematchByMe} declined={!!rematch?.declined} error={rematchErr}
                     opponent={seat(opp)?.userId ?? "Ton adversaire"} onAction={doRematch} />}
+                  {rematchOver && <p className="mt-3 text-xs text-muted">{rematch?.unavailable ? `${seat(opp)?.userId ?? "Ton adversaire"} n'est plus disponible : revanche impossible.` : "Délai de revanche écoulé."}</p>}
                   <div className="mt-4 flex gap-2">
-                    {sng.current?.status !== "running" ? (
+                    {tournamentGame ? (
+                      <button type="button" className="neon-btn flex-1 rounded-lg px-3 py-2 font-semibold" onClick={() => { setTab("tournament"); setShowResult(false); }}>
+                        Voir le tournoi
+                      </button>
+                    ) : sng.current?.status !== "running" ? (
                       <button type="button" className="neon-btn flex-1 rounded-lg px-3 py-2 font-semibold"
                         onClick={() => joinQueue({ timeControl: view.start!.timeControl.id, stake: view.start!.stake })}>
                         Rejouer · {TC_NAME[view.start!.timeControl.id]}
@@ -436,3 +458,4 @@ function RematchBox({ byOpp, byMe, declined, error, opponent, onAction }: {
     </div>
   );
 }
+

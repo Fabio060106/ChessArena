@@ -63,13 +63,27 @@ describe("Matchmaker — fenêtre Elo élargissante", () => {
     expect(pairs).toHaveLength(1);
   });
 
-  it("plafonne la fenêtre à ±400", () => {
+  it("plafonne la fenêtre à ±400, puis plus de limite après 30 s d'attente (petite communauté)", () => {
     const { mm, pairs, advance } = setup();
     mm.enqueue({ userId: "a", rating: 1000, timeControl: "blitz_3_0", stake: play() });
     mm.enqueue({ userId: "b", rating: 1401, timeControl: "blitz_3_0", stake: play() });
-    advance(3_600_000);
+    advance(29_000);
     mm.tick();
     expect(pairs).toHaveLength(0);
+    advance(1_000);
+    mm.tick();
+    expect(pairs).toHaveLength(1);
+  });
+
+  it("files séparées par mise : jamais d'appariement entre « Gratuit » et une mise", () => {
+    const { mm, pairs, advance } = setup();
+    mm.enqueue({ userId: "a", rating: 1500, timeControl: "blitz_3_0", stake: play() });
+    mm.enqueue({ userId: "b", rating: 1500, timeControl: "blitz_3_0", stake: { currency: "PLAY", buyInCents: 200 } });
+    advance(60_000);
+    mm.tick();
+    expect(pairs).toHaveLength(0);
+    expect(mm.ticketOf("b")?.stake.buyInCents).toBe(200);
+    expect(Object.keys(mm.sizes()).sort()).toEqual(["blitz_3_0|PLAY|0", "blitz_3_0|PLAY|200"].sort());
   });
 
   it("exige que LES DEUX fenêtres acceptent l'écart", () => {

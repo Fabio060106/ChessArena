@@ -166,7 +166,7 @@ export function nextHistory(moves: Array<string | null>, prev: GameStateEvent | 
 function isQueueError(c: ErrorCode): boolean {
   return ["BAD_STAKE", "BAD_PAYLOAD", "REAL_MONEY_DISABLED", "JURISDICTION_BLOCKED",
     "KYC_REQUIRED_OR_ACCOUNT_HELD", "ACCOUNT_SUSPENDED", "STAKE_LOCK_FAILED",
-    "SELF_EXCLUDED", "LIMIT_EXCEEDED", "LIMITS_REQUIRED", "PLAY_MONEY_ONLY"].includes(c);
+    "SELF_EXCLUDED", "LIMIT_EXCEEDED", "LIMITS_REQUIRED", "PLAY_MONEY_ONLY", "MATCH_FAILED"].includes(c);
 }
 
 /** Libellé du bandeau de mode de session (null = rien à afficher). */
@@ -197,6 +197,7 @@ export const ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   IN_GAME: "Vous avez déjà une partie en cours.",
   ALREADY_QUEUED: "Vous êtes déjà en file d'attente.",
   STAKE_LOCK_FAILED: "Solde insuffisant pour cette mise.",
+  MATCH_FAILED: "Appariement impossible, relance la recherche.",
   ILLEGAL_MOVE: "Coup illégal.",
   NOT_YOUR_TURN: "Ce n'est pas votre tour.",
   FLAGGED: "Temps écoulé.",

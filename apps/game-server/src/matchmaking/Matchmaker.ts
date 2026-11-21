@@ -28,6 +28,8 @@ export interface MatchmakerOptions {
   widenPerSec?: number;
   maxWindow?: number;
   now?: () => number;
+  /** après ce délai d'attente (s), plus de limite d'Elo : petite communauté, mieux vaut jouer que patienter */
+  openAfterSec?: number;
   /** false = pas de setInterval (tests : on appelle tick() à la main) */
   autoTick?: boolean;
 }
@@ -44,12 +46,14 @@ export class Matchmaker {
   readonly baseWindow: number;
   readonly widenPerSec: number;
   readonly maxWindow: number;
+  readonly openAfterSec: number;
 
   constructor(private readonly onMatch: MatchHandler, o: MatchmakerOptions = {}) {
     this.now = o.now ?? (() => Date.now());
     this.baseWindow = o.baseWindow ?? 50;
     this.widenPerSec = o.widenPerSec ?? 25;
     this.maxWindow = o.maxWindow ?? 400;
+    this.openAfterSec = o.openAfterSec ?? 30;
     this.timer = o.autoTick === false ? null : setInterval(() => this.tick(), o.tickMs ?? 1_000);
     this.timer?.unref?.();
   }
@@ -92,9 +96,16 @@ export class Matchmaker {
   }
 
   /** Fenêtre Elo courante d'un ticket. */
-  windowOf(t: QueueTicket): number {
-    const waitedSec = Math.max(0, this.now() - t.enqueuedAt) / 1000;
+  windowOf(t: QueueTicket, now = this.now()): number {
+    const waitedSec = Math.max(0, now - t.enqueuedAt) / 1000;
+    if (waitedSec >= this.openAfterSec) return Infinity;
     return Math.min(this.baseWindow + waitedSec * this.widenPerSec, this.maxWindow);
+  }
+
+  /** Ticket en attente d'un joueur (reprise après reconnexion). */
+  ticketOf(userId: string): QueueTicket | null {
+    const key = this.byUser.get(userId);
+    return key ? this.queues.get(key)?.find((t) => t.userId === userId) ?? null : null;
   }
 
   sizes(): Record<string, number> {
@@ -114,10 +125,7 @@ export class Matchmaker {
       const n = q.length;
       if (n < 2) continue;
       const win = new Map<QueueTicket, number>();
-      for (const t of q) {
-        const waitedSec = Math.max(0, now - t.enqueuedAt) / 1000;
-        win.set(t, Math.min(this.baseWindow + waitedSec * this.widenPerSec, this.maxWindow));
-      }
+      for (const t of q) win.set(t, this.windowOf(t, now));
       const byAge = [...q].sort((a, b) => a.enqueuedAt - b.enqueuedAt);
       const byRating = [...q].sort((a, b) => a.rating - b.rating);
       const pos = new Map<QueueTicket, number>(byRating.map((t, i) => [t, i]));

@@ -23,6 +23,8 @@ export interface CreateGameOptions {
   stake: Stake;
   rated?: boolean;
   tournament?: TournamentGameRef | null;
+  /** délai du premier coup (sinon celui de la config) */
+  firstMoveTimeoutMs?: number;
 }
 
 /** Réessaie une opération idempotente (règlement, enregistrement) avec backoff. */
@@ -154,7 +156,7 @@ export class GameManager {
       stake: o.stake,
       rated: o.rated ?? true,
       tournament: o.tournament ?? null,
-      firstMoveTimeoutMs: this.cfg.firstMoveTimeoutMs,
+      firstMoveTimeoutMs: o.firstMoveTimeoutMs ?? this.cfg.firstMoveTimeoutMs,
       disconnectGraceMs: this.cfg.disconnectGraceMs,
       hooks: {
         onState: (s) => this.io.to(gameId).emit("game:state", s),
@@ -173,9 +175,7 @@ export class GameManager {
     this.activeByUser.set(o.black.userId, gameId);
     this.io.in(userRoom(o.white.userId)).socketsJoin(gameId);
     this.io.in(userRoom(o.black.userId)).socketsJoin(gameId);
-    this.io.to(gameId).emit("game:start", {
-      gameId, white: room.white, black: room.black, timeControl: tc, stake: o.stake, fen: room.fen,
-    });
+    this.io.to(gameId).emit("game:start", room.startEvent());
     this.io.to(gameId).emit("game:state", room.state());
 
     // Un joueur peut être absent (déconnecté entre l'appariement et la création,
@@ -265,6 +265,7 @@ export class GameManager {
     });
     this.io.to(g.gameId).emit("game:over", {
       gameId: g.gameId, result: g.result, termination: g.termination, pgn: g.pgn, payouts, rakeCents,
+      ...(g.aborted ? { abortedBy: g.abortedBy } : {}),
       ...(rec?.changes ? {
         ratingChanges: Object.fromEntries(Object.entries(rec.changes).map(([u, c]) => [u, { before: c.before, after: c.after }])),
       } : {}),

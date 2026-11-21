@@ -37,6 +37,11 @@ import { KycService, type KycProvider } from "./auth/kyc.js";
 import { DepositService } from "./settlement/deposits.js";
 import { RegulatoryExporter } from "./audit/regulatoryExport.js";
 
+/** place gardée dans la file après la perte de connexion */
+const QUEUE_GRACE_MS = 20_000;
+/** délai du premier coup en tournoi (la partie démarre sans que le joueur ait cliqué) */
+const TOURNAMENT_FIRST_MOVE_MS = 45_000;
+
 interface SocketData {
   user: AuthUser;
   /** mode de session courant (géo-filtre + kill-switch + auto-exclusion) */
@@ -188,9 +193,25 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const matchmaker = new Matchmaker(
     // setImmediate : un tick qui apparie des centaines de paires ne monopolise pas la
     // boucle d'événements ; les coups des parties en cours s'intercalent.
-    (a, b) => setImmediate(() => void games.createFromMatch(a, b).catch((e) => console.error("[match] création échouée", e))),
+    (a, b) => setImmediate(() => void games.createFromMatch(a, b).catch((e) => {
+      console.error("[match] création échouée", e);
+      // les deux joueurs ne restent pas bloqués sur « Recherche… »
+      for (const u of [a.userId, b.userId]) {
+        io.to(userRoom(u)).emit("queue:left");
+        io.to(userRoom(u)).emit("error", { code: "MATCH_FAILED", message: "Appariement impossible, relance la recherche." });
+      }
+    })),
     { tickMs: cfg.matchmakerTickMs },
   );
+  // nombre de joueurs en attente par file, diffusé à tous (sans les noms) quand il change
+  let lastStats = "";
+  const statsTimer = setInterval(() => {
+    const st = JSON.stringify(matchmaker.sizes());
+    if (st !== lastStats) { lastStats = st; io.emit("queue:stats", matchmaker.sizes()); }
+  }, 2_000);
+  statsTimer.unref?.();
+  // un joueur qui perd la connexion (téléphone en veille, changement d'appli) garde sa place quelques secondes
+  const queueGrace = new Map<string, ReturnType<typeof setTimeout>>();
   const tournaments = new TournamentManager(cfg.tournamentFormats, {
     ledger, store, audit, rakeBps: cfg.rakeBps,
     startGame: async (r) => {
@@ -198,6 +219,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         gameId: r.gameId, white: r.white, black: r.black, timeControl: r.timeControl,
         stake: { currency: r.currency, buyInCents: 0 }, // l'argent est dans l'escrow du tournoi
         rated: r.rated, tournament: r.tournament,
+        // en tournoi, la partie démarre toute seule : on laisse plus de temps pour arriver devant l'échiquier
+        firstMoveTimeoutMs: Math.max(cfg.firstMoveTimeoutMs, TOURNAMENT_FIRST_MOVE_MS),
       });
       return room.id;
     },
@@ -216,8 +239,10 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const challengeView = (c: Challenge): ChallengeView => ({ id: c.id, from: c.from, to: c.to, timeControl: c.timeControl, expiresAt: c.createdAt + CHALLENGE_TTL_MS });
   const spectatorCount = (gameId: string) => io.of("/").adapter.rooms.get(spectatorRoom(gameId))?.size ?? 0;
   const withdrawRematches = (userId: string) => {
-    for (const w of rematches.withdrawAll(userId)) io.to(w.players.map(userRoom)).emit("rematch", { gameId: w.gameId, offeredBy: null });
+    for (const w of rematches.leave(userId)) io.to(w.players.map(userRoom)).emit("rematch", { gameId: w.gameId, offeredBy: null, declined: true, unavailable: true });
   };
+  // revanche : un joueur déconnecté plus de 10 s (appli fermée, téléphone en veille) n'est plus disponible
+  const rematchGone = new Map<string, ReturnType<typeof setTimeout>>();
   const announceSpectators = (gameId: string) => io.to(gameId).emit("game:spectators", { gameId, count: spectatorCount(gameId) });
   games.onGameFinished(async (g) => {
     if (g.aborted) return;
@@ -415,16 +440,21 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       user.userId,
       (room) => void socket.join(room),
       (room) => {
-        socket.emit("game:start", {
-          gameId: room.id, white: room.white, black: room.black,
-          timeControl: room.timeControl, stake: room.stake, fen: room.fen,
-        });
+        socket.emit("game:start", room.startEvent());
         socket.emit("game:state", room.state());
         if (room.drawOffer) socket.emit("game:draw", { gameId: room.id, offeredBy: room.drawOffer });
         socket.emit("chat:history", { gameId: room.id, messages: chat.history(room.id, ["players"]) });
         socket.emit("game:spectators", { gameId: room.id, count: spectatorCount(room.id) });
       },
     );
+    const goneT = rematchGone.get(user.userId);
+    if (goneT) { clearTimeout(goneT); rematchGone.delete(user.userId); }
+    // file d'attente conservée pendant une coupure : on la réaffiche
+    const graceT = queueGrace.get(user.userId);
+    if (graceT) { clearTimeout(graceT); queueGrace.delete(user.userId); }
+    const ticket = matchmaker.ticketOf(user.userId);
+    if (ticket) socket.emit("queue:joined", { timeControl: ticket.timeControl, stake: ticket.stake });
+    socket.emit("queue:stats", matchmaker.sizes());
     // défis reçus encore ouverts (nouvelle page, autre appareil)
     for (const c of challenges.incomingFor(user.userId)) socket.emit("challenge:incoming", challengeView(c));
     // … et de ses tournois en cours.
@@ -859,9 +889,16 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       // Plusieurs onglets possibles : on ne considère le joueur parti qu'au DERNIER socket.
       const remaining = io.of("/").adapter.rooms.get(userRoom(user.userId))?.size ?? 0;
       if (remaining === 0) {
-        matchmaker.dequeue(user.userId);
+        if (matchmaker.isQueued(user.userId) && !queueGrace.has(user.userId)) {
+          queueGrace.set(user.userId, setTimeout(() => { queueGrace.delete(user.userId); matchmaker.dequeue(user.userId); }, QUEUE_GRACE_MS));
+        }
         games.onUserOffline(user.userId);
-        withdrawRematches(user.userId);
+        if (!rematchGone.has(user.userId)) {
+          rematchGone.set(user.userId, setTimeout(() => {
+            rematchGone.delete(user.userId);
+            if ((io.of("/").adapter.rooms.get(userRoom(user.userId))?.size ?? 0) === 0) withdrawRematches(user.userId);
+          }, 10_000));
+        }
         for (const c of challenges.involving(user.userId)) {
           if (challenges.remove(c.id)) io.to([userRoom(c.from), userRoom(c.to)]).emit("challenge:update", { id: c.id, status: "cancelled", reason: "OFFLINE" });
         }
@@ -922,6 +959,9 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       await verdictWorker?.close();
       await analysisProducer?.close();
       matchmaker.close();
+      clearInterval(statsTimer);
+      for (const t of queueGrace.values()) clearTimeout(t);
+      for (const t of rematchGone.values()) clearTimeout(t);
       games.disposeAll();
       metrics.close();
       await new Promise<void>((r) => io.close(() => r()));
