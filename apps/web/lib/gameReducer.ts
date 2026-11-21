@@ -166,7 +166,7 @@ export function nextHistory(moves: Array<string | null>, prev: GameStateEvent | 
 function isQueueError(c: ErrorCode): boolean {
   return ["BAD_STAKE", "BAD_PAYLOAD", "REAL_MONEY_DISABLED", "JURISDICTION_BLOCKED",
     "KYC_REQUIRED_OR_ACCOUNT_HELD", "ACCOUNT_SUSPENDED", "STAKE_LOCK_FAILED",
-    "SELF_EXCLUDED", "LIMIT_EXCEEDED", "LIMITS_REQUIRED", "PLAY_MONEY_ONLY", "MATCH_FAILED"].includes(c);
+    "SELF_EXCLUDED", "LIMIT_EXCEEDED", "LIMITS_REQUIRED", "PLAY_MONEY_ONLY", "MATCH_FAILED", "IN_TOURNAMENT", "IN_GAME", "ALREADY_QUEUED"].includes(c);
 }
 
 /** Libellé du bandeau de mode de session (null = rien à afficher). */
@@ -205,4 +205,16 @@ export const ERROR_MESSAGES: Partial<Record<ErrorCode, string>> = {
   LIMIT_EXCEEDED: "Cette mise dépasse une de vos limites de jeu.",
   LIMITS_REQUIRED: "Définissez vos limites de jeu avant de miser.",
   PLAY_MONEY_ONLY: "Parties en jetons uniquement depuis votre position actuelle.",
+  IN_TOURNAMENT: "Recherche impossible : tu es inscrit à un tournoi (onglet Tournoi). Désinscris-toi pour jouer en duel.",
+  BAD_PAYLOAD: "Demande refusée par le serveur, recharge la page.",
+  NO_GAME: "Cette partie n'existe plus.",
+  GAME_OVER: "La partie est terminée.",
+  NOT_A_PLAYER: "Tu ne joues pas cette partie.",
+  BAD_FORMAT: "Coup mal formé.",
 };
+
+/** Message de toute erreur : jamais de refus silencieux (un code inconnu a un message générique). */
+export function errorMessage(code: ErrorCode): string | null {
+  if (code === "STALE_PLY") return null; // coup croisé avec celui de l'adversaire : resynchronisé sans bruit
+  return ERROR_MESSAGES[code] ?? `Action refusée par le serveur (${code}). Réessaie, ou recharge la page.`;
+}

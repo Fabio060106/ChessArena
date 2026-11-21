@@ -432,6 +432,9 @@ export class SitAndGo {
       .sort((a, b) => b.eliminatedRound! - a.eliminatedRound! || a.seed! - b.seed!);
     const ranking = [winner, finalist, ...others.map((e) => e.userId)];
 
+    // le résultat sportif est acquis : le vainqueur est libre tout de suite (duels, autre tournoi),
+    // même si le paiement des gains doit être rejoué
+    this.entries.get(winner)!.status = "winner";
     const plan = settleTournament(
       this.cfg.buyInCents, this.entrants, ranking, this.cfg.payoutBps, this.cfg.rakeBps, this.cfg.sponsorAddedCents,
     );

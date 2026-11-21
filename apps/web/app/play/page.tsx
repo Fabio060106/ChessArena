@@ -5,7 +5,7 @@ import type { Color } from "@chessarena/shared";
 import { overText, tournamentIntro } from "../../lib/overText";
 import { useClockTicker, useGameSocket } from "../../hooks/useGameSocket";
 import { useTournament } from "../../hooks/useTournament";
-import { ERROR_MESSAGES, isMyTurn, sessionBanner, START_FEN } from "../../lib/gameReducer";
+import { errorMessage, isMyTurn, sessionBanner, START_FEN } from "../../lib/gameReducer";
 import { useSettings } from "../../lib/settings";
 import { materialAdvantage } from "../../lib/profile";
 import { material } from "../../lib/material";
@@ -293,7 +293,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
                       <button type="button" className="neon-btn flex-1 rounded-lg px-3 py-2 font-semibold" onClick={() => { setTab("tournament"); setShowResult(false); }}>
                         Voir le tournoi
                       </button>
-                    ) : sng.current?.status !== "running" ? (
+                    ) : !inTournament ? (
                       <button type="button" className="neon-btn flex-1 rounded-lg px-3 py-2 font-semibold"
                         onClick={() => joinQueue({ timeControl: view.start!.timeControl.id, stake: view.start!.stake })}>
                         Rejouer · {TC_NAME[view.start!.timeControl.id]}
@@ -370,8 +370,8 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
           {sessionBanner(view.session) && (
             <p role="status" className="rounded-lg border border-gold/30 bg-gold/10 p-2.5 text-sm text-gold">{sessionBanner(view.session)}</p>
           )}
-          {view.error && ERROR_MESSAGES[view.error] && (
-            <p role="alert" className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{ERROR_MESSAGES[view.error]}</p>
+          {view.error && errorMessage(view.error) && (
+            <p role="alert" className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{errorMessage(view.error)}</p>
           )}
 
           <div className="panel p-3">

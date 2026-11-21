@@ -193,7 +193,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const matchmaker = new Matchmaker(
     // setImmediate : un tick qui apparie des centaines de paires ne monopolise pas la
     // boucle d'événements ; les coups des parties en cours s'intercalent.
-    (a, b) => setImmediate(() => void games.createFromMatch(a, b).catch((e) => {
+    (a, b) => setImmediate(() => void (console.info(`[match] ${a.userId} vs ${b.userId} ${a.timeControl}`), games.createFromMatch(a, b)).catch((e) => {
       console.error("[match] création échouée", e);
       // les deux joueurs ne restent pas bloqués sur « Recherche… »
       for (const u of [a.userId, b.userId]) {
@@ -475,9 +475,14 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       if (!gate.ok) return fail(socket, gate.code);
       const { minCents, maxCents } = cfg.stakeLimits;
       if (p.stake.buyInCents < minCents || p.stake.buyInCents > maxCents) return fail(socket, "BAD_STAKE");
-      if (games.activeGameOf(user.userId)) return fail(socket, "IN_GAME");
-      if (tournaments.isBusy(user.userId)) return fail(socket, "IN_TOURNAMENT");
-      if (matchmaker.isQueued(user.userId)) return fail(socket, "ALREADY_QUEUED");
+      // refus tracés dans les journaux : « on ne s'est pas trouvés » doit pouvoir s'expliquer
+      const refuse = (code: "IN_GAME" | "IN_TOURNAMENT" | "ALREADY_QUEUED") => {
+        console.info(`[queue] refus ${code} ${user.userId} ${p.timeControl}`);
+        return fail(socket, code);
+      };
+      if (games.activeGameOf(user.userId)) return refuse("IN_GAME");
+      if (tournaments.isBusy(user.userId)) return refuse("IN_TOURNAMENT");
+      if (matchmaker.isQueued(user.userId)) return refuse("ALREADY_QUEUED");
       if (p.stake.currency === "EUR") {
         const rg = await limitsPrecheck(user.userId, p.stake.buyInCents);
         if (rg) return fail(socket, rg);
@@ -489,6 +494,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         return fail(socket, "ALREADY_QUEUED");
       }
       io.to(userRoom(user.userId)).emit("queue:joined", p);
+      console.info(`[queue] entrée ${user.userId} ${p.timeControl}|${p.stake.currency}|${p.stake.buyInCents} Elo ${rating}`);
       withdrawRematches(user.userId);
     }));
 

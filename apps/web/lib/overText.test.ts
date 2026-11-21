@@ -36,3 +36,13 @@ describe("début d'une partie de départage", () => {
     expect(tournamentIntro(undefined)).toBe("");
   });
 });
+
+describe("erreurs jamais silencieuses", () => {
+  it("chaque refus a un message, y compris l'inscription à un tournoi", async () => {
+    const { errorMessage } = await import("./gameReducer");
+    expect(errorMessage("IN_TOURNAMENT")).toMatch(/inscrit à un tournoi/);
+    expect(errorMessage("MATCH_FAILED")).toMatch(/relance la recherche/);
+    expect(errorMessage("STALE_PLY")).toBeNull();
+    expect(errorMessage("NOUVEAU_CODE" as never)).toMatch(/Action refusée par le serveur \(NOUVEAU_CODE\)/);
+  });
+});

@@ -296,6 +296,22 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     expect((await sng(c, "sng:create", { size: 4, timeControl: "bullet_1_0", buyInCents: 0 })).ok).toBe(true);
   });
 
+  it("inscrit à un tournoi : la recherche de duel est refusée avec un code explicite, puis possible après désinscription", async () => {
+    const c = client({ token: token({ sub: "inscrit-duel" }) });
+    await connected(c);
+    const created = await sng(c, "sng:create", { size: 4, timeControl: "blitz_3_0", buyInCents: 0 });
+    if (!created.ok) throw new Error("création");
+    const refused = once(c, "error");
+    c.emit("queue:join", { timeControl: "blitz_3_0", stake: { currency: "PLAY", buyInCents: 0 } });
+    expect(await refused).toMatchObject({ code: "IN_TOURNAMENT" });
+    await new Promise<SngAck>((res) => c.emit("sng:unregister", { tournamentId: created.snapshot.id }, res));
+    const joined = once(c, "queue:joined");
+    c.emit("queue:join", { timeControl: "blitz_3_0", stake: { currency: "PLAY", buyInCents: 0 } });
+    await joined;
+    c.emit("queue:leave");
+    c.disconnect();
+  });
+
   it("historique : la partie jouée apparaît, avec son PGN, pour les deux joueurs seulement", async () => {
     const { start, white, black } = await pair("hist-w", "hist-b");
     await move(white, start.gameId, "f2f3", 0);
