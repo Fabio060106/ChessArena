@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type pg from "pg";
-import type { RelayGameView, RelayRoundView, RelaySummary } from "@chessarena/shared";
+import type { RelayGameView, RelayRoundRef, RelayRoundView, RelaySummary } from "@chessarena/shared";
 import {
   lccGameView, lccUrls, LCC_POOL, normResult, roundCandidates,
   type LccGame, type LccRound, type LccTournament,
@@ -78,6 +78,10 @@ interface Live {
   /** source qui demande de ralentir (HTTP 429) : pause jusqu'à cette date */
   pausedUntil: number;
   games: Map<number, { view: RelayGameView; key: string }>;
+  /** toutes les rondes connues (identifiant Lichess de chaque ronde le cas échéant) */
+  rounds: Array<RelayRoundRef & { lichessId?: string }>;
+  /** rondes déjà jouées, lues à la demande (gardées : une partie finie ne change plus) */
+  past: Map<number, { view: RelayRoundView; at: number; final: boolean }>;
   updatedAt: number | null;
   error: string | null;
   timer: ReturnType<typeof setTimeout> | null;
@@ -165,7 +169,7 @@ export class RelayService {
   }
 
   private attach(rec: RelayRecord): void {
-    const l: Live = { rec, tournamentName: null, currentRound: null, roundName: null, pausedUntil: 0, games: new Map(), updatedAt: null, error: null, timer: null, polls: 0, busy: false };
+    const l: Live = { rec, tournamentName: null, currentRound: null, roundName: null, pausedUntil: 0, games: new Map(), rounds: [], past: new Map(), updatedAt: null, error: null, timer: null, polls: 0, busy: false };
     this.live.set(rec.id, l);
     if (this.o.autoStart !== false) this.schedule(l, 0);
   }
@@ -190,6 +194,7 @@ export class RelayService {
     return {
       id: l.rec.id, name: l.rec.name, round: l.rec.round, currentRound: l.currentRound, roundName: l.roundName,
       games: games.length, live: games.some((g) => g.view.live), updatedAt: l.updatedAt, error: l.error,
+      rounds: l.rounds.map(({ number, name, state }) => ({ number, name, state })),
     };
   }
 
@@ -207,6 +212,12 @@ export class RelayService {
         const t = (await this.fetchJson(urls.tournament)) as LccTournament | null;
         if (t && typeof t.name === "string") l.tournamentName = t.name.slice(0, 120);
         if (round === 0) round = (t ? await this.autoRound(l, t) : null) ?? l.currentRound ?? 1;
+        if (t?.rounds) {
+          const cur = round;
+          l.rounds = t.rounds.map((r, i) => ({ number: i + 1, count: r?.count ?? 0, live: r?.live ?? 0 }))
+            .filter((r) => r.count > 0)
+            .map((r) => ({ number: r.number, name: `Ronde ${r.number}`, state: r.live > 0 ? "ongoing" : r.number < cur ? "finished" : r.number === cur ? "unknown" : "upcoming" }));
+        }
       }
       const idx = (await this.fetchJson(urls.index(round))) as LccRound | null;
       const pairings = (idx?.pairings ?? []).slice(0, 200);
@@ -260,10 +271,15 @@ export class RelayService {
       const t = (await this.fetchJson(`${base}/api/broadcast/${tourId}`)) as LichessTour | null;
       if (!t) throw new Error("tournoi Lichess introuvable");
       if (typeof t.tour?.name === "string") l.tournamentName = t.tour.name.slice(0, 120);
+      l.rounds = (t.rounds ?? []).filter((r) => typeof r.id === "string").map((r, i) => ({
+        number: i + 1, name: (r.name ?? `Ronde ${i + 1}`).slice(0, 80), lichessId: r.id!,
+        state: r.ongoing ? "ongoing" : r.finished ? "finished" : "upcoming",
+      }));
       const pick = pickLichessRound(t);
       if (!pick) { l.updatedAt = this.now(); l.error = null; return; }
       ({ id: roundId, number: roundNo, name: roundName } = pick);
     }
+    if (!tourId) l.rounds = [{ number: 1, name: roundName ?? "Ronde", state: "unknown", lichessId: roundId }];
     const pgn = await this.fetchText(`${base}/api/broadcast/round/${roundId}.pgn`);
     const views = pgn ? lichessPgnGames(pgn, this.now()).slice(0, 200) : [];
     const roundChanged = l.currentRound !== roundNo || (!!tourId && l.roundName !== roundName);
@@ -280,6 +296,49 @@ export class RelayService {
     l.error = null;
     if (roundChanged) this.o.onRound(this.view(l.rec.id)!);
     else for (const g of changed) this.o.onGame(l.rec.id, roundNo, g);
+  }
+
+  /**
+   * Une ronde précise : la ronde suivie en direct, ou une ronde déjà jouée lue à la demande
+   * (gardée en mémoire ; relue au bout de 2 min tant qu'une de ses parties n'est pas terminée).
+   */
+  async roundView(id: string, n: number): Promise<RelayRoundView | null> {
+    const l = this.live.get(id);
+    if (!l || !Number.isInteger(n) || n < 1 || n > 500) return null;
+    if (n === l.currentRound) return this.view(id);
+    const cached = l.past.get(n);
+    if (cached && (cached.final || this.now() - cached.at < 120_000)) return cached.view;
+    const ref = l.rounds.find((r) => r.number === n);
+    let games: RelayGameView[] = [];
+    if (l.rec.source === "lichess") {
+      if (!ref?.lichessId) return null;
+      const pgn = await this.fetchText(`${this.o.lichess ?? LICHESS}/api/broadcast/round/${ref.lichessId}.pgn`);
+      games = pgn ? lichessPgnGames(pgn, this.now()).slice(0, 200) : [];
+    } else {
+      const urls = lccUrls(l.rec.lccId, this.o.pool ?? LCC_POOL);
+      const idx = (await this.fetchJson(urls.index(n))) as LccRound | null;
+      if (!idx) return null;
+      const pairings = (idx.pairings ?? []).slice(0, 200);
+      for (let i = 0; i < pairings.length; i++) {
+        const p = pairings[i]!;
+        if (!p.white || !p.black) continue;
+        games.push(lccGameView(i + 1, p, (await this.fetchJson(urls.game(n, i + 1))) as LccGame | null, this.now()));
+      }
+    }
+    const view: RelayRoundView = {
+      ...this.summary(l), currentRound: n, roundName: ref?.name ?? `Ronde ${n}`,
+      games: games.length, live: games.some((g) => g.live), tournamentName: l.tournamentName, gameList: games,
+    };
+    l.past.set(n, { view, at: this.now(), final: games.length > 0 && games.every((g) => g.result !== null) });
+    return view;
+  }
+
+  /** Partie connue (ronde en direct ou déjà lue) : sert à vérifier une analyse envoyée par un navigateur. */
+  findGame(id: string, round: number, index: number): RelayGameView | null {
+    const l = this.live.get(id);
+    if (!l) return null;
+    if (round === l.currentRound) return l.games.get(index)?.view ?? null;
+    return l.past.get(round)?.view.gameList.find((g) => g.index === index) ?? null;
   }
 
   /** Ronde en cours, sinon la plus récente déjà commencée (quelques lectures au plus). */

@@ -61,7 +61,13 @@ export function useRelay(relayId: string, getAuth: AuthProvider) {
     getSocket(getAuth).emit("chat:report", { gameId: m.gameId, messageId: m.id }, (r) => { clearTimeout(t); resolve(r.ok); });
   }), [getAuth]);
 
-  return { round, missing, connected, chat, sendChat, reportChat };
+  /** ronde déjà jouée (sans suivi en direct) */
+  const loadRound = useCallback((n: number) => new Promise<RelayRoundView | null>((resolve) => {
+    const t = setTimeout(() => resolve(null), 20_000);
+    getSocket(getAuth).emit("relay:roundView", { relayId, round: n }, (r) => { clearTimeout(t); resolve(r.ok ? r.round : null); });
+  }), [getAuth, relayId]);
+
+  return { round, missing, connected, chat, sendChat, reportChat, loadRound };
 }
 
 /** Temps restant affiché (secondes) : la pendule du joueur au trait continue de tourner entre deux lectures. */
@@ -79,4 +85,18 @@ export function formatClock(sec: number | null): string {
   const m = Math.floor((s % 3600) / 60);
   const r = s % 60;
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
+}
+
+/** Analyse partagée d'une partie terminée : lue sur le serveur, ou envoyée après calcul. */
+export function sharedReview(getAuth: AuthProvider) {
+  return {
+    get: (k: { relayId: string; round: number; index: number; plies: number }) => new Promise<unknown | null>((resolve) => {
+      const t = setTimeout(() => resolve(null), 10_000);
+      getSocket(getAuth).emit("relay:review", k, (r) => { clearTimeout(t); resolve(r.review); });
+    }),
+    // par HTTP : une analyse (~20 Ko) dépasse la taille maximale d'un message websocket
+    save: (k: { relayId: string; round: number; index: number; sans: string[]; review: unknown }) => {
+      void fetch("/api/relays/review", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(k) }).catch(() => {});
+    },
+  };
 }

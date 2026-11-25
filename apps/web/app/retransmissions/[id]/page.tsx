@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import type { RelayGameView } from "@chessarena/shared";
+import type { RelayGameView, RelayRoundView } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
 import { GameBoard } from "../../../components/GameBoard";
 import { MoveList } from "../../../components/MoveList";
@@ -32,11 +32,22 @@ export default function RelayPage() {
 
 function Relay({ relayId, me }: { relayId: string; me: string }) {
   const getAuth = useGameAuth();
-  const { round, missing, connected, chat, sendChat, reportChat } = useRelay(relayId, getAuth);
+  const { round: liveRound, missing, connected, chat, sendChat, reportChat, loadRound } = useRelay(relayId, getAuth);
   const [pick, setPick] = useState<number | null>(null);
+  // ronde déjà jouée choisie par le spectateur (null = la ronde en direct)
+  const [past, setPast] = useState<{ n: number; view: RelayRoundView | null } | null>(null);
+  const chooseRound = (n: number) => {
+    setPick(null);
+    if (n === liveRound?.currentRound) { setPast(null); return; }
+    setPast({ n, view: null });
+    void loadRound(n).then((view) => setPast((p) => (p && p.n === n ? { n, view } : p)));
+  };
 
   if (missing) return <p className="mx-auto max-w-[700px] p-4 text-sm text-muted">Cette retransmission n'existe plus. <a href="/direct" className="text-neon underline">Voir ce qui est en direct</a>.</p>;
-  if (!round) return <p className="mx-auto max-w-[700px] p-4 text-sm text-muted">Connexion à la retransmission… (le serveur peut mettre une minute à se réveiller)</p>;
+  if (!liveRound) return <p className="mx-auto max-w-[700px] p-4 text-sm text-muted">Connexion à la retransmission… (le serveur peut mettre une minute à se réveiller)</p>;
+  const round = past?.view ?? liveRound;
+  const shownNo = past ? past.n : liveRound.currentRound;
+  const roundsList = liveRound.rounds ?? [];
 
   const games = round.gameList;
   const game = games.find((g) => g.index === pick) ?? games.find((g) => g.live) ?? games[0] ?? null;
@@ -45,10 +56,22 @@ function Relay({ relayId, me }: { relayId: string; me: string }) {
       <div className="panel flex flex-wrap items-baseline gap-x-3 gap-y-1 p-3">
         <h1 className="font-display text-lg font-bold">{round.name}</h1>
         <span className="text-sm text-muted">{round.currentRound ? round.roundName ?? `Ronde ${round.currentRound}` : "Connexion à la source…"}</span>
-        {round.live && <span className="text-xs font-semibold text-danger"><span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-danger align-middle" />En direct</span>}
+        {!past && round.live && <span className="text-xs font-semibold text-danger"><span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-danger align-middle" />En direct</span>}
         {!connected && <span className="text-xs text-gold">reconnexion…</span>}
         {round.error && <span role="status" className="w-full text-xs text-gold">{round.error}</span>}
+        {past && <button type="button" onClick={() => setPast(null)} className="text-xs text-neon hover:underline">← revenir au direct</button>}
       </div>
+      {roundsList.length > 1 && (
+        <div className="flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Rondes du tournoi">
+          {roundsList.filter((r) => r.state !== "upcoming").map((r) => (
+            <button key={r.number} type="button" role="tab" aria-selected={shownNo === r.number} onClick={() => chooseRound(r.number)}
+              className={`shrink-0 rounded-full border px-3 py-1 text-xs ${shownNo === r.number ? "border-neon bg-neon/10 font-semibold" : "border-line text-muted hover:bg-surface-2"}`}>
+              {r.name}{r.state === "ongoing" ? " •" : r.state === "finished" ? " ✓" : ""}
+            </button>
+          ))}
+        </div>
+      )}
+      {past && !past.view && <p className="panel p-3 text-sm text-muted">Chargement de {roundsList.find((r) => r.number === past.n)?.name ?? `la ronde ${past.n}`}…</p>}
       {games.length > 1 && (
         <div className="flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Parties de la ronde">
           {games.map((g) => (
@@ -75,7 +98,7 @@ function Relay({ relayId, me }: { relayId: string; me: string }) {
       </div>
     );
   }
-  return <RelayGame key={`${round.currentRound}-${game.index}`} relayId={relayId} roundNo={round.currentRound} game={game} header={header} chatPanel={chatPanel} chatCount={chat.length} />;
+  return <RelayGame key={`${shownNo}-${game.index}`} relayId={relayId} roundNo={shownNo} game={game} header={header} chatPanel={chatPanel} chatCount={chat.length} />;
 }
 
 const short = (n: string) => (n.length > 18 ? n.split(" ").at(-1) ?? n : n);
@@ -85,6 +108,7 @@ function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
   relayId: string; roundNo: number | null; game: RelayGameView; header: React.ReactNode; chatPanel: React.ReactNode; chatCount: number;
 }) {
   const [settings] = useSettings();
+  const getAuth = useGameAuth();
   const [flipped, flip] = useFlip();
   const [tab, setTab] = useState<"moves" | "chat">("moves");
   const steps = useMemo(() => replayFromSans(game.sans), [game.sans]);
@@ -162,7 +186,7 @@ function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
       </div>
       <aside className="flex w-full flex-col gap-3">
         {game.result && game.sans.length > 0 && (
-          <GameReviewPanel cacheKey={{ relayId, round: roundNo, index: game.index }} sans={game.sans} ucis={game.ucis}
+          <GameReviewPanel relayId={relayId} round={roundNo ?? 0} index={game.index} sans={game.sans} ucis={game.ucis} getAuth={getAuth}
             names={{ w: game.white.name, b: game.black.name }} result={game.result} onGo={go} />
         )}
         <div className="panel p-3">

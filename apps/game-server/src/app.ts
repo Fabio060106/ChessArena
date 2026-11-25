@@ -10,6 +10,7 @@ import { Matchmaker } from "./matchmaking/Matchmaker.js";
 import { GameManager, userRoom } from "./game/GameManager.js";
 import { InMemoryRelayStore, PgRelayStore, RelayService, type FetchJson, type FetchText, type RelayStore } from "./relay/RelayService.js";
 import { parseLccUrl } from "./relay/lcc.js";
+import { InMemoryReviewStore, PgReviewStore, reviewStoreKey } from "./relay/ReviewStore.js";
 import { encodeLichess, parseLichessUrl } from "./relay/lichess.js";
 
 /** Lien collé par l'organisateur : échiquiers DGT (LiveChessCloud) d'abord, sinon Lichess Broadcast. */
@@ -178,7 +179,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { relays, parseRelaySource, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
+      void handleApi(req, res, { relays, reviews, parseRelaySource, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
       fairplayMem, isOnline: (u) => (io.of("/").adapter.rooms.get(userRoom(u))?.size ?? 0) > 0, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
       return;
     }
@@ -253,6 +254,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const chat = new ChatService();
   // retransmissions DGT / LiveChessCloud : une lecture de la source par tournoi, diffusée à tous les spectateurs
   const relayRoom = (id: string) => `relay:${id}`;
+  const reviews = pool ? new PgReviewStore(pool) : new InMemoryReviewStore();
   const relays = new RelayService({
     store: deps.relayStore ?? (pool ? new PgRelayStore(pool) : new InMemoryRelayStore()),
     // LCC_POOL_URL : faux LiveChessCloud pour les essais locaux
@@ -705,6 +707,21 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       relays.wake(id);
       socket.emit("chat:history", { gameId: `relay:${id}`, messages: chat.history(`relay:${id}`, ["spectators"]) });
       reply({ ok: true, round: v });
+    }));
+    socket.on("relay:roundView", guard(socket, async (raw: unknown, ack?: unknown) => {
+      const reply = (r: { ok: true; round: import("@chessarena/shared").RelayRoundView } | { ok: false; code: string }) => { if (typeof ack === "function") (ack as (x: typeof r) => void)(r); };
+      const p = raw as { relayId?: unknown; round?: unknown } | null;
+      if (!p || typeof p.relayId !== "string" || typeof p.round !== "number") return reply({ ok: false, code: "BAD_PAYLOAD" });
+      try {
+        const v = await relays.roundView(p.relayId, p.round);
+        reply(v ? { ok: true, round: v } : { ok: false, code: "UNKNOWN_ROUND" });
+      } catch { reply({ ok: false, code: "SOURCE_UNAVAILABLE" }); }
+    }));
+    socket.on("relay:review", guard(socket, async (raw: unknown, ack?: unknown) => {
+      const reply = (review: unknown) => { if (typeof ack === "function") (ack as (x: { review: unknown }) => void)({ review }); };
+      const p = raw as { relayId?: unknown; round?: unknown; index?: unknown; plies?: unknown } | null;
+      if (!p || typeof p.relayId !== "string" || typeof p.round !== "number" || typeof p.index !== "number" || typeof p.plies !== "number") return reply(null);
+      reply(await reviews.get(reviewStoreKey(p.relayId, p.round, p.index, p.plies)).catch(() => null));
     }));
     socket.on("relay:unwatch", guard(socket, (raw: unknown) => {
       const id = (raw as { relayId?: unknown } | null)?.relayId;

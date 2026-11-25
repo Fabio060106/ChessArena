@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import jwt from "jsonwebtoken";
 import type pg from "pg";
 import type { RelayService } from "../relay/RelayService.js";
+import { REVIEW_MAX_BYTES, reviewStoreKey, validReview, type ReviewStore } from "../relay/ReviewStore.js";
 import { REPERTOIRE_MAX_BYTES, SETTINGS_MAX_BYTES, type GameRepository } from "../persistence/GameRepository.js";
 import { TIME_CONTROLS, type ArenaJwtClaims, type DecisionRequest, type RgLimitKind, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "../config.js";
@@ -79,6 +80,8 @@ export interface ApiDeps {
   isOnline?: (userId: string) => boolean;
   /** retransmissions de tournois officiels */
   relays?: RelayService;
+  /** analyses pédagogiques partagées des parties retransmises */
+  reviews?: ReviewStore;
   /** lien d'une retransmission (LiveChessCloud ou Lichess) → source */
   parseRelaySource?: (raw: string) => { source: "lcc" | "lichess"; id: string; round: number } | null;
 }
@@ -483,6 +486,24 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       return true;
     }
     // ─── Amis : liste personnelle avec présence (en ligne, en partie) ─────────────
+    // analyse pédagogique calculée dans un navigateur : partagée avec tous (trop grosse pour le websocket, borné à 16 Ko)
+    if (url.pathname === "/account/relay-review" && req.method === "POST") {
+      if (!d.relays || !d.reviews) throw new HttpError(503, "UNAVAILABLE");
+      const b = await body(req, REVIEW_MAX_BYTES + 4096);
+      const relayId = typeof b.relayId === "string" ? b.relayId : "";
+      const round = typeof b.round === "number" ? b.round : -1;
+      const index = typeof b.index === "number" ? b.index : -1;
+      const sans = Array.isArray(b.sans) ? (b.sans as unknown[]) : null;
+      if (!relayId || !sans) throw new HttpError(400, "BAD_PAYLOAD");
+      // seulement une partie terminée, connue du serveur, avec exactement les mêmes coups
+      const g = d.relays.findGame(relayId, round, index);
+      if (!g || g.result === null) throw new HttpError(404, "UNKNOWN_GAME");
+      if (g.sans.length !== sans.length || g.sans.some((x, i) => x !== sans[i])) throw new HttpError(409, "MOVES_MISMATCH");
+      if (!validReview(b.review, g.sans)) throw new HttpError(400, "BAD_REVIEW");
+      const saved = await d.reviews.putIfAbsent(reviewStoreKey(relayId, round, index, g.sans.length), b.review, claims.sub);
+      send(200, { ok: true, saved });
+      return true;
+    }
     if (url.pathname === "/account/relays" && req.method === "GET") {
       send(200, { relays: d.relays?.list() ?? [] });
       return true;

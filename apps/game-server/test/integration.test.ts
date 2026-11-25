@@ -750,6 +750,11 @@ describe("retransmissions DGT / LiveChessCloud", () => {
     const add = await admin("relay-add", { by: "Fabio060106", url: `https://view.livechesscloud.com/#${LCC}`, name: "Championnat du monde" });
     const { relay } = (await add.json()) as { relay: { id: string } };
     expect(relay.id).toMatch(/^[0-9a-f]{8}$/);
+    // lien Lichess Broadcast accepté (source de secours)
+    const li = await admin("relay-add", { by: "Fabio060106", url: "https://lichess.org/broadcast/fide-world-championship-2026/AbCd1234", name: "CM (Lichess)" });
+    const liRelay = ((await li.json()) as { relay: { id: string; source: string; lccId: string } }).relay;
+    expect(liRelay).toMatchObject({ source: "lichess", lccId: "tour:AbCd1234" });
+    await admin("relay-remove", { by: "Fabio060106", id: liRelay.id });
 
     const c = client({ token: token({ sub: "spectateur-cm" }) });
     await connected(c);
@@ -770,6 +775,32 @@ describe("retransmissions DGT / LiveChessCloud", () => {
     expect(g.game.sans).toEqual(["e4", "e5"]);
     expect(g.game.turn).toBe("w");
 
+    // analyse partagée : refusée tant que la partie n'est pas finie ; ensuite gardée et servie à tous
+    const review = { version: 2, summary: "Victoire des Blancs.", moves: ["e4", "e5"].map((san, i) => ({ ply: i + 1, san })) };
+    // envoi par HTTP (une analyse dépasse la taille maximale d'un message websocket)
+    const save = async (rv: unknown, sans = ["e4", "e5"]) => {
+      const r = await fetch(`${url}/account/relay-review`, {
+        method: "POST", headers: { authorization: `Bearer ${token({ sub: "spectateur-cm" })}`, "content-type": "application/json" },
+        body: JSON.stringify({ relayId: relay.id, round: 1, index: 1, sans, review: rv }),
+      });
+      const j = (await r.json()) as { ok?: boolean; saved?: boolean; error?: string; code?: string };
+      return r.ok ? { ok: true, saved: j.saved } : { ok: false, status: r.status };
+    };
+    expect(await save(review)).toEqual({ ok: false, status: 404 });
+    const ended = once(c, "relay:game");
+    fakeLcc.set(`${base}/round-1/index.json`, { pairings: [{ live: false, white: sd, black: gk, result: "1-0" }] });
+    fakeLcc.set(`${base}/round-1/game-1.json`, { moves: ["e4 7200", "e5 7195"], result: "1-0" });
+    await ended;
+    expect(await save(review, ["e4", "e6"])).toEqual({ ok: false, status: 409 });
+    expect(await save({ ...review, version: 1 })).toEqual({ ok: false, status: 400 });
+    expect(await save(review)).toEqual({ ok: true, saved: true });
+    expect(await save({ ...review, summary: "autre" })).toEqual({ ok: true, saved: false });
+    // une vraie analyse fait ~20 Ko (bien plus que les 16 Ko d'un message websocket) : acceptée
+    const big = { ...review, summary: "x".repeat(30_000) };
+    await new Promise((r) => setTimeout(r, 1500)); // limite de débit HTTP par adresse IP
+    expect(await save(big)).toMatchObject({ ok: true });
+    expect(await new Promise((r) => c.emit("relay:review", { relayId: relay.id, round: 1, index: 1, plies: 2 }, r))).toEqual({ review });
+
     // chat entre spectateurs de la retransmission
     const msg = once(c, "chat:msg");
     expect(await new Promise((r) => c.emit("chat:send", { gameId: `relay:${relay.id}`, text: "Quelle ouverture !" }, r))).toEqual({ ok: true });
@@ -778,11 +809,6 @@ describe("retransmissions DGT / LiveChessCloud", () => {
     // liste publique (joueurs connectés), puis suppression
     const list = await fetch(`${url}/account/relays`, { headers: { authorization: `Bearer ${token({ sub: "spectateur-cm" })}` } });
     expect(((await list.json()) as { relays: Array<{ id: string }> }).relays.map((x) => x.id)).toContain(relay.id);
-    // lien Lichess Broadcast accepté (source de secours)
-    const li = await admin("relay-add", { by: "Fabio060106", url: "https://lichess.org/broadcast/fide-world-championship-2026/AbCd1234", name: "CM (Lichess)" });
-    const liRelay = ((await li.json()) as { relay: { id: string; source: string; lccId: string } }).relay;
-    expect(liRelay).toMatchObject({ source: "lichess", lccId: "tour:AbCd1234" });
-    await admin("relay-remove", { by: "Fabio060106", id: liRelay.id });
     expect(await (await admin("relay-remove", { by: "Fabio060106", id: relay.id })).json()).toEqual({ ok: true });
     expect(await new Promise((r) => c.emit("relay:watch", { relayId: relay.id }, r as never))).toEqual({ ok: false, code: "UNKNOWN_RELAY" });
     c.disconnect();

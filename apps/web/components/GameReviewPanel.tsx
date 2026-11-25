@@ -1,79 +1,111 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { Engine, ENGINE_NAME, terminalScore } from "../lib/engine";
-import { buildReview, reviewKey, toEval, type GameReview, type PositionEval } from "../lib/gameReview";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Engine, ENGINE_NAME, terminalScore, type EngineLine } from "../lib/engine";
+import { buildTeaching, quizPrompt, TEACHING_VERSION, type TeachMove, type TeachingReview } from "../lib/pedagogy";
 import { replayFromSans } from "../lib/replay";
+import { useSettings } from "../lib/settings";
+import type { AuthProvider } from "../lib/socket";
+import { sharedReview } from "../hooks/useRelay";
+import { GameBoard } from "./GameBoard";
 
-/** Profondeur de l'analyse d'après-partie : assez pour repérer les erreurs, rapide même sur téléphone. */
-const REVIEW_DEPTH = 13;
+/** Profondeur et nombre de suites de l'analyse d'après-partie : assez pour expliquer, rapide même sur téléphone. */
+const DEPTH = 12;
+const LINES = 3;
 
-const MARK_CLS: Record<string, string> = { "??": "text-danger", "?": "text-[#fb923c]", "?!": "text-gold" };
+const MARK_CLS: Record<string, string> = { "??": "text-danger", "?": "text-[#fb923c]", "?!": "text-gold", "!": "text-win" };
+
+function analyseMulti(engine: Engine, fen: string): Promise<EngineLine[]> {
+  return new Promise((resolve) => {
+    let last: EngineLine[] = [];
+    void engine.analyseLines(fen, DEPTH, LINES, (ls) => { last = ls; }).then((best) => resolve(last.length ? last : best ? [best] : []));
+  });
+}
 
 /**
- * Dès qu'une partie retransmise est terminée, Stockfish (dans le navigateur) l'analyse en entier :
- * résumé, précision de chaque joueur, moments clés avec le meilleur coup, courbe cliquable.
- * Le résultat est gardé sur l'appareil : revenir sur la page ne relance pas le calcul.
+ * Analyse pédagogique d'une partie terminée : calculée une seule fois par Stockfish (dans le navigateur du premier
+ * spectateur), puis partagée avec tous via le serveur. Trois vues : résumé, coup par coup, quiz.
  */
-export function GameReviewPanel({ cacheKey, sans, ucis, names, result, onGo }: {
-  cacheKey: { relayId: string; round: number | null; index: number };
-  sans: readonly string[];
-  ucis: readonly string[];
+export function GameReviewPanel({ relayId, round, index, sans, ucis, names, result, onGo, getAuth }: {
+  relayId: string; round: number; index: number;
+  sans: readonly string[]; ucis: readonly string[];
   names: { w: string; b: string };
   result: string | null;
   onGo: (ply: number) => void;
+  getAuth: AuthProvider;
 }) {
-  const key = reviewKey(cacheKey.relayId, cacheKey.round, cacheKey.index, sans.length);
   const steps = useMemo(() => replayFromSans(sans), [sans]);
-  const [review, setReview] = useState<GameReview | null>(null);
+  const [review, setReview] = useState<TeachingReview | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [failed, setFailed] = useState(false);
+  const [tab, setTab] = useState<"summary" | "moves" | "quiz">("summary");
+  const localKey = `arena.teach.${relayId}.${round}.${index}.${sans.length}`;
 
   useEffect(() => {
-    setReview(null); setFailed(false);
-    try {
-      const cached = localStorage.getItem(key);
-      if (cached) { setReview(JSON.parse(cached) as GameReview); return; }
-    } catch { /* cache illisible : on recalcule */ }
-    let engine: Engine | null = null;
+    setReview(null); setFailed(false); setProgress(null);
     let live = true;
-    try { engine = new Engine(); } catch { setFailed(true); return; }
+    let engine: Engine | null = null;
+    const shared = sharedReview(getAuth);
+    const ok = (r: unknown): r is TeachingReview => !!r && typeof r === "object" && (r as TeachingReview).version === TEACHING_VERSION && Array.isArray((r as TeachingReview).moves) && (r as TeachingReview).moves.length === sans.length;
     (async () => {
-      const fens = steps.map((s) => s.fen);
-      const evals: PositionEval[] = [];
+      // 1. déjà sur cet appareil ; 2. déjà calculée par un autre spectateur ; 3. on la calcule (et on la partage)
+      try { const c = JSON.parse(localStorage.getItem(localKey) ?? "null") as unknown; if (ok(c)) { setReview(c); return; } } catch { /* ignoré */ }
+      const s = await shared.get({ relayId, round, index, plies: sans.length });
+      if (!live) return;
+      if (ok(s)) { setReview(s); try { localStorage.setItem(localKey, JSON.stringify(s)); } catch { /* plein */ } return; }
+      try { engine = new Engine(); } catch { setFailed(true); return; }
+      const fens = steps.map((x) => x.fen);
+      const lines: EngineLine[][] = [];
       setProgress({ done: 0, total: fens.length });
       for (let i = 0; i < fens.length; i++) {
         const t = terminalScore(fens[i]!);
-        const l = t ? null : await engine!.analyse(fens[i]!, REVIEW_DEPTH);
+        const ls = t ? [{ depth: 0, score: t, pv: [] }] : await analyseMulti(engine, fens[i]!);
         if (!live) return;
-        const e = toEval(l, t);
-        if (!e) { setFailed(true); return; }
-        evals.push(e);
+        if (!ls.length) { setFailed(true); return; }
+        lines.push(ls);
         setProgress({ done: i + 1, total: fens.length });
       }
-      const r = buildReview({ sans, fens, evals, names, result });
+      const r = buildTeaching({ sans, ucis, fens, lines, names, result });
       setReview(r); setProgress(null);
-      try { localStorage.setItem(key, JSON.stringify(r)); } catch { /* stockage plein : sans conséquence */ }
+      try { localStorage.setItem(localKey, JSON.stringify(r)); } catch { /* plein */ }
+      shared.save({ relayId, round, index, sans: [...sans], review: r });
     })().catch(() => setFailed(true));
-    return () => { live = false; engine?.terminate(); };
+    return () => { live = false; (engine as Engine | null)?.terminate(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [localKey]);
 
-  if (failed) return <p className="panel p-3 text-sm text-muted">L'analyse automatique n'a pas pu se lancer sur cet appareil. Utilise « Analyser cette position ».</p>;
+  if (failed) return <p className="panel p-3 text-sm text-muted">L'analyse n'a pas pu se lancer sur cet appareil. Utilise « Analyser cette position ».</p>;
   if (!review) {
     const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
     return (
       <section className="panel p-3" aria-label="Analyse Stockfish de la partie">
-        <p className="text-sm font-semibold">Partie terminée : {ENGINE_NAME} l'analyse…</p>
+        <p className="text-sm font-semibold">{ENGINE_NAME} prépare l'analyse commentée de la partie…</p>
         <div className="mt-2 h-1.5 overflow-hidden rounded bg-surface-2"><div className="h-full bg-neon transition-all" style={{ width: `${pct}%` }} /></div>
-        <p className="tabular mt-1 text-xs text-muted">{progress ? `${progress.done} / ${progress.total} positions` : "Démarrage du moteur…"}</p>
+        <p className="tabular mt-1 text-xs text-muted">{progress ? `${progress.done} / ${progress.total} positions · elle sera ensuite disponible pour tous les spectateurs` : "Recherche d'une analyse déjà faite…"}</p>
       </section>
     );
   }
-  const n = review.curve.length - 1;
   return (
     <section className="panel flex flex-col gap-3 p-3" aria-label="Analyse Stockfish de la partie">
+      <div className="flex gap-1 rounded-lg bg-surface-2 p-0.5" role="tablist" aria-label="Vues de l'analyse">
+        {([["summary", "Résumé"], ["moves", "Coup par coup"], ["quiz", `Quiz${review.quiz.length ? ` (${review.quiz.length})` : ""}`]] as const).map(([k, label]) => (
+          <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
+            className={`flex-1 rounded-md px-2 py-1.5 text-xs font-semibold sm:text-sm ${tab === k ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>{label}</button>
+        ))}
+      </div>
+      {tab === "summary" && <Summary review={review} names={names} ucis={ucis} onGo={onGo} />}
+      {tab === "moves" && <MoveByMove review={review} onGo={onGo} />}
+      {tab === "quiz" && <Quiz review={review} names={names} fens={steps.map((x) => x.fen)} onGo={onGo} />}
+      <p className="text-[11px] text-muted/80">{ENGINE_NAME}, profondeur {DEPTH}, {LINES} suites par position. Explications générées automatiquement à partir de l'analyse.</p>
+    </section>
+  );
+}
+
+function Summary({ review, names, ucis, onGo }: { review: TeachingReview; names: { w: string; b: string }; ucis: readonly string[]; onGo: (p: number) => void }) {
+  const n = review.curve.length - 1;
+  return (
+    <>
       <div>
-        <p className="text-sm font-semibold"><span className="text-neon">{ENGINE_NAME}</span> · analyse de la partie</p>
+        {review.opening && <p className="text-xs text-muted">Ouverture : <span className="font-semibold text-text">{review.opening}</span></p>}
         <p className="mt-1 text-sm leading-relaxed">{review.summary}</p>
       </div>
       <table className="w-full table-fixed text-sm">
@@ -106,23 +138,117 @@ export function GameReviewPanel({ cacheKey, sans, ucis, names, result, onGo }: {
         <div>
           <p className="mb-1 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Moments clés</p>
           <ol className="flex flex-col gap-2">
-            {review.moments.map((m) => (
-              <li key={m.ply} className="rounded-lg bg-surface-2 p-2 text-sm">
-                <button type="button" onClick={() => onGo(m.ply)} className="font-semibold hover:underline">
-                  {m.move}<span className={`ml-0.5 ${MARK_CLS[m.mark] ?? ""}`}>{m.mark}</span>
-                </button>
-                <span className="ml-1 text-muted">{m.text}</span>
-                {m.line && <span className="mt-0.5 block text-xs text-muted">Suite proposée : {m.line}</span>}
-                <span className="mt-1 flex gap-3 text-xs">
-                  <button type="button" onClick={() => onGo(m.ply - 1)} className="text-neon hover:underline">Voir la position</button>
-                  <a href={`/analyse?m=${ucis.slice(0, m.ply - 1).join(",")}`} className="text-neon hover:underline">Essayer d'autres coups</a>
-                </span>
-              </li>
-            ))}
+            {review.moments.map((km) => {
+              const m = review.moves[km.ply - 1]!;
+              return (
+                <li key={km.ply} className="rounded-lg bg-surface-2 p-2 text-sm">
+                  <button type="button" onClick={() => onGo(km.ply)} className="font-semibold hover:underline">{km.move}<span className={`ml-0.5 ${MARK_CLS[km.mark] ?? ""}`}>{km.mark}</span></button>
+                  <span className="ml-1 text-muted">{m.comment}</span>
+                  {m.alternatives[0] && <span className="mt-0.5 block text-xs text-muted">Suite proposée : {m.alternatives[0].line}</span>}
+                  <span className="mt-1 flex gap-3 text-xs">
+                    <button type="button" onClick={() => onGo(km.ply - 1)} className="text-neon hover:underline">Voir la position</button>
+                    <a href={`/analyse?m=${ucis.slice(0, km.ply - 1).join(",")}`} className="text-neon hover:underline">Essayer d'autres coups</a>
+                  </span>
+                </li>
+              );
+            })}
           </ol>
         </div>
       ) : <p className="text-sm text-muted">Aucune erreur notable : les deux joueurs ont trouvé de bons coups toute la partie.</p>}
-      <p className="text-[11px] text-muted/80">Analyse calculée dans ton navigateur (profondeur {REVIEW_DEPTH}), gardée sur cet appareil.</p>
-    </section>
+    </>
+  );
+}
+
+/** Chaque coup, commenté : verdict, explication, autres options. Clic = l'échiquier va au coup. */
+function MoveByMove({ review, onGo }: { review: TeachingReview; onGo: (p: number) => void }) {
+  const [onlyKey, setOnlyKey] = useState(false);
+  const list = onlyKey ? review.moves.filter((m) => m.mark !== "") : review.moves;
+  return (
+    <div className="flex flex-col gap-2">
+      <label className="flex items-center gap-2 text-xs text-muted">
+        <input type="checkbox" checked={onlyKey} onChange={(e) => setOnlyKey(e.target.checked)} /> Seulement les coups marquants (!, ?!, ?, ??)
+      </label>
+      <ol className="flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto pr-1">
+        {list.map((m) => <MoveRow key={m.ply} m={m} onGo={onGo} />)}
+      </ol>
+    </div>
+  );
+}
+
+function MoveRow({ m, onGo }: { m: TeachMove; onGo: (p: number) => void }) {
+  const num = `${Math.ceil(m.ply / 2)}${m.mover === "w" ? "." : "…"}`;
+  return (
+    <li className={`rounded-lg p-2 text-sm ${m.mark && m.mark !== "!" ? "bg-surface-2" : m.mark === "!" ? "bg-win/10" : ""}`}>
+      <button type="button" onClick={() => onGo(m.ply)} className="font-semibold hover:underline">
+        <span className="text-muted">{num} </span>{m.san}{m.mark && <span className={`ml-0.5 ${MARK_CLS[m.mark]}`}>{m.mark}</span>}
+      </button>
+      <span className="tabular ml-2 text-xs text-muted">{m.evalAfter}</span>
+      <span className="block text-[13px] leading-snug text-muted">{m.comment}</span>
+      {!m.theory && m.alternatives.length > 0 && (
+        <span className="mt-0.5 block text-xs text-muted/90">
+          Autres options : {m.alternatives.map((a, i) => <span key={i}>{i > 0 && " · "}<b className="text-text">{a.san}</b> ({a.eval}){i === 0 && a.line ? ` — ${a.line}` : ""}</span>)}
+        </span>
+      )}
+    </li>
+  );
+}
+
+/** « Trouve le meilleur coup » : la position avant chaque moment clé ; on joue sur l'échiquier, puis on voit la réponse. */
+function Quiz({ review, names, fens, onGo }: { review: TeachingReview; names: { w: string; b: string }; fens: readonly string[]; onGo: (p: number) => void }) {
+  const [settings] = useSettings();
+  const [i, setI] = useState(0);
+  const [answer, setAnswer] = useState<{ uci: string; good: boolean } | null>(null);
+  const [score, setScore] = useState(0);
+  const done = useRef(new Set<number>());
+  if (!review.quiz.length) return <p className="text-sm text-muted">Pas de position de quiz dans cette partie : aucune erreur marquante ni coup unique.</p>;
+  if (i >= review.quiz.length) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-4 text-center">
+        <p className="font-display text-2xl font-bold">{score} / {review.quiz.length}</p>
+        <p className="text-sm text-muted">{score === review.quiz.length ? "Parfait, tu as vu tout ce que Stockfish a vu !" : score > 0 ? "Bien joué ! Revois les autres positions dans « Coup par coup »." : "Pas facile ! Les explications sont dans « Coup par coup »."}</p>
+        <button type="button" onClick={() => { setI(0); setScore(0); setAnswer(null); done.current.clear(); }} className="rounded-lg bg-surface-2 px-3 py-1.5 text-sm">Recommencer</button>
+      </div>
+    );
+  }
+  const ply = review.quiz[i]!;
+  const m = review.moves[ply - 1]!;
+  const fen = fens[ply - 1]!;
+  const tryMove = (from: string, to: string, promotion?: string) => {
+    if (answer) return false;
+    const uci = from + to + (promotion ?? "");
+    const good = m.goodUcis.some((u) => u.slice(0, 4) === uci.slice(0, 4));
+    setAnswer({ uci, good });
+    if (good && !done.current.has(ply)) { done.current.add(ply); setScore((s) => s + 1); }
+    return false; // l'échiquier du quiz ne garde pas le coup : la réponse s'affiche en dessous
+  };
+  const target = m.mark === "!" ? m.san : (m.best ?? m.alternatives[0]?.san ?? "");
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-muted">Position {i + 1} / {review.quiz.length} · score {score}</p>
+      <p className="text-sm font-semibold">{quizPrompt(m, names)}</p>
+      <div className="mx-auto w-full max-w-[340px]">
+        <GameBoard fen={fen} serverFen={fen} orientation={m.mover} myColor={m.mover} interactive={!answer} myTurn
+          lastMove={null} premoves={[]} theme={settings.boardTheme} pieceSet={settings.pieceSet} palette={settings.palette}
+          autoQueen coordinates={settings.coordinates} onMove={tryMove} onCancelPremoves={() => {}}
+          arrows={answer ? [{ from: (m.goodUcis[0] ?? "").slice(0, 2), to: (m.goodUcis[0] ?? "").slice(2, 4), color: "#22c55e" }] : []} />
+      </div>
+      {!answer ? (
+        <div className="flex justify-between text-xs">
+          <span className="text-muted">Joue ton coup sur l'échiquier.</span>
+          <button type="button" onClick={() => setAnswer({ uci: "", good: false })} className="text-neon hover:underline">Voir la réponse</button>
+        </div>
+      ) : (
+        <div className="rounded-lg bg-surface-2 p-2 text-sm">
+          <p className={`font-semibold ${answer.good ? "text-win" : answer.uci ? "text-danger" : ""}`}>
+            {answer.good ? "Bravo, c'est le bon coup !" : answer.uci ? `Non : la bonne réponse était ${target}.` : `La réponse : ${target}.`}
+          </p>
+          <p className="mt-1 text-muted">Dans la partie : {m.san}{m.mark}. {m.comment}</p>
+          <div className="mt-2 flex gap-3 text-xs">
+            <button type="button" onClick={() => { setAnswer(null); setI(i + 1); }} className="neon-btn rounded-lg px-3 py-1 font-semibold">{i + 1 < review.quiz.length ? "Position suivante" : "Voir mon score"}</button>
+            <button type="button" onClick={() => onGo(ply - 1)} className="text-neon hover:underline">Voir sur le grand échiquier</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

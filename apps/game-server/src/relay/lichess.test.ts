@@ -93,4 +93,30 @@ describe("RelayService avec Lichess", () => {
     await svc.poll(rec.id);
     expect(rounds.at(-1)).toMatchObject({ roundName: "Game 3", currentRound: 3, tournamentName: "FIDE World Chess Championship 2026" });
   });
+
+  it("rondes déjà jouées : liste, lecture à la demande (gardée), partie retrouvée", async () => {
+    const json = new Map<string, unknown>(); const text = new Map<string, string>();
+    let reads = 0;
+    const svc = new RelayService({
+      store: new InMemoryRelayStore(), autoStart: false, lichess: "http://li.test",
+      fetchJson: async (u) => json.get(u) ?? null, fetchText: async (u) => { if (u.includes("GAME0001")) reads++; return text.get(u) ?? null; },
+      watchers: () => 1, onRound: () => {}, onGame: () => {},
+    });
+    json.set("http://li.test/api/broadcast/TOUR0001", { rounds: [{ id: "GAME0001", name: "Game 1", finished: true }, { id: "GAME0002", name: "Game 2", ongoing: true }, { id: "GAME0003", name: "Game 3" }] });
+    text.set("http://li.test/api/broadcast/round/GAME0002.pgn", PGN);
+    text.set("http://li.test/api/broadcast/round/GAME0001.pgn", `[White "Sindarov"]\n[Black "Gukesh"]\n[Result "1/2-1/2"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 1/2-1/2\n`);
+    const rec = await svc.add({ name: "CM", source: "lichess", lccId: "tour:TOUR0001", round: 0, createdBy: "x" });
+    await svc.poll(rec.id);
+    expect(svc.list()[0]!.rounds).toEqual([
+      { number: 1, name: "Game 1", state: "finished" }, { number: 2, name: "Game 2", state: "ongoing" }, { number: 3, name: "Game 3", state: "upcoming" },
+    ]);
+    const r1 = await svc.roundView(rec.id, 1);
+    expect(r1).toMatchObject({ currentRound: 1, roundName: "Game 1", live: false });
+    expect(r1!.gameList[0]!.sans).toEqual(["e4", "e5", "Nf3", "Nc6", "Bb5", "Nf6"]);
+    await svc.roundView(rec.id, 1);
+    expect(reads).toBe(1); // partie finie : pas relue
+    expect(svc.findGame(rec.id, 1, 1)?.result).toBe("1/2-1/2");
+    expect(svc.findGame(rec.id, 2, 1)?.sans).toEqual(["d4", "Nf6", "c4"]);
+    expect(await svc.roundView(rec.id, 9)).toBeNull();
+  });
 });

@@ -455,6 +455,13 @@ export interface RelayGameView {
   turn: Color;
 }
 
+/** Ronde d'un tournoi retransmis (pour rouvrir les parties déjà jouées). */
+export interface RelayRoundRef {
+  number: number;
+  name: string;
+  state: "finished" | "ongoing" | "upcoming" | "unknown";
+}
+
 export interface RelaySummary {
   id: string;
   name: string;
@@ -464,6 +471,8 @@ export interface RelaySummary {
   currentRound: number | null;
   /** nom de la ronde à la source (Lichess : « Game 3 »…), sinon null */
   roundName?: string | null;
+  /** toutes les rondes connues (pour revoir les précédentes) */
+  rounds?: RelayRoundRef[];
   games: number;
   live: boolean;
   updatedAt: number | null;
@@ -547,6 +556,10 @@ export interface ClientToServerEvents {
   /** suivre une retransmission (chat : gameId « relay:<id> ») */
   "relay:watch": (p: { relayId: string }, ack: (r: { ok: true; round: RelayRoundView } | { ok: false; code: string }) => void) => void;
   "relay:unwatch": (p: { relayId: string }) => void;
+  /** une ronde précise (déjà jouée) : envoyée une fois, sans suivi en direct */
+  "relay:roundView": (p: { relayId: string; round: number }, ack: (r: { ok: true; round: RelayRoundView } | { ok: false; code: string }) => void) => void;
+  /** analyse pédagogique d'une partie terminée : calculée une fois (dans un navigateur), partagée avec tous */
+  "relay:review": (p: { relayId: string; round: number; index: number; plies: number }, ack: (r: { review: unknown | null }) => void) => void;
 }
 
 /** Claims du JWT émis par l'API d'auth (le game-server ne fait que vérifier). */
