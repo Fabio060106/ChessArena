@@ -462,6 +462,8 @@ export interface RelaySummary {
   round: number;
   /** ronde réellement affichée */
   currentRound: number | null;
+  /** nom de la ronde à la source (Lichess : « Game 3 »…), sinon null */
+  roundName?: string | null;
   games: number;
   live: boolean;
   updatedAt: number | null;

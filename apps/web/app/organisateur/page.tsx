@@ -127,7 +127,7 @@ function Relays() {
     setMsg(null);
     const r = await call("relay-add", { url: url.trim(), name: name.trim() }).catch(() => null);
     if (!r?.ok) {
-      setMsg({ ok: false, text: r?.status === 400 ? "Lien non reconnu : il faut un lien view.livechesscloud.com/#… (ou l'identifiant du tournoi)." : "Ajout impossible pour l'instant (serveur indisponible ?)." });
+      setMsg({ ok: false, text: r?.status === 400 ? "Lien non reconnu : il faut un lien view.livechesscloud.com/#… ou lichess.org/broadcast/…" : "Ajout impossible pour l'instant (serveur indisponible ?)." });
       return;
     }
     setMsg({ ok: true, text: "Retransmission ajoutée : elle apparaît dans « En direct » pour tous les joueurs." });
@@ -143,12 +143,13 @@ function Relays() {
     <section className="panel p-4">
       <h2 className="font-semibold">Retransmissions de tournois</h2>
       <p className="mt-1 text-sm text-muted">
-        Colle le lien LiveChessCloud d'un tournoi (échiquiers électroniques DGT), du type <code className="text-xs">https://view.livechesscloud.com/#…</code>.
-        Les coups arrivent en direct pour tous les spectateurs. Sans numéro de ronde à la fin du lien, la ronde la plus récente est suivie automatiquement.
+        Colle le lien du tournoi : de préférence LiveChessCloud (échiquiers électroniques DGT), du type <code className="text-xs">https://view.livechesscloud.com/#…</code>,
+        sinon le lien de la retransmission Lichess, du type <code className="text-xs">https://lichess.org/broadcast/…</code> (lien du tournoi ou d'une ronde).
+        Les coups arrivent en direct pour tous les spectateurs ; avec un lien de tournoi, la ronde en cours est suivie automatiquement.
       </p>
       <form onSubmit={add} className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-        <label className="flex flex-1 flex-col gap-1 text-sm">Lien LiveChessCloud
-          <input value={url} onChange={(e) => setUrl(e.target.value)} required placeholder="https://view.livechesscloud.com/#…" spellCheck={false}
+        <label className="flex flex-1 flex-col gap-1 text-sm">Lien du tournoi (LiveChessCloud ou Lichess)
+          <input value={url} onChange={(e) => setUrl(e.target.value)} required placeholder="https://view.livechesscloud.com/#… ou https://lichess.org/broadcast/…" spellCheck={false}
             className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm" />
         </label>
         <label className="flex flex-col gap-1 text-sm sm:w-56">Nom affiché
@@ -164,7 +165,7 @@ function Relays() {
             <li key={r.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
               <a href={`/retransmissions/${r.id}`} className="flex-1 font-semibold hover:underline">{r.name}</a>
               <span className="text-xs text-muted">
-                {r.error ? <span className="text-danger">{r.error}</span> : r.currentRound ? `ronde ${r.currentRound} · ${r.games} partie${r.games > 1 ? "s" : ""}${r.live ? " · en cours" : ""}` : "connexion à la source…"}
+                {r.error ? <span className="text-danger">{r.error}</span> : r.currentRound ? `${r.roundName ?? `ronde ${r.currentRound}`} · ${r.games} partie${r.games > 1 ? "s" : ""}${r.live ? " · en cours" : ""}` : "connexion à la source…"}
               </span>
               <button type="button" onClick={() => void remove(r.id, r.name)} className="text-xs text-muted underline hover:text-danger">Arrêter</button>
             </li>

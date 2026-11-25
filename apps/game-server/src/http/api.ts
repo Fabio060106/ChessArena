@@ -79,7 +79,8 @@ export interface ApiDeps {
   isOnline?: (userId: string) => boolean;
   /** retransmissions de tournois officiels */
   relays?: RelayService;
-  parseLcc?: (raw: string) => { id: string; round: number } | null;
+  /** lien d'une retransmission (LiveChessCloud ou Lichess) → source */
+  parseRelaySource?: (raw: string) => { source: "lcc" | "lichess"; id: string; round: number } | null;
 }
 
 class HttpError extends Error {
@@ -257,12 +258,12 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
             return true;
           }
           if (url.pathname === "/auth/admin/relay-add") {
-            if (!d.relays || !d.parseLcc) throw new HttpError(503, "UNAVAILABLE");
-            const ref = d.parseLcc(str(b.url));
+            if (!d.relays || !d.parseRelaySource) throw new HttpError(503, "UNAVAILABLE");
+            const ref = d.parseRelaySource(str(b.url));
             if (!ref) throw new HttpError(400, "BAD_URL");
             const round = Number.isInteger(b.round) && (b.round as number) >= 0 && (b.round as number) < 1000 ? (b.round as number) : ref.round;
             const name = str(b.name).trim().slice(0, 80) || "Retransmission";
-            const rec = await d.relays.add({ name, lccId: ref.id, round, createdBy: str(b.by) || "organisateur" });
+            const rec = await d.relays.add({ name, source: ref.source, lccId: ref.id, round, createdBy: str(b.by) || "organisateur" });
             send(200, { ok: true, relay: rec });
             return true;
           }

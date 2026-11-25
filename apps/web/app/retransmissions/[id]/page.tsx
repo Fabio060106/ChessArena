@@ -43,7 +43,7 @@ function Relay({ relayId, me }: { relayId: string; me: string }) {
     <>
       <div className="panel flex flex-wrap items-baseline gap-x-3 gap-y-1 p-3">
         <h1 className="font-display text-lg font-bold">{round.name}</h1>
-        <span className="text-sm text-muted">{round.currentRound ? `Ronde ${round.currentRound}` : "Connexion à la source…"}</span>
+        <span className="text-sm text-muted">{round.currentRound ? round.roundName ?? `Ronde ${round.currentRound}` : "Connexion à la source…"}</span>
         {round.live && <span className="text-xs font-semibold text-danger"><span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-danger align-middle" />En direct</span>}
         {!connected && <span className="text-xs text-gold">reconnexion…</span>}
         {round.error && <span role="status" className="w-full text-xs text-gold">{round.error}</span>}
@@ -174,7 +174,7 @@ function RelayGame({ game, header, chatPanel, chatCount }: { game: RelayGameView
           )}
         </div>
         <p className="px-1 text-[11px] text-muted/80">
-          Coups transmis par les échiquiers électroniques du tournoi (DGT / LiveChessCloud), avec le léger décalage imposé par l'organisateur.
+          Coups transmis en direct depuis le tournoi (échiquiers électroniques DGT ou retransmission Lichess), avec le léger décalage imposé par l'organisateur.
           L'évaluation est calculée par {ENGINE_NAME} dans ton navigateur.
         </p>
       </aside>

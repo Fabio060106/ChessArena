@@ -778,6 +778,11 @@ describe("retransmissions DGT / LiveChessCloud", () => {
     // liste publique (joueurs connectés), puis suppression
     const list = await fetch(`${url}/account/relays`, { headers: { authorization: `Bearer ${token({ sub: "spectateur-cm" })}` } });
     expect(((await list.json()) as { relays: Array<{ id: string }> }).relays.map((x) => x.id)).toContain(relay.id);
+    // lien Lichess Broadcast accepté (source de secours)
+    const li = await admin("relay-add", { by: "Fabio060106", url: "https://lichess.org/broadcast/fide-world-championship-2026/AbCd1234", name: "CM (Lichess)" });
+    const liRelay = ((await li.json()) as { relay: { id: string; source: string; lccId: string } }).relay;
+    expect(liRelay).toMatchObject({ source: "lichess", lccId: "tour:AbCd1234" });
+    await admin("relay-remove", { by: "Fabio060106", id: liRelay.id });
     expect(await (await admin("relay-remove", { by: "Fabio060106", id: relay.id })).json()).toEqual({ ok: true });
     expect(await new Promise((r) => c.emit("relay:watch", { relayId: relay.id }, r as never))).toEqual({ ok: false, code: "UNKNOWN_RELAY" });
     c.disconnect();

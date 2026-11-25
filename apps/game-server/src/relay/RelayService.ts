@@ -5,9 +5,17 @@ import {
   lccGameView, lccUrls, LCC_POOL, normResult, roundCandidates,
   type LccGame, type LccRound, type LccTournament,
 } from "./lcc.js";
+import { decodeLichess, LICHESS, lichessPgnGames, pickLichessRound, type LichessRoundInfo, type LichessTour } from "./lichess.js";
 
 /** Retransmission enregistrée (organisateur). */
-export interface RelayRecord { id: string; name: string; lccId: string; round: number; createdBy: string; createdAt: string }
+export interface RelayRecord {
+  id: string; name: string;
+  /** source : échiquiers DGT (LiveChessCloud, par défaut) ou Lichess Broadcast (secours) */
+  source?: "lcc" | "lichess";
+  /** identifiant à la source : uuid LiveChessCloud, ou « tour:… » / « round:… » pour Lichess */
+  lccId: string;
+  round: number; createdBy: string; createdAt: string;
+}
 
 export interface RelayStore {
   list(): Promise<RelayRecord[]>;
@@ -25,22 +33,35 @@ export class InMemoryRelayStore implements RelayStore {
 export class PgRelayStore implements RelayStore {
   constructor(private readonly pool: pg.Pool) {}
   async list(): Promise<RelayRecord[]> {
-    const r = await this.pool.query<{ id: string; name: string; lcc_id: string; round: number; created_by: string; created_at: Date }>(
-      "SELECT id, name, lcc_id, round, created_by, created_at FROM relays ORDER BY created_at DESC");
-    return r.rows.map((x) => ({ id: x.id, name: x.name, lccId: x.lcc_id, round: x.round, createdBy: x.created_by, createdAt: x.created_at.toISOString() }));
+    const r = await this.pool.query<{ id: string; name: string; source: string; lcc_id: string; round: number; created_by: string; created_at: Date }>(
+      "SELECT id, name, source, lcc_id, round, created_by, created_at FROM relays ORDER BY created_at DESC");
+    return r.rows.map((x) => ({ id: x.id, name: x.name, source: x.source === "lichess" ? "lichess" : "lcc", lccId: x.lcc_id, round: x.round, createdBy: x.created_by, createdAt: x.created_at.toISOString() }));
   }
   async add(r: RelayRecord) {
-    await this.pool.query("INSERT INTO relays (id, name, lcc_id, round, created_by) VALUES ($1,$2,$3,$4,$5)", [r.id, r.name, r.lccId, r.round, r.createdBy]);
+    await this.pool.query("INSERT INTO relays (id, name, source, lcc_id, round, created_by) VALUES ($1,$2,$3,$4,$5,$6)", [r.id, r.name, r.source ?? "lcc", r.lccId, r.round, r.createdBy]);
   }
   async remove(id: string) { await this.pool.query("DELETE FROM relays WHERE id = $1", [id]); }
 }
 
 export type FetchJson = (url: string) => Promise<unknown | null>;
+export type FetchText = (url: string) => Promise<string | null>;
+
+const UA = { "user-agent": "ChessAurum relay (+https://chess-arena-97af.vercel.app)" };
+
+/** GET texte (PGN) ; 404 → null ; 429 (trop de requêtes) → exception reconnue, on ralentit. */
+export function httpFetchText(timeoutMs = 10_000): FetchText {
+  return async (url) => {
+    const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: UA });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.text();
+  };
+}
 
 /** GET JSON avec délai maximal ; 404 → null (partie pas encore créée), autre erreur → exception. */
 export function httpFetchJson(timeoutMs = 8_000): FetchJson {
   return async (url) => {
-    const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: { "user-agent": "ChessAurum relay (+https://chess-arena-97af.vercel.app)" } });
+    const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: UA });
     if (r.status === 404) return null;
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
@@ -51,6 +72,11 @@ interface Live {
   rec: RelayRecord;
   tournamentName: string | null;
   currentRound: number | null;
+  roundName: string | null;
+  /** Lichess : tournoi retrouvé à partir d'un lien de ronde (on suit alors tout le tournoi) */
+  lichessTour?: string;
+  /** source qui demande de ralentir (HTTP 429) : pause jusqu'à cette date */
+  pausedUntil: number;
   games: Map<number, { view: RelayGameView; key: string }>;
   updatedAt: number | null;
   error: string | null;
@@ -62,6 +88,9 @@ interface Live {
 export interface RelayOptions {
   store: RelayStore;
   fetchJson?: FetchJson;
+  fetchText?: FetchText;
+  /** adresse de Lichess (tests : faux serveur) */
+  lichess?: string;
   pool?: string;
   /** spectateurs d'une retransmission (rythme de rafraîchissement) */
   watchers: (relayId: string) => number;
@@ -81,12 +110,14 @@ export interface RelayOptions {
 export class RelayService {
   private readonly live = new Map<string, Live>();
   private readonly fetchJson: FetchJson;
+  private readonly fetchText: FetchText;
   private readonly iv: { watched: number; idle: number; finished: number };
   private readonly now: () => number;
   private closed = false;
 
   constructor(private readonly o: RelayOptions) {
     this.fetchJson = o.fetchJson ?? httpFetchJson();
+    this.fetchText = o.fetchText ?? httpFetchText();
     this.iv = o.intervals ?? { watched: 3_000, idle: 30_000, finished: 60_000 };
     this.now = o.now ?? Date.now;
   }
@@ -95,7 +126,7 @@ export class RelayService {
     for (const rec of await this.o.store.list()) this.attach(rec);
   }
 
-  async add(input: { name: string; lccId: string; round: number; createdBy: string }): Promise<RelayRecord> {
+  async add(input: { name: string; source?: "lcc" | "lichess"; lccId: string; round: number; createdBy: string }): Promise<RelayRecord> {
     const rec: RelayRecord = { id: randomBytes(4).toString("hex"), createdAt: new Date(this.now()).toISOString(), ...input };
     await this.o.store.add(rec);
     this.attach(rec);
@@ -134,7 +165,7 @@ export class RelayService {
   }
 
   private attach(rec: RelayRecord): void {
-    const l: Live = { rec, tournamentName: null, currentRound: null, games: new Map(), updatedAt: null, error: null, timer: null, polls: 0, busy: false };
+    const l: Live = { rec, tournamentName: null, currentRound: null, roundName: null, pausedUntil: 0, games: new Map(), updatedAt: null, error: null, timer: null, polls: 0, busy: false };
     this.live.set(rec.id, l);
     if (this.o.autoStart !== false) this.schedule(l, 0);
   }
@@ -145,7 +176,10 @@ export class RelayService {
     l.timer = setTimeout(() => void this.poll(l.rec.id).finally(() => {
       if (!this.live.has(l.rec.id)) return;
       const anyLive = [...l.games.values()].some((g) => g.view.live || (g.view.result === null && g.view.sans.length > 0));
-      const ms2 = this.o.watchers(l.rec.id) > 0 ? this.iv.watched : anyLive ? this.iv.idle : this.iv.finished;
+      let ms2 = this.o.watchers(l.rec.id) > 0 ? this.iv.watched : anyLive ? this.iv.idle : this.iv.finished;
+      // Lichess : on reste discret (au plus une lecture toutes les 5 s)
+      if (l.rec.source === "lichess") ms2 = Math.max(ms2, Math.min(5_000, this.iv.finished));
+      ms2 = Math.max(ms2, l.pausedUntil - this.now());
       this.schedule(l, ms2);
     }), ms);
     l.timer.unref?.();
@@ -154,7 +188,7 @@ export class RelayService {
   private summary(l: Live): RelaySummary {
     const games = [...l.games.values()];
     return {
-      id: l.rec.id, name: l.rec.name, round: l.rec.round, currentRound: l.currentRound,
+      id: l.rec.id, name: l.rec.name, round: l.rec.round, currentRound: l.currentRound, roundName: l.roundName,
       games: games.length, live: games.some((g) => g.view.live), updatedAt: l.updatedAt, error: l.error,
     };
   }
@@ -165,6 +199,7 @@ export class RelayService {
     if (!l || l.busy) return;
     l.busy = true;
     try {
+      if (l.rec.source === "lichess") { await this.pollLichess(l); return; }
       const urls = lccUrls(l.rec.lccId, this.o.pool ?? LCC_POOL);
       // tournoi : nom, et ronde à suivre en mode automatique (relu à chaque fois : la ronde peut changer)
       let round = l.rec.round;
@@ -198,12 +233,53 @@ export class RelayService {
       if (roundChanged) this.o.onRound(this.view(l.rec.id)!);
       else for (const g of changed) this.o.onGame(l.rec.id, round, g);
     } catch (e) {
+      if (/HTTP 429/.test((e as Error).message)) l.pausedUntil = this.now() + 60_000;
       l.error = "Source injoignable pour le moment (nouvel essai automatique).";
       console.warn("[relay]", l.rec.id, (e as Error).message);
     } finally {
       l.polls++;
       l.busy = false;
     }
+  }
+
+  /** Lichess : ronde (suivie automatiquement pour un tournoi) puis toutes ses parties en un seul PGN. */
+  private async pollLichess(l: Live): Promise<void> {
+    const ref = decodeLichess(l.rec.lccId);
+    if (!ref) throw new Error("référence Lichess invalide");
+    const base = this.o.lichess ?? LICHESS;
+    let roundId = ref.id; let roundNo = 1; let roundName: string | null = l.roundName;
+    // lien d'une ronde (« Game 3 ») : on retrouve le tournoi pour suivre aussi les rondes suivantes
+    if (ref.kind === "round" && !l.lichessTour && l.polls % 20 === 0) {
+      const info = (await this.fetchJson(`${base}/api/broadcast/-/-/${ref.id}`)) as (LichessRoundInfo & { tour?: { id?: string } }) | null;
+      if (typeof info?.tour?.name === "string") l.tournamentName = info.tour.name.slice(0, 120);
+      if (typeof info?.round?.name === "string") roundName = info.round.name.slice(0, 80);
+      if (typeof info?.tour?.id === "string" && /^[A-Za-z0-9]{8}$/.test(info.tour.id)) l.lichessTour = info.tour.id;
+    }
+    const tourId = ref.kind === "tour" ? ref.id : l.lichessTour;
+    if (tourId) {
+      const t = (await this.fetchJson(`${base}/api/broadcast/${tourId}`)) as LichessTour | null;
+      if (!t) throw new Error("tournoi Lichess introuvable");
+      if (typeof t.tour?.name === "string") l.tournamentName = t.tour.name.slice(0, 120);
+      const pick = pickLichessRound(t);
+      if (!pick) { l.updatedAt = this.now(); l.error = null; return; }
+      ({ id: roundId, number: roundNo, name: roundName } = pick);
+    }
+    const pgn = await this.fetchText(`${base}/api/broadcast/round/${roundId}.pgn`);
+    const views = pgn ? lichessPgnGames(pgn, this.now()).slice(0, 200) : [];
+    const roundChanged = l.currentRound !== roundNo || (!!tourId && l.roundName !== roundName);
+    if (roundChanged) { l.games.clear(); l.currentRound = roundNo; }
+    l.roundName = roundName;
+    const changed: RelayGameView[] = [];
+    for (const view of views) {
+      const key = JSON.stringify([view.sans.length, view.result, view.live, view.clocks, view.white.name, view.black.name]);
+      if (l.games.get(view.index)?.key === key) continue;
+      l.games.set(view.index, { view, key });
+      changed.push(view);
+    }
+    l.updatedAt = this.now();
+    l.error = null;
+    if (roundChanged) this.o.onRound(this.view(l.rec.id)!);
+    else for (const g of changed) this.o.onGame(l.rec.id, roundNo, g);
   }
 
   /** Ronde en cours, sinon la plus récente déjà commencée (quelques lectures au plus). */

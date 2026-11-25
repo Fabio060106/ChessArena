@@ -8,8 +8,17 @@ import { authenticate, canPlay, type AuthUser } from "./auth.js";
 import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
 import { Matchmaker } from "./matchmaking/Matchmaker.js";
 import { GameManager, userRoom } from "./game/GameManager.js";
-import { InMemoryRelayStore, PgRelayStore, RelayService, type FetchJson, type RelayStore } from "./relay/RelayService.js";
+import { InMemoryRelayStore, PgRelayStore, RelayService, type FetchJson, type FetchText, type RelayStore } from "./relay/RelayService.js";
 import { parseLccUrl } from "./relay/lcc.js";
+import { encodeLichess, parseLichessUrl } from "./relay/lichess.js";
+
+/** Lien collé par l'organisateur : échiquiers DGT (LiveChessCloud) d'abord, sinon Lichess Broadcast. */
+function parseRelaySource(raw: string): { source: "lcc" | "lichess"; id: string; round: number } | null {
+  const lcc = parseLccUrl(raw);
+  if (lcc) return { source: "lcc", id: lcc.id, round: lcc.round };
+  const li = parseLichessUrl(raw);
+  return li ? { source: "lichess", id: encodeLichess(li), round: 0 } : null;
+}
 import { CHALLENGE_TTL_MS, ChallengeService, type Challenge } from "./social/ChallengeService.js";
 import { InMemoryLedger, PgLedger, lockStakes, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
 import { ChatService } from "./social/ChatService.js";
@@ -77,6 +86,8 @@ export interface GameServerDeps {
   /** retransmissions : stockage et lecture de la source (tests : faux LiveChessCloud) */
   relayStore?: RelayStore;
   relayFetch?: FetchJson;
+  relayFetchText?: FetchText;
+  relayLichess?: string;
   relayPool?: string;
   relayIntervals?: { watched: number; idle: number; finished: number };
 }
@@ -167,7 +178,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { relays, parseLcc: parseLccUrl, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
+      void handleApi(req, res, { relays, parseRelaySource, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
       fairplayMem, isOnline: (u) => (io.of("/").adapter.rooms.get(userRoom(u))?.size ?? 0) > 0, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
       return;
     }
@@ -245,7 +256,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const relays = new RelayService({
     store: deps.relayStore ?? (pool ? new PgRelayStore(pool) : new InMemoryRelayStore()),
     // LCC_POOL_URL : faux LiveChessCloud pour les essais locaux
-    fetchJson: deps.relayFetch, pool: deps.relayPool ?? (process.env.LCC_POOL_URL || undefined), intervals: deps.relayIntervals,
+    fetchJson: deps.relayFetch, fetchText: deps.relayFetchText, lichess: deps.relayLichess ?? (process.env.LICHESS_URL || undefined), pool: deps.relayPool ?? (process.env.LCC_POOL_URL || undefined), intervals: deps.relayIntervals,
     watchers: (id) => io.of("/").adapter.rooms.get(relayRoom(id))?.size ?? 0,
     onRound: (r) => io.to(relayRoom(r.id)).emit("relay:round", r),
     onGame: (relayId, round, game) => io.to(relayRoom(relayId)).emit("relay:game", { relayId, round, game }),

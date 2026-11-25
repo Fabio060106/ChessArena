@@ -45,7 +45,7 @@ function RelayList() {
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold">{r.name}</span>
                 <span className="text-xs text-muted">
-                  {r.currentRound ? `Ronde ${r.currentRound} · ${r.games} partie${r.games > 1 ? "s" : ""}` : "Bientôt"}
+                  {r.currentRound ? `${r.roundName ?? `Ronde ${r.currentRound}`} · ${r.games} partie${r.games > 1 ? "s" : ""}` : "Bientôt"}
                 </span>
               </span>
               {r.live && <span className="text-xs font-semibold text-danger"><span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-danger align-middle" />En direct</span>}
