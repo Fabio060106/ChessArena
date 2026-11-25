@@ -7,6 +7,7 @@ import { GameBoard } from "../../../components/GameBoard";
 import { MoveList } from "../../../components/MoveList";
 import { MoveNav, usePlyKeys } from "../../../components/MoveNav";
 import { ChatPanel } from "../../../components/ChatPanel";
+import { GameReviewPanel } from "../../../components/GameReviewPanel";
 import { FlipButton } from "../../../components/SiteNav";
 import { useGameAuth, useMe } from "../../../hooks/useMe";
 import { formatClock, relayClock, useRelay } from "../../../hooks/useRelay";
@@ -74,13 +75,15 @@ function Relay({ relayId, me }: { relayId: string; me: string }) {
       </div>
     );
   }
-  return <RelayGame key={`${round.currentRound}-${game.index}`} game={game} header={header} chatPanel={chatPanel} chatCount={chat.length} />;
+  return <RelayGame key={`${round.currentRound}-${game.index}`} relayId={relayId} roundNo={round.currentRound} game={game} header={header} chatPanel={chatPanel} chatCount={chat.length} />;
 }
 
 const short = (n: string) => (n.length > 18 ? n.split(" ").at(-1) ?? n : n);
 
 /** Une partie retransmise : pendules, navigation dans les coups, évaluation, lien vers l'analyse, chat. */
-function RelayGame({ game, header, chatPanel, chatCount }: { game: RelayGameView; header: React.ReactNode; chatPanel: React.ReactNode; chatCount: number }) {
+function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
+  relayId: string; roundNo: number | null; game: RelayGameView; header: React.ReactNode; chatPanel: React.ReactNode; chatCount: number;
+}) {
   const [settings] = useSettings();
   const [flipped, flip] = useFlip();
   const [tab, setTab] = useState<"moves" | "chat">("moves");
@@ -158,6 +161,10 @@ function RelayGame({ game, header, chatPanel, chatCount }: { game: RelayGameView
         </section>
       </div>
       <aside className="flex w-full flex-col gap-3">
+        {game.result && game.sans.length > 0 && (
+          <GameReviewPanel cacheKey={{ relayId, round: roundNo, index: game.index }} sans={game.sans} ucis={game.ucis}
+            names={{ w: game.white.name, b: game.black.name }} result={game.result} onGo={go} />
+        )}
         <div className="panel p-3">
           <div className="mb-3 flex gap-1 rounded-lg bg-surface-2 p-0.5" role="tablist">
             {([["moves", "Coups"], ["chat", `Chat${chatCount ? ` (${chatCount})` : ""}`]] as const).map(([k, label]) => (
