@@ -1,4 +1,5 @@
 "use client";
+import type { RelaySummary } from "@chessarena/shared";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { PageHeader } from "../../components/PageHeader";
 import { useMe } from "../../hooks/useMe";
@@ -24,7 +25,7 @@ export default function OrganizerPage() {
       <div className="mx-auto flex max-w-[760px] flex-col gap-3 px-2 pb-8 sm:px-3">
         {admin === null && <p className="panel p-4 text-sm text-muted">Chargement…</p>}
         {admin === false && <p className="panel p-4 text-sm text-danger">Cette page est réservée aux organisateurs.</p>}
-        {admin && <><FairPlay /><ResetCode /><Moderation /></>}
+        {admin && <><Relays /><FairPlay /><ResetCode /><Moderation /></>}
       </div>
     </main>
   );
@@ -109,6 +110,71 @@ interface FairCase {
 }
 
 /** Anti-triche : parties signalées (sorties d'onglet, temps métronomiques, signalements), revue avec Stockfish, décision. */
+/** Retransmissions de tournois officiels (échiquiers électroniques DGT, via LiveChessCloud). */
+function Relays() {
+  const [list, setList] = useState<RelaySummary[] | null>(null);
+  const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const load = useCallback(async () => {
+    const r = await call("relays").catch(() => null);
+    if (r?.ok) setList(((await r.json()) as { relays: RelaySummary[] }).relays);
+  }, []);
+  // état de chaque retransmission (ronde, parties, erreurs) rafraîchi régulièrement
+  useEffect(() => { void load(); const t = setInterval(() => void load(), 5_000); return () => clearInterval(t); }, [load]);
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMsg(null);
+    const r = await call("relay-add", { url: url.trim(), name: name.trim() }).catch(() => null);
+    if (!r?.ok) {
+      setMsg({ ok: false, text: r?.status === 400 ? "Lien non reconnu : il faut un lien view.livechesscloud.com/#… (ou l'identifiant du tournoi)." : "Ajout impossible pour l'instant (serveur indisponible ?)." });
+      return;
+    }
+    setMsg({ ok: true, text: "Retransmission ajoutée : elle apparaît dans « En direct » pour tous les joueurs." });
+    setUrl(""); setName("");
+    await load();
+  };
+  const remove = async (id: string, n: string) => {
+    if (!window.confirm(`Arrêter la retransmission « ${n} » ?`)) return;
+    await call("relay-remove", { id });
+    await load();
+  };
+  return (
+    <section className="panel p-4">
+      <h2 className="font-semibold">Retransmissions de tournois</h2>
+      <p className="mt-1 text-sm text-muted">
+        Colle le lien LiveChessCloud d'un tournoi (échiquiers électroniques DGT), du type <code className="text-xs">https://view.livechesscloud.com/#…</code>.
+        Les coups arrivent en direct pour tous les spectateurs. Sans numéro de ronde à la fin du lien, la ronde la plus récente est suivie automatiquement.
+      </p>
+      <form onSubmit={add} className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+        <label className="flex flex-1 flex-col gap-1 text-sm">Lien LiveChessCloud
+          <input value={url} onChange={(e) => setUrl(e.target.value)} required placeholder="https://view.livechesscloud.com/#…" spellCheck={false}
+            className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm" />
+        </label>
+        <label className="flex flex-col gap-1 text-sm sm:w-56">Nom affiché
+          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="Championnat du monde 2026"
+            className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm" />
+        </label>
+        <button type="submit" className="neon-btn rounded-lg px-4 py-2 text-sm font-semibold">Ajouter</button>
+      </form>
+      {msg && <p role="status" className={`mt-2 text-sm ${msg.ok ? "text-neon" : "text-danger"}`}>{msg.text}</p>}
+      {list && list.length > 0 && (
+        <ul className="mt-3 flex flex-col divide-y divide-line">
+          {list.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+              <a href={`/retransmissions/${r.id}`} className="flex-1 font-semibold hover:underline">{r.name}</a>
+              <span className="text-xs text-muted">
+                {r.error ? <span className="text-danger">{r.error}</span> : r.currentRound ? `ronde ${r.currentRound} · ${r.games} partie${r.games > 1 ? "s" : ""}${r.live ? " · en cours" : ""}` : "connexion à la source…"}
+              </span>
+              <button type="button" onClick={() => void remove(r.id, r.name)} className="text-xs text-muted underline hover:text-danger">Arrêter</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function FairPlay() {
   const [data, setData] = useState<{ cases: FairCase[]; suspended: string[] } | null>(null);
   const [err, setErr] = useState(false);

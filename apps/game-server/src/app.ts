@@ -8,6 +8,8 @@ import { authenticate, canPlay, type AuthUser } from "./auth.js";
 import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
 import { Matchmaker } from "./matchmaking/Matchmaker.js";
 import { GameManager, userRoom } from "./game/GameManager.js";
+import { InMemoryRelayStore, PgRelayStore, RelayService, type FetchJson, type RelayStore } from "./relay/RelayService.js";
+import { parseLccUrl } from "./relay/lcc.js";
 import { CHALLENGE_TTL_MS, ChallengeService, type Challenge } from "./social/ChallengeService.js";
 import { InMemoryLedger, PgLedger, lockStakes, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
 import { ChatService } from "./social/ChatService.js";
@@ -53,6 +55,8 @@ interface SocketData {
   lag: LagTracker;
   /** partie regardée en spectateur (une à la fois par onglet) */
   watching: string | null;
+  /** retransmission suivie (une à la fois par onglet) */
+  relay?: string | null;
 }
 
 export type ArenaIO = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
@@ -70,6 +74,11 @@ export interface GameServerDeps {
   /** résolveur IP → pays (tests) ; sinon chargé depuis cfg.geoIpCsvPath */
   geoResolver?: GeoResolver;
   kycProvider?: KycProvider;
+  /** retransmissions : stockage et lecture de la source (tests : faux LiveChessCloud) */
+  relayStore?: RelayStore;
+  relayFetch?: FetchJson;
+  relayPool?: string;
+  relayIntervals?: { watched: number; idle: number; finished: number };
 }
 
 export interface GameServer {
@@ -158,7 +167,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
+      void handleApi(req, res, { relays, parseLcc: parseLccUrl, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
       fairplayMem, isOnline: (u) => (io.of("/").adapter.rooms.get(userRoom(u))?.size ?? 0) > 0, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
       return;
     }
@@ -231,6 +240,16 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   // ─── Social : chat, spectateurs, revanche ─────────────────────────────────
   const chat = new ChatService();
+  // retransmissions DGT / LiveChessCloud : une lecture de la source par tournoi, diffusée à tous les spectateurs
+  const relayRoom = (id: string) => `relay:${id}`;
+  const relays = new RelayService({
+    store: deps.relayStore ?? (pool ? new PgRelayStore(pool) : new InMemoryRelayStore()),
+    // LCC_POOL_URL : faux LiveChessCloud pour les essais locaux
+    fetchJson: deps.relayFetch, pool: deps.relayPool ?? (process.env.LCC_POOL_URL || undefined), intervals: deps.relayIntervals,
+    watchers: (id) => io.of("/").adapter.rooms.get(relayRoom(id))?.size ?? 0,
+    onRound: (r) => io.to(relayRoom(r.id)).emit("relay:round", r),
+    onGame: (relayId, round, game) => io.to(relayRoom(relayId)).emit("relay:game", { relayId, round, game }),
+  });
   const rematches = new RematchService();
   // défis directs (amis) : sans réponse en 60 s, le défi expire
   const challenges = new ChallengeService((c) => {
@@ -662,6 +681,27 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       }
     }));
 
+    // ─── Retransmissions ─────────────────────────────────────────────────────
+    socket.on("relay:watch", guard(socket, (raw: unknown, ack?: unknown) => {
+      const reply = (r: Parameters<Parameters<ClientToServerEvents["relay:watch"]>[1]>[0]) => { if (typeof ack === "function") (ack as (x: typeof r) => void)(r); };
+      const id = (raw as { relayId?: unknown } | null)?.relayId;
+      if (typeof id !== "string") return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const v = relays.view(id);
+      if (!v) return reply({ ok: false, code: "UNKNOWN_RELAY" });
+      if (socket.data.relay && socket.data.relay !== id) void socket.leave(relayRoom(socket.data.relay));
+      socket.data.relay = id;
+      void socket.join(relayRoom(id));
+      relays.wake(id);
+      socket.emit("chat:history", { gameId: `relay:${id}`, messages: chat.history(`relay:${id}`, ["spectators"]) });
+      reply({ ok: true, round: v });
+    }));
+    socket.on("relay:unwatch", guard(socket, (raw: unknown) => {
+      const id = (raw as { relayId?: unknown } | null)?.relayId;
+      if (typeof id !== "string" || socket.data.relay !== id) return;
+      void socket.leave(relayRoom(id));
+      socket.data.relay = null;
+    }));
+
     // ─── Chat ────────────────────────────────────────────────────────────────
     socket.on("chat:send", guard(socket, (raw: unknown, ack?: unknown) => {
       const reply = (r: ChatAck) => { if (typeof ack === "function") (ack as (r: ChatAck) => void)(r); };
@@ -674,6 +714,9 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         target = { channel: "players", emit: (m) => io.to(gameId).emit("chat:msg", m) };
       } else if (room && socket.data.watching === gameId) {
         target = { channel: "spectators", emit: (m) => io.to(spectatorRoom(gameId)).emit("chat:msg", m) };
+      } else if (gameId.startsWith("relay:") && socket.data.relay === gameId.slice(6)) {
+        // retransmission : un seul canal, entre spectateurs
+        target = { channel: "spectators", emit: (m) => io.to(relayRoom(gameId.slice(6))).emit("chat:msg", m) };
       } else {
         // après la partie : les deux joueurs peuvent encore se parler (revanche, « bien joué »)
         const pl = rematches.players(gameId);
@@ -944,6 +987,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       }
       await killSwitch.state();
       killSwitch.watch();
+      await relays.start().catch((e) => console.error("[relay] démarrage", e));
       if (enforcer && redis) verdictWorker = enforcer.startWorker(redis, cfg.queuePrefix);
       if (withdrawals && cfg.withdrawalIntervalMs > 0) {
         withdrawalTimer = setInterval(() => void withdrawals.process().catch((e) => console.error("[withdrawals]", e)), cfg.withdrawalIntervalMs);
@@ -965,6 +1009,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       await verdictWorker?.close();
       await analysisProducer?.close();
       matchmaker.close();
+      relays.close();
       clearInterval(statsTimer);
       for (const t of queueGrace.values()) clearTimeout(t);
       for (const t of rematchGone.values()) clearTimeout(t);

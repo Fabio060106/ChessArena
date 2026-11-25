@@ -429,6 +429,50 @@ export interface ChallengeUpdate {
 
 export type ChallengeAck = { ok: true; challenge: ChallengeView } | { ok: false; code: string };
 
+/** Retransmission d'un tournoi officiel (échiquiers électroniques DGT / LiveChessCloud). */
+export interface RelayPlayer {
+  name: string;
+  title: string | null;
+  fideId: number | null;
+}
+
+export interface RelayGameView {
+  /** numéro de la partie dans la ronde (1, 2…) */
+  index: number;
+  white: RelayPlayer;
+  black: RelayPlayer;
+  /** « 1-0 », « 0-1 », « 1/2-1/2 », ou null tant que la partie est en cours / pas commencée */
+  result: string | null;
+  /** partie en cours (pendule qui tourne) */
+  live: boolean;
+  sans: string[];
+  /** coups en notation UCI (même ordre que sans) : analyse, flèches */
+  ucis: string[];
+  fen: string;
+  /** secondes restantes, au moment `clockAt` */
+  clocks: { w: number | null; b: number | null };
+  clockAt: number;
+  turn: Color;
+}
+
+export interface RelaySummary {
+  id: string;
+  name: string;
+  /** ronde suivie (0 = la plus récente automatiquement) */
+  round: number;
+  /** ronde réellement affichée */
+  currentRound: number | null;
+  games: number;
+  live: boolean;
+  updatedAt: number | null;
+  error: string | null;
+}
+
+export interface RelayRoundView extends RelaySummary {
+  tournamentName: string | null;
+  gameList: RelayGameView[];
+}
+
 export interface ServerToClientEvents {
   "queue:joined": (p: { timeControl: TimeControlId; stake: Stake }) => void;
   "queue:left": () => void;
@@ -457,6 +501,9 @@ export interface ServerToClientEvents {
   /** défi reçu (aussi renvoyé à la connexion s'il est encore ouvert) */
   "challenge:incoming": (c: ChallengeView) => void;
   "challenge:update": (u: ChallengeUpdate) => void;
+  /** retransmission : toute la ronde (arrivée, changement de ronde) puis chaque partie qui bouge */
+  "relay:round": (r: RelayRoundView) => void;
+  "relay:game": (p: { relayId: string; round: number; game: RelayGameView }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -495,6 +542,9 @@ export interface ClientToServerEvents {
   "challenge:send": (p: { to: string; timeControl: TimeControlId }, ack: (r: ChallengeAck) => void) => void;
   "challenge:answer": (p: { id: string; accept: boolean }, ack?: (r: { ok: boolean; code?: string }) => void) => void;
   "challenge:cancel": (p: { id: string }) => void;
+  /** suivre une retransmission (chat : gameId « relay:<id> ») */
+  "relay:watch": (p: { relayId: string }, ack: (r: { ok: true; round: RelayRoundView } | { ok: false; code: string }) => void) => void;
+  "relay:unwatch": (p: { relayId: string }) => void;
 }
 
 /** Claims du JWT émis par l'API d'auth (le game-server ne fait que vérifier). */

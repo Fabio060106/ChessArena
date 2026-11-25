@@ -30,11 +30,17 @@ const cfg: GameServerConfig = {
 };
 
 let server: GameServer;
+const fakeLcc = new Map<string, unknown>();
 let url: string;
 const clients: Client[] = [];
 
 beforeAll(async () => {
-  server = createGameServer(cfg, { ledger: new InMemoryLedger() });
+  server = createGameServer(cfg, {
+    ledger: new InMemoryLedger(),
+    // faux LiveChessCloud (retransmissions)
+    relayFetch: async (u: string) => (fakeLcc.has(u) ? structuredClone(fakeLcc.get(u)) : null),
+    relayPool: "http://lcc.test", relayIntervals: { watched: 40, idle: 40, finished: 40 },
+  });
   url = `http://localhost:${await server.listen(0)}`;
 });
 
@@ -720,5 +726,60 @@ describe("file d'attente : coupure de connexion et compteurs", () => {
     expect(s.tournament ?? null).toBeNull();
     expect(s.firstMoveMs).toBeGreaterThan(0);
     for (const c of [a2, b, obs]) c.disconnect();
+  });
+});
+
+
+describe("retransmissions DGT / LiveChessCloud", () => {
+  const LCC = "e3537c1f-9200-40d7-9955-c244a536fa4c";
+  const base = `http://lcc.test/get/${LCC}`;
+  const svcToken = () => jwt.sign({ sub: "web" }, SECRET, { audience: "chessarena-auth-service", expiresIn: 60 });
+  const admin = (path: string, body: Record<string, unknown>) => fetch(`${url}/auth/admin/${path}`, {
+    method: "POST", headers: { authorization: `Bearer ${svcToken()}`, "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const gk = { fname: "Gukesh", lname: "D", title: "GM" };
+  const sd = { fname: "Javokhir", lname: "Sindarov", title: "GM" };
+
+  it("l'organisateur ajoute le lien, les spectateurs reçoivent la partie en direct et peuvent discuter", async () => {
+    fakeLcc.set(`${base}/tournament.json`, { name: "World Championship", rounds: [{ count: 1, live: 1 }] });
+    fakeLcc.set(`${base}/round-1/index.json`, { pairings: [{ live: true, white: sd, black: gk, result: "*" }] });
+    fakeLcc.set(`${base}/round-1/game-1.json`, { moves: ["e4 7200"], clock: { white: 7190, black: 7200, time: 1 } });
+    // réservé à l'organisateur ; lien vérifié
+    expect((await admin("relay-add", { by: "intrus", url: `https://view.livechesscloud.com/#${LCC}` })).status).toBe(403);
+    expect((await admin("relay-add", { by: "Fabio060106", url: "https://exemple.com" })).status).toBe(400);
+    const add = await admin("relay-add", { by: "Fabio060106", url: `https://view.livechesscloud.com/#${LCC}`, name: "Championnat du monde" });
+    const { relay } = (await add.json()) as { relay: { id: string } };
+    expect(relay.id).toMatch(/^[0-9a-f]{8}$/);
+
+    const c = client({ token: token({ sub: "spectateur-cm" }) });
+    await connected(c);
+    let view = null as null | import("@chessarena/shared").RelayRoundView;
+    for (let i = 0; i < 40 && !(view?.gameList.length); i++) {
+      const r = await new Promise<{ ok: boolean; round?: import("@chessarena/shared").RelayRoundView }>((res) => c.emit("relay:watch", { relayId: relay.id }, res as never));
+      view = r.round ?? null;
+      if (!view?.gameList.length) await new Promise((r2) => setTimeout(r2, 30));
+    }
+    expect(view).toMatchObject({ name: "Championnat du monde", tournamentName: "World Championship", currentRound: 1, live: true });
+    expect(view!.gameList[0]!.sans).toEqual(["e4"]);
+
+    // un coup joué à Genève arrive tout seul
+    const next = once(c, "relay:game");
+    fakeLcc.set(`${base}/round-1/game-1.json`, { moves: ["e4 7200", "e5 7195"], clock: { white: 7190, black: 7195, time: 2 } });
+    const g = (await next) as { relayId: string; game: { sans: string[]; turn: string } };
+    expect(g.relayId).toBe(relay.id);
+    expect(g.game.sans).toEqual(["e4", "e5"]);
+    expect(g.game.turn).toBe("w");
+
+    // chat entre spectateurs de la retransmission
+    const msg = once(c, "chat:msg");
+    expect(await new Promise((r) => c.emit("chat:send", { gameId: `relay:${relay.id}`, text: "Quelle ouverture !" }, r))).toEqual({ ok: true });
+    expect(await msg).toMatchObject({ channel: "spectators", userId: "spectateur-cm", text: "Quelle ouverture !" });
+
+    // liste publique (joueurs connectés), puis suppression
+    const list = await fetch(`${url}/account/relays`, { headers: { authorization: `Bearer ${token({ sub: "spectateur-cm" })}` } });
+    expect(((await list.json()) as { relays: Array<{ id: string }> }).relays.map((x) => x.id)).toContain(relay.id);
+    expect(await (await admin("relay-remove", { by: "Fabio060106", id: relay.id })).json()).toEqual({ ok: true });
+    expect(await new Promise((r) => c.emit("relay:watch", { relayId: relay.id }, r as never))).toEqual({ ok: false, code: "UNKNOWN_RELAY" });
+    c.disconnect();
   });
 });

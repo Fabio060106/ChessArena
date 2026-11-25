@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import jwt from "jsonwebtoken";
 import type pg from "pg";
+import type { RelayService } from "../relay/RelayService.js";
 import { REPERTOIRE_MAX_BYTES, SETTINGS_MAX_BYTES, type GameRepository } from "../persistence/GameRepository.js";
 import { TIME_CONTROLS, type ArenaJwtClaims, type DecisionRequest, type RgLimitKind, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "../config.js";
@@ -76,6 +77,9 @@ export interface ApiDeps {
   kickUser?: (userId: string) => void;
   /** joueur connecté en ce moment (liste d'amis) */
   isOnline?: (userId: string) => boolean;
+  /** retransmissions de tournois officiels */
+  relays?: RelayService;
+  parseLcc?: (raw: string) => { id: string; round: number } | null;
 }
 
 class HttpError extends Error {
@@ -245,6 +249,26 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
             if (d.pool) await d.pool.query(`UPDATE users SET chat_muted_at = ${muted ? "now()" : "NULL"} WHERE id = $1`, [target]);
             if (muted) d.chatMuted?.add(target); else d.chatMuted?.delete(target);
             send(200, { ok: true, userId: target, muted });
+            return true;
+          }
+          // ─── retransmissions (DGT / LiveChessCloud) ───
+          if (url.pathname === "/auth/admin/relays") {
+            send(200, { relays: d.relays?.list() ?? [] });
+            return true;
+          }
+          if (url.pathname === "/auth/admin/relay-add") {
+            if (!d.relays || !d.parseLcc) throw new HttpError(503, "UNAVAILABLE");
+            const ref = d.parseLcc(str(b.url));
+            if (!ref) throw new HttpError(400, "BAD_URL");
+            const round = Number.isInteger(b.round) && (b.round as number) >= 0 && (b.round as number) < 1000 ? (b.round as number) : ref.round;
+            const name = str(b.name).trim().slice(0, 80) || "Retransmission";
+            const rec = await d.relays.add({ name, lccId: ref.id, round, createdBy: str(b.by) || "organisateur" });
+            send(200, { ok: true, relay: rec });
+            return true;
+          }
+          if (url.pathname === "/auth/admin/relay-remove") {
+            if (!d.relays) throw new HttpError(503, "UNAVAILABLE");
+            send(200, { ok: await d.relays.remove(str(b.id)) });
             return true;
           }
           // ─── anti-triche : parties à revoir, revue, suspension ───
@@ -458,6 +482,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       return true;
     }
     // ─── Amis : liste personnelle avec présence (en ligne, en partie) ─────────────
+    if (url.pathname === "/account/relays" && req.method === "GET") {
+      send(200, { relays: d.relays?.list() ?? [] });
+      return true;
+    }
     if (url.pathname === "/account/friends" && req.method === "GET") {
       const list = await need(d.repo).listFriends(claims.sub);
       send(200, { friends: list.map((f) => ({ ...f, online: d.isOnline?.(f.userId) ?? false, liveGameId: d.liveGameOf?.(f.userId) ?? null })) });

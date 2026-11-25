@@ -192,4 +192,13 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     await repo.removeFriend("moi_f", "Max_f");
     expect(await repo.listFriends("moi_f")).toEqual([]);
   });
+
+  it("retransmissions : enregistrées en base (reprises après un redémarrage)", async () => {
+    const { PgRelayStore } = await import("../../src/relay/RelayService.js");
+    const store = new PgRelayStore(db.pool);
+    await store.add({ id: "abcd1234", name: "CM 2026", lccId: "e3537c1f-9200-40d7-9955-c244a536fa4c", round: 0, createdBy: "Fabio060106", createdAt: "" });
+    expect((await store.list()).map((r) => [r.id, r.name, r.round])).toContainEqual(["abcd1234", "CM 2026", 0]);
+    await store.remove("abcd1234");
+    expect((await store.list()).some((r) => r.id === "abcd1234")).toBe(false);
+  });
 });

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { LiveGameView } from "@chessarena/shared";
+import type { LiveGameView, RelaySummary } from "@chessarena/shared";
 import { PageHeader } from "../../components/PageHeader";
 import { getSocket } from "../../lib/socket";
 import { useGameAuth, useMe } from "../../hooks/useMe";
@@ -13,8 +13,47 @@ export default function LivePage() {
   return (
     <main className="arena-app">
       <PageHeader title="En direct" active="/direct" />
-      <div className="mx-auto max-w-[900px] px-2 pb-8 sm:px-3">{me ? <LiveList me={me.userId} /> : <p className="p-3 text-sm text-muted">Chargement…</p>}</div>
+      <div className="mx-auto flex max-w-[900px] flex-col gap-4 px-2 pb-8 sm:px-3">
+        {me ? <><RelayList /><LiveList me={me.userId} /></> : <p className="p-3 text-sm text-muted">Chargement…</p>}
+      </div>
     </main>
+  );
+}
+
+/** Grands tournois retransmis (échiquiers électroniques), ajoutés par l'organisateur. */
+function RelayList() {
+  const [list, setList] = useState<RelaySummary[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => void fetch("/api/relays", { cache: "no-store" })
+      .then(async (r) => (r.ok ? ((await r.json()) as { relays: RelaySummary[] }).relays : null))
+      .then((l) => { if (live && l) setList(l); })
+      .catch(() => {});
+    load();
+    const t = setInterval(load, 15_000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  if (!list || list.length === 0) return null;
+  return (
+    <section aria-label="Grands tournois">
+      <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Grands tournois</h2>
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {list.map((r) => (
+          <li key={r.id}>
+            <a href={`/retransmissions/${r.id}`} className="panel flex items-center gap-3 p-3 hover:border-neon/50">
+              <span className="text-2xl" aria-hidden>🏆</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold">{r.name}</span>
+                <span className="text-xs text-muted">
+                  {r.currentRound ? `Ronde ${r.currentRound} · ${r.games} partie${r.games > 1 ? "s" : ""}` : "Bientôt"}
+                </span>
+              </span>
+              {r.live && <span className="text-xs font-semibold text-danger"><span className="mr-1 inline-block size-1.5 animate-pulse rounded-full bg-danger align-middle" />En direct</span>}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

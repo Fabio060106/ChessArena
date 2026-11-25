@@ -12,7 +12,7 @@ const flagEmoji = (c: string) => (c ? String.fromCodePoint(...[...c].map((x) => 
 function nextPath(): string {
   if (typeof window === "undefined") return "/play";
   const n = new URLSearchParams(window.location.search).get("next") ?? "";
-  return /^\/(play|history|repertoire|direct|classement|profil|partie|amis)(\/[\w-]{1,64})?(\?[\w=&%,-]*)?$/.test(n) ? n : "/play";
+  return /^\/(play|history|repertoire|direct|classement|profil|partie|amis|retransmissions)(\/[\w-]{1,64})?(\?[\w=&%,-]*)?$/.test(n) ? n : "/play";
 }
 
 const KNOWN = "arena_has_account"; // ce navigateur a déjà un compte : on propose « Se connecter » d'abord
