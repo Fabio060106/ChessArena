@@ -1016,6 +1016,13 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       await killSwitch.state();
       killSwitch.watch();
       await relays.start().catch((e) => console.error("[relay] démarrage", e));
+      // Championnat du monde 2026 (Lichess) : ajouté d'office jusqu'à la fin du match, sauf RELAY_SEED=0
+      if (process.env.NODE_ENV !== "test" && process.env.RELAY_SEED !== "0" && Date.now() < Date.parse("2026-12-20")) {
+        const ref = parseRelaySource("https://lichess.org/broadcast/fide-world-chess-championship-2026/game-2/L3j03TZq");
+        if (ref) await relays.seed({ name: "Championnat du monde 2026 — Gukesh vs Sindarov", source: ref.source, lccId: ref.id, round: ref.round })
+          .then((r) => r && console.log(`[relay] Championnat du monde ajouté (${r.id})`))
+          .catch((e) => console.error("[relay] ajout par défaut", e));
+      }
       if (enforcer && redis) verdictWorker = enforcer.startWorker(redis, cfg.queuePrefix);
       if (withdrawals && cfg.withdrawalIntervalMs > 0) {
         withdrawalTimer = setInterval(() => void withdrawals.process().catch((e) => console.error("[withdrawals]", e)), cfg.withdrawalIntervalMs);

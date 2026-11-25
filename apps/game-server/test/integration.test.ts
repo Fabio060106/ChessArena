@@ -778,12 +778,14 @@ describe("retransmissions DGT / LiveChessCloud", () => {
     // analyse partagée : refusée tant que la partie n'est pas finie ; ensuite gardée et servie à tous
     const review = { version: 2, summary: "Victoire des Blancs.", moves: ["e4", "e5"].map((san, i) => ({ ply: i + 1, san })) };
     // envoi par HTTP (une analyse dépasse la taille maximale d'un message websocket)
-    const save = async (rv: unknown, sans = ["e4", "e5"]) => {
+    const save = async (rv: unknown, sans = ["e4", "e5"], tries = 6): Promise<{ ok: boolean; saved?: boolean; status?: number }> => {
       const r = await fetch(`${url}/account/relay-review`, {
         method: "POST", headers: { authorization: `Bearer ${token({ sub: "spectateur-cm" })}`, "content-type": "application/json" },
         body: JSON.stringify({ relayId: relay.id, round: 1, index: 1, sans, review: rv }),
       });
       const j = (await r.json()) as { ok?: boolean; saved?: boolean; error?: string; code?: string };
+      // limite de débit HTTP par adresse IP (toute la suite tourne depuis 127.0.0.1) : on patiente
+      if (r.status === 429 && tries > 0) { await new Promise((w) => setTimeout(w, 1000)); return save(rv, sans, tries - 1); }
       return r.ok ? { ok: true, saved: j.saved } : { ok: false, status: r.status };
     };
     expect(await save(review)).toEqual({ ok: false, status: 404 });

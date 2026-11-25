@@ -50,6 +50,17 @@ describe("Lichess Broadcast : lecture", () => {
 });
 
 describe("RelayService avec Lichess", () => {
+  it("retransmission par défaut : ajoutée une seule fois, pas si une source Lichess existe déjà", async () => {
+    const store = new InMemoryRelayStore();
+    const mk = () => new RelayService({ store, autoStart: false, lichess: "http://li.test", fetchJson: async () => null, fetchText: async () => null, watchers: () => 0, onRound: () => {}, onGame: () => {} });
+    const a = mk();
+    expect(await a.seed({ name: "CM", source: "lichess", lccId: "round:L3j03TZq", round: 0 })).not.toBeNull();
+    expect(await a.seed({ name: "CM", source: "lichess", lccId: "round:L3j03TZq", round: 0 })).toBeNull();
+    const b = mk(); await b.start();
+    expect(await b.seed({ name: "CM", source: "lichess", lccId: "round:L3j03TZq", round: 0 })).toBeNull();
+    expect(b.list()).toHaveLength(1);
+    a.close(); b.close();
+  });
   it("suit le tournoi, passe à la ronde suivante, ralentit en cas de « trop de requêtes »", async () => {
     const json = new Map<string, unknown>();
     const text = new Map<string, string>();

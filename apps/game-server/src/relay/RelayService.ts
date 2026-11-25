@@ -130,6 +130,15 @@ export class RelayService {
     for (const rec of await this.o.store.list()) this.attach(rec);
   }
 
+  /**
+   * Ajoute une retransmission par défaut si aucune retransmission de la même source n'existe déjà
+   * (ex. le Championnat du monde), pour qu'elle apparaisse sans réglage manuel.
+   */
+  async seed(input: { name: string; source: "lcc" | "lichess"; lccId: string; round: number }): Promise<RelayRecord | null> {
+    if ([...this.live.values()].some((l) => (l.rec.source ?? "lcc") === input.source)) return null;
+    return this.add({ ...input, createdBy: "auto" });
+  }
+
   async add(input: { name: string; source?: "lcc" | "lichess"; lccId: string; round: number; createdBy: string }): Promise<RelayRecord> {
     const rec: RelayRecord = { id: randomBytes(4).toString("hex"), createdAt: new Date(this.now()).toISOString(), ...input };
     await this.o.store.add(rec);
