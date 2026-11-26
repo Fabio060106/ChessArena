@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Color, RepertoireResponse } from "@chessarena/shared";
 import { GameBoard } from "../../components/GameBoard";
 import { ImportLichess } from "../../components/ImportLichess";
+import { OpeningAdvice } from "../../components/OpeningAdvice";
 import { useSettings } from "../../lib/settings";
 import { Engine, ENGINE_NAME, pvToSan, scoreToCp, terminalScore, winPct } from "../../lib/engine";
 import {
@@ -150,6 +151,7 @@ export default function RepertoirePage() {
         {loadError && <p role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{loadError}</p>}
         {!resp && !loadError && <p className="px-1 text-sm text-muted">Chargement de tes parties…</p>}
         {resp && <ImportLichess onImported={onImported} />}
+        {resp && <OpeningAdvice games={resp.games} />}
         {resp && (
           <>
             {/* ─── Bandeau : couleur, analyse, entraînement, export ─── */}
