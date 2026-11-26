@@ -75,7 +75,10 @@ export function OpeningAdvice({ games }: { games: readonly RepertoireGame[] }) {
               </ul>
             )}
             <p className="mt-2 text-[13px] leading-snug text-muted"><span className="font-semibold text-text">Le plan : </span>{a.option.plan}</p>
-            <a href={`/analyse?m=${ucisOf(a.option.moves).join(",")}`} className="mt-2 inline-block rounded-lg border border-neon/50 px-2.5 py-1 text-xs font-semibold text-neon">Voir la ligne sur l'échiquier</a>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <a href={`/repertoire/livre/${a.option.id}`} className="rounded-lg bg-neon/15 px-2.5 py-1 text-xs font-semibold text-neon ring-1 ring-neon/50">Répertoire complet →</a>
+              <a href={`/analyse?m=${ucisOf(a.option.moves).join(",")}`} className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted hover:text-text">Voir la ligne sur l'échiquier</a>
+            </div>
           </article>
         ))}
       </div>
