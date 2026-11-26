@@ -37,14 +37,21 @@ export function decodeLichess(s: string): LichessRef | null {
 export interface LichessTour { tour?: { name?: string }; rounds?: Array<{ id?: string; name?: string; ongoing?: boolean; finished?: boolean; startsAt?: number }> }
 export interface LichessRoundInfo { round?: { id?: string; name?: string }; tour?: { name?: string } }
 
-/** Ronde à suivre : celle en cours, sinon la dernière terminée, sinon la première. */
-export function pickLichessRound(t: LichessTour): { id: string; name: string; number: number } | null {
+/**
+ * Ronde à suivre : celle en cours ; sinon la prochaine dont l'heure de début est passée
+ * (la partie va commencer : on l'affiche dès le premier coup) ; sinon la dernière terminée ; sinon la première.
+ * `soon` : une ronde commence dans moins de 10 min (ou vient de commencer) → relire le tournoi plus souvent.
+ */
+export function pickLichessRound(t: LichessTour, now = Date.now()): { id: string; name: string; number: number; soon: boolean } | null {
   const rounds = (t.rounds ?? []).filter((r) => typeof r.id === "string");
   if (!rounds.length) return null;
+  const starting = (r: (typeof rounds)[number]) => !r.ongoing && !r.finished && typeof r.startsAt === "number";
+  const soon = rounds.some((r) => starting(r) && r.startsAt! - now < 10 * 60_000 && now - r.startsAt! < 3 * 3600_000);
   let i = rounds.findIndex((r) => r.ongoing);
+  if (i < 0) i = rounds.findIndex((r) => starting(r) && r.startsAt! <= now && now - r.startsAt! < 3 * 3600_000);
   if (i < 0) for (let k = rounds.length - 1; k >= 0; k--) if (rounds[k]!.finished) { i = k; break; }
   if (i < 0) i = 0;
-  return { id: rounds[i]!.id!, name: rounds[i]!.name ?? `Ronde ${i + 1}`, number: i + 1 };
+  return { id: rounds[i]!.id!, name: rounds[i]!.name ?? `Ronde ${i + 1}`, number: i + 1, soon };
 }
 
 const clk = (comment: string): number | null => {

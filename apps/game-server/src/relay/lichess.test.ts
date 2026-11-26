@@ -43,13 +43,32 @@ describe("Lichess Broadcast : lecture", () => {
   });
   it("ronde suivie : en cours, sinon la dernière finie", () => {
     expect(pickLichessRound({ rounds: [{ id: "a", name: "Game 1", finished: true }, { id: "b", name: "Game 2", ongoing: true }, { id: "c", name: "Game 3" }] }))
-      .toEqual({ id: "b", name: "Game 2", number: 2 });
+      .toMatchObject({ id: "b", name: "Game 2", number: 2 });
     expect(pickLichessRound({ rounds: [{ id: "a", finished: true }, { id: "b", finished: true }, { id: "c" }] })).toMatchObject({ id: "b", number: 2 });
     expect(pickLichessRound({ rounds: [] })).toBeNull();
+    // la ronde suivante a commencé (heure passée) mais Lichess ne l'a pas encore marquée « en cours »
+    const now = 10_000_000;
+    expect(pickLichessRound({ rounds: [{ id: "a", finished: true }, { id: "b", startsAt: now - 60_000 }] }, now)).toMatchObject({ id: "b", soon: true });
+    expect(pickLichessRound({ rounds: [{ id: "a", finished: true }, { id: "b", startsAt: now + 5 * 60_000 }] }, now)).toMatchObject({ id: "a", soon: true });
+    expect(pickLichessRound({ rounds: [{ id: "a", finished: true }, { id: "b", startsAt: now + 86_400_000 }] }, now)).toMatchObject({ id: "a", soon: false });
   });
 });
 
 describe("RelayService avec Lichess", () => {
+  it("partie en cours : le PGN est relu à chaque fois, le JSON du tournoi reste sous la limite de Lichess", async () => {
+    let t = 0; let jsonReads = 0; let pgnReads = 0;
+    const svc = new RelayService({
+      store: new InMemoryRelayStore(), autoStart: false, lichess: "http://li.test", now: () => t,
+      fetchJson: async (u) => { jsonReads++; return u.endsWith("/-/-/RND00002") ? { round: { name: "Game 2" }, tour: { id: "TOUR0001", name: "CM" } } : { tour: { name: "CM" }, rounds: [{ id: "RND00001", finished: true }, { id: "RND00002", name: "Game 2", ongoing: true }] }; },
+      fetchText: async () => { pgnReads++; return PGN; },
+      watchers: () => 1, onRound: () => {}, onGame: () => {},
+    });
+    const rec = await svc.add({ name: "CM", source: "lichess", lccId: "round:RND00002", round: 0, createdBy: "x" });
+    for (let i = 0; i < 36; i++) { await svc.poll(rec.id); t += 5_000; } // 3 minutes, une lecture toutes les 5 s
+    expect(pgnReads).toBe(36);
+    expect(jsonReads).toBeLessThanOrEqual(10); // Lichess : 30 lectures / 3 min sans compte
+    expect(svc.view(rec.id)).toMatchObject({ tournamentName: "CM", live: true, currentRound: 2, roundName: "Game 2" });
+  });
   it("retransmission par défaut : ajoutée une seule fois, pas si une source Lichess existe déjà", async () => {
     const store = new InMemoryRelayStore();
     const mk = () => new RelayService({ store, autoStart: false, lichess: "http://li.test", fetchJson: async () => null, fetchText: async () => null, watchers: () => 0, onRound: () => {}, onGame: () => {} });
@@ -64,10 +83,10 @@ describe("RelayService avec Lichess", () => {
   it("suit le tournoi, passe à la ronde suivante, ralentit en cas de « trop de requêtes »", async () => {
     const json = new Map<string, unknown>();
     const text = new Map<string, string>();
-    let tooMany = false;
+    let tooMany = false; let t = 1000;
     const rounds: RelayRoundView[] = []; const games: RelayGameView[] = [];
     const svc = new RelayService({
-      store: new InMemoryRelayStore(), autoStart: false, lichess: "http://li.test", now: () => 1000,
+      store: new InMemoryRelayStore(), autoStart: false, lichess: "http://li.test", now: () => t,
       fetchJson: async (u) => json.get(u) ?? null,
       fetchText: async (u) => { if (tooMany) throw new Error("HTTP 429"); return text.get(u) ?? null; },
       watchers: () => 1, onRound: (r) => rounds.push(r), onGame: (_i, _r, g) => games.push(g),
@@ -82,7 +101,10 @@ describe("RelayService avec Lichess", () => {
     expect(games.map((g) => g.sans.join(" "))).toEqual(["d4 Nf6 c4 e6"]);
     json.set("http://li.test/api/broadcast/TOUR0001", { rounds: [{ id: "RND00001", finished: true }, { id: "RND00002", name: "Game 2", finished: true }, { id: "RND00003", name: "Game 3", ongoing: true }] });
     text.set("http://li.test/api/broadcast/round/RND00003.pgn", PGN);
-    await svc.poll(rec.id);
+    // le JSON du tournoi n'est relu qu'après 45 s (limite de Lichess) : seule la ronde en cours est relue d'ici là
+    t += 20_000; await svc.poll(rec.id);
+    expect(rounds.at(-1)).toMatchObject({ currentRound: 2 });
+    t += 30_000; await svc.poll(rec.id);
     expect(rounds.at(-1)).toMatchObject({ currentRound: 3, roundName: "Game 3" });
     tooMany = true;
     await svc.poll(rec.id);

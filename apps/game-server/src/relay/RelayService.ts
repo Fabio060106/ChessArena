@@ -68,6 +68,11 @@ export function httpFetchJson(timeoutMs = 8_000): FetchJson {
   };
 }
 
+/** intervalle minimal entre deux lectures du JSON d'un tournoi Lichess */
+export const LICHESS_TOUR_EVERY = 45_000;
+/** … quand une ronde est sur le point de commencer */
+export const LICHESS_TOUR_SOON = 15_000;
+
 interface Live {
   rec: RelayRecord;
   tournamentName: string | null;
@@ -75,6 +80,8 @@ interface Live {
   roundName: string | null;
   /** Lichess : tournoi retrouvé à partir d'un lien de ronde (on suit alors tout le tournoi) */
   lichessTour?: string;
+  /** Lichess : ronde choisie lors de la dernière lecture du tournoi, et sa date (l'API JSON est limitée à 10 lectures/min) */
+  lichessPick?: { id: string; number: number; name: string | null; soon: boolean; at: number } | null;
   /** source qui demande de ralentir (HTTP 429) : pause jusqu'à cette date */
   pausedUntil: number;
   games: Map<number, { view: RelayGameView; key: string }>;
@@ -118,6 +125,8 @@ export class RelayService {
   private readonly iv: { watched: number; idle: number; finished: number };
   private readonly now: () => number;
   private closed = false;
+  /** Lichess n'accepte qu'un téléchargement de PGN à la fois par adresse IP (sans compte) : on les enchaîne */
+  private lichessChain: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly o: RelayOptions) {
     this.fetchJson = o.fetchJson ?? httpFetchJson();
@@ -262,6 +271,12 @@ export class RelayService {
     }
   }
 
+  private lichessPgn(url: string): Promise<string | null> {
+    const run = this.lichessChain.then(() => this.fetchText(url), () => this.fetchText(url));
+    this.lichessChain = run.catch(() => null);
+    return run;
+  }
+
   /** Lichess : ronde (suivie automatiquement pour un tournoi) puis toutes ses parties en un seul PGN. */
   private async pollLichess(l: Live): Promise<void> {
     const ref = decodeLichess(l.rec.lccId);
@@ -276,7 +291,12 @@ export class RelayService {
       if (typeof info?.tour?.id === "string" && /^[A-Za-z0-9]{8}$/.test(info.tour.id)) l.lichessTour = info.tour.id;
     }
     const tourId = ref.kind === "tour" ? ref.id : l.lichessTour;
-    if (tourId) {
+    // le JSON du tournoi n'est relu que toutes les 45 s (limite Lichess : 30 lectures / 3 min sans compte) ;
+    // entre-temps seul le PGN de la ronde est relu, ce qui donne les coups en temps réel
+    const pk = l.lichessPick;
+    if (tourId && pk && this.now() - pk.at < (pk.soon ? LICHESS_TOUR_SOON : LICHESS_TOUR_EVERY)) {
+      ({ id: roundId, number: roundNo, name: roundName } = pk);
+    } else if (tourId) {
       const t = (await this.fetchJson(`${base}/api/broadcast/${tourId}`)) as LichessTour | null;
       if (!t) throw new Error("tournoi Lichess introuvable");
       if (typeof t.tour?.name === "string") l.tournamentName = t.tour.name.slice(0, 120);
@@ -284,12 +304,13 @@ export class RelayService {
         number: i + 1, name: (r.name ?? `Ronde ${i + 1}`).slice(0, 80), lichessId: r.id!,
         state: r.ongoing ? "ongoing" : r.finished ? "finished" : "upcoming",
       }));
-      const pick = pickLichessRound(t);
+      const pick = pickLichessRound(t, this.now());
+      l.lichessPick = pick ? { ...pick, at: this.now() } : null;
       if (!pick) { l.updatedAt = this.now(); l.error = null; return; }
       ({ id: roundId, number: roundNo, name: roundName } = pick);
     }
     if (!tourId) l.rounds = [{ number: 1, name: roundName ?? "Ronde", state: "unknown", lichessId: roundId }];
-    const pgn = await this.fetchText(`${base}/api/broadcast/round/${roundId}.pgn`);
+    const pgn = await this.lichessPgn(`${base}/api/broadcast/round/${roundId}.pgn`);
     const views = pgn ? lichessPgnGames(pgn, this.now()).slice(0, 200) : [];
     const roundChanged = l.currentRound !== roundNo || (!!tourId && l.roundName !== roundName);
     if (roundChanged) { l.games.clear(); l.currentRound = roundNo; }
@@ -321,7 +342,7 @@ export class RelayService {
     let games: RelayGameView[] = [];
     if (l.rec.source === "lichess") {
       if (!ref?.lichessId) return null;
-      const pgn = await this.fetchText(`${this.o.lichess ?? LICHESS}/api/broadcast/round/${ref.lichessId}.pgn`);
+      const pgn = await this.lichessPgn(`${this.o.lichess ?? LICHESS}/api/broadcast/round/${ref.lichessId}.pgn`);
       games = pgn ? lichessPgnGames(pgn, this.now()).slice(0, 200) : [];
     } else {
       const urls = lccUrls(l.rec.lccId, this.o.pool ?? LCC_POOL);
