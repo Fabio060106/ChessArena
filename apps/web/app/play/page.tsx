@@ -18,6 +18,7 @@ import { TournamentHUD } from "../../components/TournamentHUD";
 import { MoveList } from "../../components/MoveList";
 import { MoveNav, usePlyKeys } from "../../components/MoveNav";
 import { replayFromSans } from "../../lib/replay";
+import { RelayBanner } from "../../components/RelayBanner";
 import { Lobby } from "../../components/Lobby";
 import { Logo } from "../../components/Logo";
 import { ChatPanel } from "../../components/ChatPanel";
@@ -229,6 +230,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
         </div>
       </header>
       <SiteNav active="/play" />
+      {!playing && <RelayBanner className="mx-auto mb-3 max-w-[1400px] px-2 sm:px-3 lg:px-6" />}
 
       <div className="mx-auto grid max-w-[1400px] gap-4 px-2 pb-6 sm:px-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:px-6">
         {/* ─── Zone de jeu : la taille du plateau suit la hauteur ET la largeur disponibles ─── */}

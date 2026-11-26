@@ -460,6 +460,17 @@ export interface RelayRoundRef {
   number: number;
   name: string;
   state: "finished" | "ongoing" | "upcoming" | "unknown";
+  /** heure de début prévue (ms), si la source la donne */
+  startsAt?: number | null;
+}
+
+/** Classement d'un tournoi retransmis (pour un match : le score des deux joueurs). */
+export interface RelayStanding {
+  name: string;
+  title: string | null;
+  /** points (1 par victoire, ½ par nulle) */
+  score: number;
+  played: number;
 }
 
 export interface RelaySummary {
@@ -473,6 +484,8 @@ export interface RelaySummary {
   roundName?: string | null;
   /** toutes les rondes connues (pour revoir les précédentes) */
   rounds?: RelayRoundRef[];
+  /** classement (parties terminées), du meilleur au moins bon ; absent si la source ne le permet pas */
+  standings?: RelayStanding[];
   games: number;
   live: boolean;
   updatedAt: number | null;

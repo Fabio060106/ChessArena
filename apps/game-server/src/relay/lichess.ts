@@ -1,5 +1,5 @@
 import { Chess } from "chess.js";
-import type { RelayGameView } from "@chessarena/shared";
+import type { RelayGameView, RelayStanding } from "@chessarena/shared";
 import { normResult } from "./lcc.js";
 
 /**
@@ -97,4 +97,20 @@ export function lichessPgnGames(pgn: string, now: number): RelayGameView[] {
     });
   }
   return out;
+}
+
+/** Classement à partir des parties terminées (1 point la victoire, ½ la nulle). */
+export function standingsOf(games: readonly RelayGameView[]): RelayStanding[] {
+  const t = new Map<string, RelayStanding>();
+  const add = (p: RelayGameView["white"], pts: number) => {
+    const k = p.fideId ? `f${p.fideId}` : p.name;
+    const row = t.get(k) ?? { name: p.name, title: p.title, score: 0, played: 0 };
+    row.score += pts; row.played++; t.set(k, row);
+  };
+  for (const g of games) {
+    if (!g.result || g.white.name === "?" || g.black.name === "?") continue;
+    const w = g.result === "1-0" ? 1 : g.result === "0-1" ? 0 : 0.5;
+    add(g.white, w); add(g.black, 1 - w);
+  }
+  return [...t.values()].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, 50);
 }

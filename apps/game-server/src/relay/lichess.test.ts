@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RelayGameView, RelayRoundView } from "@chessarena/shared";
-import { decodeLichess, encodeLichess, lichessPgnGames, parseLichessUrl, pickLichessRound } from "./lichess.js";
+import { decodeLichess, encodeLichess, lichessPgnGames, parseLichessUrl, pickLichessRound, standingsOf } from "./lichess.js";
 import { InMemoryRelayStore, RelayService } from "./RelayService.js";
 
 const PGN = `[Event "FIDE World Championship 2026"]
@@ -60,7 +60,7 @@ describe("RelayService avec Lichess", () => {
     const svc = new RelayService({
       store: new InMemoryRelayStore(), autoStart: false, lichess: "http://li.test", now: () => t,
       fetchJson: async (u) => { jsonReads++; return u.endsWith("/-/-/RND00002") ? { round: { name: "Game 2" }, tour: { id: "TOUR0001", name: "CM" } } : { tour: { name: "CM" }, rounds: [{ id: "RND00001", finished: true }, { id: "RND00002", name: "Game 2", ongoing: true }] }; },
-      fetchText: async () => { pgnReads++; return PGN; },
+      fetchText: async (u) => { if (u.includes("/round/")) pgnReads++; return PGN; },
       watchers: () => 1, onRound: () => {}, onGame: () => {},
     });
     const rec = await svc.add({ name: "CM", source: "lichess", lccId: "round:RND00002", round: 0, createdBy: "x" });
@@ -68,6 +68,27 @@ describe("RelayService avec Lichess", () => {
     expect(pgnReads).toBe(36);
     expect(jsonReads).toBeLessThanOrEqual(10); // Lichess : 30 lectures / 3 min sans compte
     expect(svc.view(rec.id)).toMatchObject({ tournamentName: "CM", live: true, currentRound: 2, roundName: "Game 2" });
+  });
+  it("score du match : lu dans le PGN de tout le tournoi, heure des prochaines parties", async () => {
+    const g = (w: string, b: string, r: string) => `[Event "CM"]\n[White "${w}"]\n[Black "${b}"]\n[Result "${r}"]\n\n1. e4 e5 ${r}\n`;
+    const all = [g("Gukesh D", "Sindarov, Javokhir", "1/2-1/2"), g("Sindarov, Javokhir", "Gukesh D", "1-0"), g("Gukesh D", "Sindarov, Javokhir", "*")].join("\n\n");
+    expect(standingsOf(lichessPgnGames(all, 0))).toEqual([
+      { name: "Sindarov, Javokhir", title: null, score: 1.5, played: 2 },
+      { name: "Gukesh D", title: null, score: 0.5, played: 2 },
+    ]);
+    let tourPgnReads = 0;
+    const svc = new RelayService({
+      store: new InMemoryRelayStore(), autoStart: false, lichess: "http://li.test", now: () => 1000,
+      fetchJson: async () => ({ tour: { name: "CM" }, rounds: [{ id: "RND00001", name: "Game 1", finished: true }, { id: "RND00002", name: "Game 2", finished: true }, { id: "RND00003", name: "Game 3", startsAt: 99_000 }] }),
+      fetchText: async (u) => { if (u.endsWith("/TOUR0001.pgn")) { tourPgnReads++; return all; } return PGN; },
+      watchers: () => 1, onRound: () => {}, onGame: () => {},
+    });
+    const rec = await svc.add({ name: "CM", source: "lichess", lccId: "tour:TOUR0001", round: 0, createdBy: "x" });
+    await svc.poll(rec.id); await svc.poll(rec.id);
+    const v = svc.list()[0]!;
+    expect(v.standings?.map((x) => [x.name, x.score])).toEqual([["Sindarov, Javokhir", 1.5], ["Gukesh D", 0.5]]);
+    expect(v.rounds?.[2]).toMatchObject({ name: "Game 3", state: "upcoming", startsAt: 99_000 });
+    expect(tourPgnReads).toBe(1);
   });
   it("retransmission par défaut : ajoutée une seule fois, pas si une source Lichess existe déjà", async () => {
     const store = new InMemoryRelayStore();

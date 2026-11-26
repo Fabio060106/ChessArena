@@ -13,6 +13,7 @@ import { useGameAuth, useMe } from "../../../hooks/useMe";
 import { formatClock, relayClock, useRelay } from "../../../hooks/useRelay";
 import { useFlip } from "../../../hooks/useFlip";
 import { useSettings } from "../../../lib/settings";
+import { matchScore, nextRound, points, shortName, untilText, whenText } from "../../../lib/relayFormat";
 import { replayFromSans } from "../../../lib/replay";
 import { Engine, ENGINE_NAME, formatScore, pvToSan, scoreToCp, terminalScore, winPct, type EngineLine } from "../../../lib/engine";
 
@@ -61,6 +62,7 @@ function Relay({ relayId, me }: { relayId: string; me: string }) {
         {round.error && <span role="status" className="w-full text-xs text-gold">{round.error}</span>}
         {past && <button type="button" onClick={() => setPast(null)} className="text-xs text-neon hover:underline">← revenir au direct</button>}
       </div>
+      <MatchInfo round={liveRound} />
       {roundsList.length > 1 && (
         <div className="flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Rondes du tournoi">
           {roundsList.filter((r) => r.state !== "upcoming").map((r) => (
@@ -93,12 +95,41 @@ function Relay({ relayId, me }: { relayId: string; me: string }) {
     return (
       <div className="mx-auto flex max-w-[900px] flex-col gap-3 px-2 pb-6 sm:px-3">
         {header}
-        <p className="panel p-4 text-sm text-muted">Les parties de cette ronde n'ont pas encore commencé. La page se met à jour toute seule.</p>
+        <p className="panel p-4 text-sm text-muted">Les parties de cette ronde n'ont pas encore commencé. La page se met à jour toute seule : les coups s'afficheront ici en direct.</p>
         <div className="panel p-3">{chatPanel}</div>
       </div>
     );
   }
   return <RelayGame key={`${shownNo}-${game.index}`} relayId={relayId} roundNo={shownNo} game={game} header={header} chatPanel={chatPanel} chatCount={chat.length} />;
+}
+
+/** Score du match (ou tête du classement) et heure de la prochaine partie, à l'heure du spectateur. */
+function MatchInfo({ round }: { round: RelayRoundView }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(t); }, []);
+  const score = matchScore(round.standings);
+  const next = round.live ? null : nextRound(round.rounds, now);
+  if (!score && !round.standings?.length && !next) return null;
+  return (
+    <div className="panel flex flex-wrap items-center gap-x-4 gap-y-2 p-3">
+      {score ? (
+        <div className="flex items-center gap-2" aria-label="Score du match">
+          <span className="text-sm font-semibold">{score.a.title ? <span className="mr-1 text-gold">{score.a.title}</span> : null}{shortName(score.a.name)}</span>
+          <span className="tabular rounded-md bg-surface-2 px-2 py-0.5 font-display text-lg font-bold">{points(score.a.score)} – {points(score.b.score)}</span>
+          <span className="text-sm font-semibold">{shortName(score.b.name)}{score.b.title ? <span className="ml-1 text-gold">{score.b.title}</span> : null}</span>
+        </div>
+      ) : round.standings?.length ? (
+        <ol className="flex flex-wrap gap-x-3 text-xs text-muted" aria-label="Classement">
+          {round.standings.slice(0, 5).map((p, i) => <li key={p.name}><span className="font-semibold text-text">{i + 1}. {p.name}</span> {points(p.score)}/{p.played}</li>)}
+        </ol>
+      ) : null}
+      {next && (
+        <span className="text-xs text-muted">
+          Prochaine partie : <span className="font-semibold text-text">{next.name}</span> · {whenText(next.startsAt!)} ({untilText(next.startsAt!, now)})
+        </span>
+      )}
+    </div>
+  );
 }
 
 const short = (n: string) => (n.length > 18 ? n.split(" ").at(-1) ?? n : n);

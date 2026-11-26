@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import type pg from "pg";
-import type { RelayGameView, RelayRoundRef, RelayRoundView, RelaySummary } from "@chessarena/shared";
+import type { RelayGameView, RelayRoundRef, RelayStanding, RelayRoundView, RelaySummary } from "@chessarena/shared";
 import {
   lccGameView, lccUrls, LCC_POOL, normResult, roundCandidates,
   type LccGame, type LccRound, type LccTournament,
 } from "./lcc.js";
-import { decodeLichess, LICHESS, lichessPgnGames, pickLichessRound, type LichessRoundInfo, type LichessTour } from "./lichess.js";
+import { decodeLichess, LICHESS, lichessPgnGames, pickLichessRound, standingsOf, type LichessRoundInfo, type LichessTour } from "./lichess.js";
 
 /** Retransmission enregistrée (organisateur). */
 export interface RelayRecord {
@@ -87,6 +87,10 @@ interface Live {
   games: Map<number, { view: RelayGameView; key: string }>;
   /** toutes les rondes connues (identifiant Lichess de chaque ronde le cas échéant) */
   rounds: Array<RelayRoundRef & { lichessId?: string }>;
+  /** classement (Lichess : à partir du PGN de tout le tournoi), et quand il a été lu */
+  standings?: RelayStanding[];
+  standingsAt?: number;
+  standingsKey?: string;
   /** rondes déjà jouées, lues à la demande (gardées : une partie finie ne change plus) */
   past: Map<number, { view: RelayRoundView; at: number; final: boolean }>;
   updatedAt: number | null;
@@ -213,7 +217,8 @@ export class RelayService {
     return {
       id: l.rec.id, name: l.rec.name, round: l.rec.round, currentRound: l.currentRound, roundName: l.roundName,
       games: games.length, live: games.some((g) => g.view.live), updatedAt: l.updatedAt, error: l.error,
-      rounds: l.rounds.map(({ number, name, state }) => ({ number, name, state })),
+      rounds: l.rounds.map(({ number, name, state, startsAt }) => ({ number, name, state, ...(startsAt ? { startsAt } : {}) })),
+      ...(l.standings?.length ? { standings: l.standings } : {}),
     };
   }
 
@@ -304,7 +309,17 @@ export class RelayService {
       l.rounds = (t.rounds ?? []).filter((r) => typeof r.id === "string").map((r, i) => ({
         number: i + 1, name: (r.name ?? `Ronde ${i + 1}`).slice(0, 80), lichessId: r.id!,
         state: r.ongoing ? "ongoing" : r.finished ? "finished" : "upcoming",
+        startsAt: typeof r.startsAt === "number" && Number.isFinite(r.startsAt) ? r.startsAt : null,
       }));
+      // classement : relu quand une ronde se termine (ou toutes les 10 min) — un seul PGN pour tout le tournoi
+      const sk = l.rounds.filter((r) => r.state === "finished").length + ":" + l.rounds.length;
+      if (sk !== l.standingsKey || this.now() - (l.standingsAt ?? 0) > 600_000) {
+        l.standingsKey = sk; l.standingsAt = this.now();
+        try {
+          const all = await this.lichessPgn(`${base}/api/broadcast/${tourId}.pgn`);
+          if (all) l.standings = standingsOf(lichessPgnGames(all, this.now()));
+        } catch (e) { console.warn("[relay] classement", (e as Error).message); }
+      }
       const pick = pickLichessRound(t, this.now());
       l.lichessPick = pick ? { ...pick, at: this.now() } : null;
       if (!pick) { l.updatedAt = this.now(); l.error = null; return; }
