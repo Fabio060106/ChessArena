@@ -1,10 +1,12 @@
 import { formatScore, pvToSan, scoreToCp, winPct, type EngineLine, type Score } from "./engine";
 import { buildReview, type GameReview } from "./gameReview";
 import { openingIdea, openingOf } from "./openings";
+import { frenchOpening, type BookBranch, type OpeningBook } from "./openingBook";
+import { sublineIdea } from "./openingIdeas";
 import { cap, evalWords, ideaOf, isEndgame, moveFacts, NAME, OF_SIDE, opp, pieceList, shortIdea, SIDE, SIDE_CAP, TO_SIDE, VALUE, type MoveFacts } from "./commentary";
 
 /** Version du format (doit correspondre à REVIEW_VERSION côté serveur). */
-export const TEACHING_VERSION = 4;
+export const TEACHING_VERSION = 5;
 
 export type TeachMark = "!" | "?!" | "?" | "??" | "";
 
@@ -35,9 +37,20 @@ export interface TeachMove {
 
 export interface LessonChapter { title: string; text: string; ply: number | null }
 
+/** L'ouverture de la partie suivie dans le livre : variante exacte, et à chaque coup les autres sous-lignes connues. */
+export interface BookLine {
+  eco: string;
+  /** nom de la variante la plus précise atteinte (famille en français) */
+  name: string;
+  /** premier demi-coup hors du livre (null : toute la partie y reste) */
+  leftAt: number | null;
+  plies: Array<{ ply: number; san: string; name: string | null; alternatives: Array<{ san: string; name: string; uci: string }> }>;
+}
+
 export interface TeachingReview extends GameReview {
   version: typeof TEACHING_VERSION;
   opening: string | null;
+  book: BookLine | null;
   moves: TeachMove[];
   /** demi-coups proposés au quiz « trouve le meilleur coup » (erreurs et coups « ! ») */
   quiz: number[];
@@ -75,12 +88,22 @@ export function buildTeaching(p: {
   lines: ReadonlyArray<readonly EngineLine[]>;
   names: { w: string; b: string };
   result: string | null;
+  /** livre d'ouvertures (variantes nommées) ; sans lui, la reconnaissance est plus sommaire */
+  book?: OpeningBook | null;
 }): TeachingReview {
   const base = buildReview({
     sans: p.sans, fens: p.fens, names: p.names, result: p.result,
     evals: p.lines.map((ls) => ({ score: ls[0]!.score, pv: ls[0]!.pv })),
   });
-  const opening = openingOf(p.sans);
+  const trace = p.book ? p.book.trace(p.fens, p.ucis) : null;
+  const opening = trace?.deepest
+    ? { name: frenchOpening(trace.deepest.name), plies: Math.min(p.sans.length, trace.leftAt ? trace.leftAt - 1 : trace.deepest.ply), en: trace.deepest.name, eco: trace.deepest.eco }
+    : { ...openingOf(p.sans), en: null as string | null, eco: null as string | null };
+  // liste courte des sous-lignes : « 4.d3 (variante anti-berlinoise) »
+  const altText = (ply: number, alts: readonly BookBranch[], max = 4) =>
+    alts.slice(0, max).map((a) => `${num(ply)}${a.san} (${frenchOpening(a.name)})`).join(", ");
+  let lastBookName: string | null = null;
+  let lastIdea: string | null = null;
   const moves: TeachMove[] = [];
   const kinds = new Map<number, ErrKind>();
   const facts: Array<MoveFacts | null> = [];
@@ -188,12 +211,38 @@ export function buildTeaching(p: {
     // la note « de livre » : seulement là où un commentateur s'arrêterait
     let note: string | null = null;
     let variation: string | null = null;
-    if (mark === "??" || mark === "?" || mark === "?!") {
+    const bp = trace && ply <= trace.plies.length ? trace.plies[ply - 1]! : null;
+    if (trace && bp && theory && !mark) {
+      // dans la théorie : la sous-variante où l'on entre, son idée, et les autres sous-lignes possibles à ce coup
+      const t: string[] = [];
+      if (bp.entry && bp.entry.name !== lastBookName) {
+        t.push(lastBookName ? `On entre dans la ${lower(frenchOpening(bp.entry.name))} (${bp.entry.eco}).` : `C'est la ${lower(frenchOpening(bp.entry.name))} (${bp.entry.eco}).`);
+        const si = sublineIdea(bp.entry.name);
+        if (si && si !== lastIdea) { t.push(si); lastIdea = si; }
+        lastBookName = bp.entry.name;
+      }
+      if (bp.alternatives.length) {
+        t.push(`Autres sous-lignes connues à ce coup : ${altText(ply, bp.alternatives)}.`);
+        // l'idée de la principale alternative, quand on la connaît
+        const alt = bp.alternatives.find((a) => { const i = sublineIdea(a.name); return i && i !== lastIdea && i !== sublineIdea(bp.entry?.name); });
+        if (alt) t.push(`À savoir sur ${num(ply)}${alt.san} : ${sublineIdea(alt.name)!.split(/(?<=[.!]) /)[0]}`);
+      }
+      if (t.length) note = t.join(" ").replace(/la gambit/g, "le gambit").replace(/la système/g, "le système").replace(/la attaque/g, "l'attaque").replace(/la ouverture/g, "l'ouverture");
+    } else if (trace && trace.leftAt === ply) {
+      // sortie du livre : ce que la théorie connaissait à la place
+      const known = p.book!.mainBranches(fenBefore);
+      const t = [`Au-delà de ce point, le livre ne nomme plus de sous-variante${opening.name ? ` de la ${lower(opening.name)}` : ""} : place aux plans de milieu de jeu (et à la préparation des joueurs).`];
+      if (known.length) t.push(`Les autres sous-lignes nommées à ce coup étaient ${altText(ply, known, 3)}.`);
+      if (mark) t.push(parts.filter((x) => !x.startsWith("Il fallait jouer")).join(" "));
+      else t.push(isBest ? "Un choix que Stockfish approuve." : `${idea ? `${idea} ` : ""}Stockfish préférait ${bf?.san ?? "un autre coup"} (${formatScore(best.score)}).`);
+      note = t.join(" ").replace(/la gambit/g, "le gambit").replace(/la système/g, "le système").replace(/de la ouverture/g, "de l'ouverture");
+      if (mark && best.pv.length) variation = `${numberedLine(fenBefore, best.pv, ply, 6)}, ${formatScore(best.score)}`;
+    } else if (mark === "??" || mark === "?" || mark === "?!") {
       note = parts.filter((x) => !x.startsWith("Il fallait jouer")).join(" ");
       if (best.pv.length) variation = `${numberedLine(fenBefore, best.pv, ply, 6)}, ${formatScore(best.score)}`;
     } else if (mark === "!") {
       note = parts.join(" ");
-    } else if (opening.plies > 0 && ply === opening.plies) {
+    } else if (!trace && opening.plies > 0 && ply === opening.plies) {
       note = `${idea ? `${idea} ` : ""}C'est la position de référence de la ${lower(opening.name ?? "")} : la partie quitte maintenant la théorie la plus connue.`.replace("de la gambit", "du gambit").replace("de la système", "du système");
     } else if (ply === endgameAt) {
       note = `${idea ? `${idea} ` : ""}La partie entre en finale : ${SIDE.w} ont ${pieceList(fenAfter, "w")}, ${SIDE.b} ${pieceList(fenAfter, "b")}. ${cap(words)}.`;
@@ -218,16 +267,20 @@ export function buildTeaching(p: {
   const errs = base.moments.map((m) => m.ply).filter((x) => ["??", "?", "?!"].includes(moves[x - 1]?.mark ?? "")).slice(0, 4);
   const greats = moves.filter((m) => m.mark === "!").map((m) => m.ply).slice(0, 2);
   const quiz = [...new Set([...errs, ...greats])].sort((a, b) => a - b);
-  const summary = opening.name ? `${opening.name}. ${base.summary}` : base.summary;
+  const summary = opening.name ? `${opening.name}${opening.eco ? ` (${opening.eco})` : ""}. ${base.summary}` : base.summary;
   const lesson = buildLesson({ ...p, opening, moves, facts, kinds, moments: base.moments.map((m) => m.ply) });
-  return { ...base, version: TEACHING_VERSION, opening: opening.name, moves, quiz, summary, lesson };
+  const book: BookLine | null = trace?.deepest ? {
+    eco: trace.deepest.eco, name: frenchOpening(trace.deepest.name), leftAt: trace.leftAt,
+    plies: trace.plies.map((x) => ({ ply: x.ply, san: p.sans[x.ply - 1]!, name: x.entry ? frenchOpening(x.entry.name) : null, alternatives: x.alternatives.slice(0, 8).map((a) => ({ san: a.san, uci: a.uci, name: frenchOpening(a.name) })) })),
+  } : null;
+  return { ...base, version: TEACHING_VERSION, opening: opening.name, book, moves, quiz, summary, lesson };
 }
 
 /** Le « cours » : la partie racontée par phases, comme dans un livre, puis 2 à 4 leçons à retenir. */
 function buildLesson(p: {
   sans: readonly string[]; fens: readonly string[]; lines: ReadonlyArray<readonly EngineLine[]>;
   names: { w: string; b: string }; result: string | null;
-  opening: { name: string | null; plies: number };
+  opening: { name: string | null; plies: number; eco?: string | null; en?: string | null };
   moves: TeachMove[]; facts: Array<MoveFacts | null>; kinds: Map<number, ErrKind>; moments: number[];
 }): TeachingReview["lesson"] {
   const n = p.moves.length;
@@ -337,9 +390,11 @@ function buildLesson(p: {
   add(p.facts.slice(0, 30).some((f) => f?.castle) || p.facts.slice(0, 20).some((f) => f?.develops), "En ouverture : développe les pièces vers le centre, roque tôt, et ne joue pas deux fois la même pièce sans raison.");
   add(endgameAt > 0, "En finale, active ton roi et pousse les pions passés : ce sont les deux idées qui gagnent le plus de finales.");
   add(true, "Rejoue les moments clés dans l'onglet Quiz : trouver soi-même le bon coup est la meilleure façon de progresser.");
-  const idea = openingIdea(p.opening.name);
+  const fam = openingIdea(p.opening.name);
+  const sub = sublineIdea(p.opening.en ?? null);
+  const idea = [fam, sub && sub !== fam ? sub : null].filter(Boolean).join(" ");
   const intro = p.opening.name
-    ? `${p.names.w} (Blancs) contre ${p.names.b} (Noirs). ${cap(lower(p.opening.name))}. ${idea ?? ""}`.trim()
+    ? `${p.names.w} (Blancs) contre ${p.names.b} (Noirs). ${cap(lower(p.opening.name))}${p.opening.eco ? ` (${p.opening.eco})` : ""}. ${idea}`.trim()
     : `${p.names.w} (Blancs) contre ${p.names.b} (Noirs).`;
   return { intro, chapters, takeaways };
 }

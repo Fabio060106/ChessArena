@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Engine, ENGINE_NAME, terminalScore, type EngineLine } from "../lib/engine";
+import { loadOpeningBook } from "../lib/openingBook";
 import { buildTeaching, quizPrompt, TEACHING_VERSION, type TeachMove, type TeachingReview } from "../lib/pedagogy";
 import { replayFromSans } from "../lib/replay";
 import { useSettings } from "../lib/settings";
@@ -39,7 +40,7 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
   const [review, setReview] = useState<TeachingReview | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [failed, setFailed] = useState(false);
-  const [tab, setTab] = useState<"lesson" | "summary" | "moves" | "quiz">("lesson");
+  const [tab, setTab] = useState<"lesson" | "opening" | "summary" | "moves" | "quiz">("lesson");
   const localKey = `arena.teach${TEACHING_VERSION}.${relayId}.${round}.${index}.${sans.length}`;
 
   useEffect(() => {
@@ -66,7 +67,9 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
         lines.push(ls);
         setProgress({ done: i + 1, total: fens.length });
       }
-      const r = buildTeaching({ sans, ucis, fens, lines, names, result });
+      const book = await loadOpeningBook();
+      if (!live) return;
+      const r = buildTeaching({ sans, ucis, fens, lines, names, result, book });
       setReview(r); setProgress(null);
       try { localStorage.setItem(localKey, JSON.stringify(r)); } catch { /* plein */ }
       shared.save({ relayId, round, index, sans: [...sans], review: r });
@@ -89,12 +92,13 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
   return (
     <section className="panel flex flex-col gap-3 p-3" aria-label="Analyse Stockfish de la partie">
       <div className="flex gap-1 rounded-lg bg-surface-2 p-0.5" role="tablist" aria-label="Vues de l'analyse">
-        {([["lesson", "Commentée"], ["summary", "Résumé"], ["moves", "Coups"], ["quiz", `Quiz${review.quiz.length ? ` (${review.quiz.length})` : ""}`]] as const).map(([k, label]) => (
+        {([["lesson", "Partie"], ...(review.book ? [["opening", "Ouverture"] as const] : []), ["summary", "Résumé"], ["moves", "Coups"], ["quiz", "Quiz"]] as const).map(([k, label]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
-            className={`flex-1 rounded-md px-2 py-1.5 text-xs font-semibold sm:text-sm ${tab === k ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>{label}</button>
+            className={`flex-1 rounded-md px-1 py-1.5 text-xs font-semibold sm:px-2 sm:text-sm ${tab === k ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>{label}</button>
         ))}
       </div>
       {tab === "lesson" && <Lesson review={review} onGo={onGo} ply={ply} result={result} />}
+      {tab === "opening" && review.book && <OpeningTab book={review.book} ucis={ucis} onGo={onGo} ply={ply} />}
       {tab === "summary" && <Summary review={review} names={names} ucis={ucis} onGo={onGo} />}
       {tab === "moves" && <MoveByMove review={review} onGo={onGo} />}
       {tab === "quiz" && <Quiz review={review} names={names} fens={steps.map((x) => x.fen)} onGo={onGo} />}
@@ -153,6 +157,43 @@ function Lesson({ review, onGo, ply, result }: { review: TeachingReview; onGo: (
         </section>
       )}
       <p className="font-sans text-xs text-muted">Commentaires générés automatiquement à partir de l'analyse de {ENGINE_NAME}.</p>
+    </div>
+  );
+}
+
+/** L'ouverture coup par coup : la variante atteinte, et à chaque coup les autres sous-lignes du livre (cliquables). */
+function OpeningTab({ book, ucis, onGo, ply }: { book: NonNullable<TeachingReview["book"]>; ucis: readonly string[]; onGo: (p: number) => void; ply: number }) {
+  return (
+    <div className="flex flex-col gap-2 lg:max-h-[70vh] lg:overflow-y-auto lg:pr-1" aria-label="Ouverture et sous-lignes">
+      <div className="rounded-lg bg-surface-2 p-2.5">
+        <p className="text-xs text-muted">Variante atteinte · {book.eco}</p>
+        <p className="font-semibold">{book.name}</p>
+        {book.leftAt && <p className="mt-0.5 text-xs text-muted">Plus de sous-variante nommée après le coup {Math.ceil((book.leftAt - 1) / 2)}.</p>}
+      </div>
+      <ol className="flex flex-col gap-1.5">
+        {book.plies.map((x) => (
+          <li key={x.ply} className="border-b border-line/50 pb-1.5 text-[13px]">
+            <div className="flex items-baseline gap-2">
+              <button type="button" onClick={() => onGo(x.ply)} className={`shrink-0 rounded px-1 font-semibold ${x.ply === ply ? "bg-neon/20 text-neon" : "hover:bg-surface-2"}`}>
+                {Math.ceil(x.ply / 2)}{x.ply % 2 ? "." : "…"} {x.san}
+              </button>
+              <span className="min-w-0 truncate text-muted">{x.name ?? ""}</span>
+            </div>
+            {x.alternatives.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1 pl-1">
+                <span className="text-[11px] text-muted">ou :</span>
+                {x.alternatives.map((a) => (
+                  <a key={a.uci} href={`/analyse?m=${[...ucis.slice(0, x.ply - 1), a.uci].join(",")}`} title={a.name}
+                    className="max-w-full truncate rounded border border-line px-1.5 py-0.5 text-[11px] hover:border-neon hover:text-neon">
+                    <b>{a.san}</b> <span className="text-muted">{a.name.replace(/^[^:]*: /, "")}</span>
+                  </a>
+                ))}
+              </div>
+            )}
+          </li>
+        ))}
+      </ol>
+      <p className="text-[11px] text-muted">Noms des variantes : base libre lichess-org/chess-openings. Touche une sous-ligne pour l'ouvrir sur l'échiquier d'analyse.</p>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EngineLine } from "./engine";
+import { OpeningBook } from "./openingBook";
 import { buildTeaching, quizPrompt } from "./pedagogy";
 import { openingIdea, openingOf } from "./openings";
 import { replayFromSans } from "./replay";
@@ -36,7 +37,7 @@ describe("analyse pédagogique", () => {
   const r = buildTeaching({ sans, ucis, fens, lines, names: { w: "Gukesh", b: "Sindarov" }, result: "1-0" });
 
   it("un commentaire pour chaque coup", () => {
-    expect(r.version).toBe(4);
+    expect(r.version).toBe(5);
     expect(r.moves).toHaveLength(7);
     expect(r.moves.map((m) => m.ply)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(r.moves[0]!.comment).toMatch(/Le pion occupe le centre en e4\. (Coup de théorie|C.est la position de référence)/);
@@ -70,6 +71,18 @@ describe("analyse pédagogique", () => {
     expect(r.moves[5]!.note).not.toMatch(/Il fallait jouer/);
     expect(r.moves[5]!.variation).toBe("3… g6 4. Qf3 Nf6, 0,0");
     expect(r.lesson.intro).toMatch(/^Gukesh \(Blancs\) contre Sindarov \(Noirs\)\./);
+  });
+
+  it("avec le livre d'ouvertures : variante exacte, sous-lignes à chaque coup, sortie de la théorie", () => {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { join } = require("node:path") as typeof import("node:path");
+    const book = new OpeningBook(JSON.parse(readFileSync(join(__dirname, "../public/opening-book.json"), "utf8")));
+    const rb = buildTeaching({ sans, ucis, fens, lines, names: { w: "Gukesh", b: "Sindarov" }, result: "1-0", book });
+    expect(rb.opening).toMatch(/^Partie italienne|^Ouverture du fou|^Partie du pion roi/);
+    expect(rb.book?.plies[2]!.alternatives.map((a) => a.san)).toEqual(expect.arrayContaining(["Nf3", "Nc3"]));
+    const n2 = rb.moves.filter((m) => m.note && /Autres sous-lignes connues/.test(m.note));
+    expect(n2.length).toBeGreaterThan(0);
+    expect(rb.lesson.intro).toMatch(/\([A-E]\d\d\)/);
   });
 
   it("pièce en prise repérée même si la meilleure réponse de l'adversaire est un autre coup gagnant", () => {
