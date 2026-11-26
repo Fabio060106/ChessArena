@@ -40,6 +40,11 @@ beforeAll(async () => {
     // faux LiveChessCloud (retransmissions)
     relayFetch: async (u: string) => (fakeLcc.has(u) ? structuredClone(fakeLcc.get(u)) : null),
     relayPool: "http://lcc.test", relayIntervals: { watched: 40, idle: 40, finished: 40 },
+    // faux export Lichess (import de parties)
+    importFetch: async (u: string) => (u.includes("/api/games/user/Baron_Test?") ? [
+      JSON.stringify({ id: "IMPORT01", variant: "standard", speed: "blitz", createdAt: 1, status: "mate", winner: "white", players: { white: { user: { name: "Baron_Test", id: "baron_test" }, rating: 1800 }, black: { user: { name: "B", id: "b" }, rating: 1700 } }, opening: { name: "Italian Game: Giuoco Piano" }, moves: "e4 e5 Nf3 Nc6 Bc4 Bc5" }),
+      JSON.stringify({ id: "IMPORT02", variant: "standard", speed: "rapid", createdAt: 2, status: "resign", winner: "white", players: { white: { user: { name: "C", id: "c" }, rating: 1700 }, black: { user: { name: "Baron_Test", id: "baron_test" }, rating: 1800 } }, opening: { name: "Sicilian Defense" }, moves: "e4 c5 Nf3 d6" }),
+    ].join("\n") : null),
   });
   url = `http://localhost:${await server.listen(0)}`;
 });
@@ -814,5 +819,33 @@ describe("retransmissions DGT / LiveChessCloud", () => {
     expect(await (await admin("relay-remove", { by: "Fabio060106", id: relay.id })).json()).toEqual({ ok: true });
     expect(await new Promise((r) => c.emit("relay:watch", { relayId: relay.id }, r as never))).toEqual({ ok: false, code: "UNKNOWN_RELAY" });
     c.disconnect();
+  });
+});
+
+describe("import de parties Lichess", () => {
+  // la limite de débit HTTP par adresse IP (toute la suite tourne depuis 127.0.0.1) : on patiente ; IMPORT_TOO_SOON est la vraie réponse attendue
+  const api = async (method: string, path: string, body?: unknown, tries = 8): Promise<Response> => {
+    const r = await fetch(`${url}${path}`, {
+      method, headers: { authorization: `Bearer ${token({ sub: "importeur" })}`, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
+    });
+    if (r.status === 429 && tries > 0 && !(await r.clone().text()).includes("IMPORT_TOO_SOON")) { await new Promise((w) => setTimeout(w, 1000)); return api(method, path, body, tries - 1); }
+    return r;
+  };
+  it("import en arrière-plan → parties dans le répertoire, ouvertures, suppression", async () => {
+    expect((await api("POST", "/account/imports", { username: "../x" })).status).toBe(400);
+    expect((await api("POST", "/account/imports", { username: "Baron_Test", speeds: ["blitz", "rapid"] })).status).toBe(202);
+    let st: { count: number; status: { state: string; added: number }; openings: Array<{ name: string; color: string; games: number; score: number }> } | null = null;
+    for (let i = 0; i < 20; i++) {
+      st = await (await api("GET", "/account/imports")).json() as typeof st;
+      if (st!.status.state !== "running") break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(st).toMatchObject({ count: 2, status: { state: "done", added: 2 } });
+    expect(st!.openings).toEqual(expect.arrayContaining([{ name: "Italian Game", color: "w", games: 1, score: 100 }, { name: "Sicilian Defense", color: "b", games: 1, score: 0 }]));
+    expect((await api("POST", "/account/imports", { username: "Baron_Test" })).status).toBe(429); // une minute entre deux imports
+    const rep = await (await api("GET", "/account/repertoire")).json() as { games: Array<{ gameId: string; source?: string; pgn: string }> };
+    expect(rep.games.filter((g) => g.source === "lichess").map((g) => g.gameId).sort()).toEqual(["lichess:IMPORT01", "lichess:IMPORT02"]);
+    expect(await (await api("DELETE", "/account/imports")).json()).toEqual({ deleted: 2 });
+    expect((await (await api("GET", "/account/imports")).json() as { count: number }).count).toBe(0);
   });
 });

@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import jwt from "jsonwebtoken";
 import type pg from "pg";
 import type { RelayService } from "../relay/RelayService.js";
+import { IMPORT_SPEEDS, importedToRepertoire, validLichessName, type ImportService, type ImportSpeed } from "../imports/lichessImport.js";
 import { REVIEW_MAX_BYTES, reviewStoreKey, validReview, type ReviewStore } from "../relay/ReviewStore.js";
 import { REPERTOIRE_MAX_BYTES, SETTINGS_MAX_BYTES, type GameRepository } from "../persistence/GameRepository.js";
 import { TIME_CONTROLS, type ArenaJwtClaims, type DecisionRequest, type RgLimitKind, type TimeControlId } from "@chessarena/shared";
@@ -50,6 +51,8 @@ export const AUTH_SERVICE_AUDIENCE = "chessarena-auth-service";
  */
 export interface ApiDeps {
   cfg: GameServerConfig;
+  /** import de parties depuis Lichess */
+  imports?: ImportService;
   moderation: ModerationService | null;
   withdrawals: WithdrawalService | null;
   limits?: LimitsService | null;
@@ -556,8 +559,49 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
     }
     if (url.pathname === "/account/repertoire" && req.method === "GET") {
       const repo = need(d.repo);
-      const [games, saved] = await Promise.all([repo.listRepertoireGames(claims.sub, 500), repo.getRepertoire(claims.sub)]);
-      send(200, { games, data: saved?.data ?? null, updatedAt: saved?.updatedAt ?? null });
+      const [games, saved, imported] = await Promise.all([repo.listRepertoireGames(claims.sub, 500), repo.getRepertoire(claims.sub), repo.listImportedGames(claims.sub, 1000)]);
+      // parties du site + parties importées (Lichess)
+      send(200, { games: [...games, ...imported.map(importedToRepertoire)], data: saved?.data ?? null, updatedAt: saved?.updatedAt ?? null });
+      return true;
+    }
+    // ─── Import de parties (Lichess) ─────────────────────────────────────────────
+    if (url.pathname === "/account/imports" && req.method === "GET") {
+      const imported = await need(d.repo).listImportedGames(claims.sub, 2000);
+      const st = d.imports?.status(claims.sub) ?? { state: "idle", account: null, found: 0, added: 0, error: null, at: 0 };
+      // ouvertures les plus jouées (famille : avant le « : » du nom Lichess)
+      const by = new Map<string, { name: string; color: "w" | "b"; games: number; pts: number }>();
+      for (const g of imported) {
+        const name = (g.opening ?? "Ouverture inconnue").split(":")[0]!.trim();
+        const k = `${g.color}|${name}`;
+        const e = by.get(k) ?? { name, color: g.color, games: 0, pts: 0 };
+        e.games++; e.pts += g.outcome === "win" ? 1 : g.outcome === "draw" ? 0.5 : 0;
+        by.set(k, e);
+      }
+      const openings = [...by.values()].sort((a, b) => b.games - a.games).slice(0, 40)
+        .map((e) => ({ name: e.name, color: e.color, games: e.games, score: Math.round((100 * e.pts) / e.games) }));
+      send(200, {
+        count: imported.length, accounts: [...new Set(imported.map((g) => g.account))],
+        status: { state: st.state, account: st.account, found: st.found, added: st.added, error: st.error }, openings,
+      });
+      return true;
+    }
+    if (url.pathname === "/account/imports" && req.method === "POST") {
+      if (!d.imports) throw new HttpError(503, "UNAVAILABLE");
+      need(d.repo);
+      const b = await body(req, 2048);
+      const username = typeof b.username === "string" ? b.username.trim() : "";
+      if (!validLichessName(username)) throw new HttpError(400, "BAD_USERNAME");
+      const max = typeof b.max === "number" && Number.isFinite(b.max) ? b.max : 300;
+      const speeds = (Array.isArray(b.speeds) ? b.speeds : ["blitz", "rapid"]).filter((x): x is ImportSpeed => (IMPORT_SPEEDS as readonly unknown[]).includes(x));
+      if (!speeds.length) throw new HttpError(400, "BAD_SPEEDS");
+      const r = d.imports.start(claims.sub, username, max, speeds);
+      if (r === "BUSY") throw new HttpError(409, "IMPORT_RUNNING");
+      if (r === "TOO_SOON") throw new HttpError(429, "IMPORT_TOO_SOON");
+      send(202, { ok: true, status: { state: r.state, account: r.account, found: r.found, added: r.added, error: r.error } });
+      return true;
+    }
+    if (url.pathname === "/account/imports" && req.method === "DELETE") {
+      send(200, { deleted: await need(d.repo).deleteImportedGames(claims.sub) });
       return true;
     }
     if (url.pathname === "/account/repertoire" && req.method === "PUT") {

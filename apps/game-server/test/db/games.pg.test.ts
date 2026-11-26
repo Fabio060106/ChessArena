@@ -116,6 +116,16 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect(await repo.getRepertoire("rep-b")).toBeNull();
   });
 
+  it("parties importées (Lichess) : sans doublon, triées, supprimables", async () => {
+    const g = (extId: string, playedAt: string) => ({ source: "lichess" as const, extId, account: "LeBaronRouge", playedAt, color: "w" as const, opponent: "Bob (1750)", outcome: "win" as const, speed: "blitz", opening: "Italian Game", pgn: "1. e4 e5 1-0" });
+    expect(await repo.saveImportedGames("imp-a", [g("AAAAAAAA", "2026-11-01T10:00:00Z"), g("BBBBBBBB", "2026-11-02T10:00:00Z")])).toBe(2);
+    expect(await repo.saveImportedGames("imp-a", [g("BBBBBBBB", "2026-11-02T10:00:00Z"), g("CCCCCCCC", "2026-10-01T10:00:00Z")])).toBe(1);
+    expect((await repo.listImportedGames("imp-a", 10)).map((x) => x.extId)).toEqual(["BBBBBBBB", "AAAAAAAA", "CCCCCCCC"]);
+    expect(await repo.listImportedGames("imp-b", 10)).toEqual([]);
+    expect(await repo.deleteImportedGames("imp-a")).toBe(3);
+    expect(await repo.listImportedGames("imp-a", 10)).toEqual([]);
+  });
+
   it("comptes : création, unicité sans casse, e-mail unique, réclamation d'un pseudo de la bêta", async () => {
     const { PgAccountStore, hashPassword } = await import("../../src/auth/accounts.js");
     const store = new PgAccountStore(db.pool);

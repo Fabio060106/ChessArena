@@ -48,6 +48,7 @@ import { LimitExceededError, LimitsRequiredError, LimitsService, SelfExcludedErr
 import { KycService, type KycProvider } from "./auth/kyc.js";
 import { DepositService } from "./settlement/deposits.js";
 import { RegulatoryExporter } from "./audit/regulatoryExport.js";
+import { fetchLichessExport, ImportService } from "./imports/lichessImport.js";
 
 /** place gardée dans la file après la perte de connexion */
 const QUEUE_GRACE_MS = 20_000;
@@ -88,6 +89,8 @@ export interface GameServerDeps {
   relayStore?: RelayStore;
   relayFetch?: FetchJson;
   relayFetchText?: FetchText;
+  /** import de parties Lichess (tests : faux téléchargement) */
+  importFetch?: (url: string) => Promise<string | null>;
   relayLichess?: string;
   relayPool?: string;
   relayIntervals?: { watched: number; idle: number; finished: number };
@@ -179,7 +182,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { relays, reviews, parseRelaySource, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
+      void handleApi(req, res, { imports, relays, reviews, parseRelaySource, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
       fairplayMem, isOnline: (u) => (io.of("/").adapter.rooms.get(userRoom(u))?.size ?? 0) > 0, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
       return;
     }
@@ -255,6 +258,11 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   // retransmissions DGT / LiveChessCloud : une lecture de la source par tournoi, diffusée à tous les spectateurs
   const relayRoom = (id: string) => `relay:${id}`;
   const reviews = pool ? new PgReviewStore(pool) : new InMemoryReviewStore();
+  const imports = new ImportService({
+    fetchText: deps.importFetch ?? fetchLichessExport,
+    save: (u, g) => repo.saveImportedGames(u, g),
+    lichess: deps.relayLichess ?? (process.env.LICHESS_URL || undefined),
+  });
   const relays = new RelayService({
     store: deps.relayStore ?? (pool ? new PgRelayStore(pool) : new InMemoryRelayStore()),
     // LCC_POOL_URL : faux LiveChessCloud pour les essais locaux

@@ -3,6 +3,7 @@ import {
   DEFAULT_RATING, TIME_CONTROLS, type AccountState, type GameHistoryDetail, type GameHistoryItem, type LeaderboardEntry, type PlayerProfile, type RepertoireGame, type TimeControlId,
 } from "@chessarena/shared";
 import type { FinishedGame } from "../game/GameRoom.js";
+import type { ImportedGame } from "../imports/lichessImport.js";
 import { withTx } from "../db/tx.js";
 import {
   computeGameRatings, nextState, scoreFromResult, type RatingChange, type RatingState,
@@ -39,6 +40,10 @@ export interface GameRepository {
   /** Parties terminées (hors annulées), plus récentes d'abord, pour le répertoire. */
   listRepertoireGames(userId: string, limit: number): Promise<RepertoireGame[]>;
   getRepertoire(userId: string): Promise<{ data: unknown; updatedAt: string } | null>;
+  /** Parties importées d'un autre site (Lichess) : ajoutées sans doublon, renvoie le nombre de nouvelles. */
+  saveImportedGames(userId: string, games: ImportedGame[]): Promise<number>;
+  listImportedGames(userId: string, limit: number): Promise<ImportedGame[]>;
+  deleteImportedGames(userId: string): Promise<number>;
   saveRepertoire(userId: string, data: unknown): Promise<{ updatedAt: string }>;
   /** Réglages du joueur (apparence, son) : petits, retrouvés sur tous ses appareils. */
   getSettings(userId: string): Promise<unknown | null>;
@@ -338,6 +343,39 @@ export class PgGameRepository implements GameRepository {
     );
     return { updatedAt: r.rows[0]!.updated_at.toISOString() };
   }
+
+  async saveImportedGames(userId: string, games: ImportedGame[]): Promise<number> {
+    if (!games.length) return 0;
+    await this.ensureUser(userId);
+    let added = 0;
+    // par paquets de 100 lignes
+    for (let i = 0; i < games.length; i += 100) {
+      const part = games.slice(i, i + 100);
+      const vals: unknown[] = [];
+      const rows = part.map((g, k) => {
+        vals.push(userId, g.source, g.extId, g.account, g.playedAt, g.color, g.opponent, g.outcome, g.speed, g.opening, g.pgn);
+        const b = k * 11;
+        return `(${Array.from({ length: 11 }, (_, j) => `$${b + j + 1}`).join(",")})`;
+      });
+      const r = await this.pool.query(
+        `INSERT INTO imported_games (user_id, source, ext_id, account, played_at, color, opponent, outcome, speed, opening, pgn)
+         VALUES ${rows.join(",")} ON CONFLICT DO NOTHING`, vals);
+      added += r.rowCount ?? 0;
+    }
+    return added;
+  }
+
+  async listImportedGames(userId: string, limit: number): Promise<ImportedGame[]> {
+    const r = await this.pool.query<{ source: "lichess"; ext_id: string; account: string; played_at: Date; color: "w" | "b"; opponent: string; outcome: ImportedGame["outcome"]; speed: string; opening: string | null; pgn: string }>(
+      `SELECT source, ext_id, account, played_at, color, opponent, outcome, speed, opening, pgn FROM imported_games
+        WHERE user_id = $1 ORDER BY played_at DESC LIMIT $2`, [userId, Math.min(Math.max(1, Math.floor(limit)), 2000)]);
+    return r.rows.map((x) => ({ source: x.source, extId: x.ext_id, account: x.account, playedAt: new Date(x.played_at).toISOString(), color: x.color, opponent: x.opponent, outcome: x.outcome, speed: x.speed, opening: x.opening, pgn: x.pgn }));
+  }
+
+  async deleteImportedGames(userId: string): Promise<number> {
+    const r = await this.pool.query("DELETE FROM imported_games WHERE user_id = $1", [userId]);
+    return r.rowCount ?? 0;
+  }
   async listFriends(userId: string): Promise<Array<{ userId: string; flag: string | null; rating: number }>> {
     const r = await this.pool.query<{ id: string; display_flag: string | null; rating: number | null }>(
       `SELECT u.id, u.display_flag, r.rating FROM friendships f
@@ -461,6 +499,23 @@ export class InMemoryGameRepository implements GameRepository {
     const updatedAt = new Date().toISOString();
     this.repertoires.set(userId, { data: JSON.parse(JSON.stringify(data)), updatedAt });
     return { updatedAt };
+  }
+
+  private imported = new Map<string, Map<string, ImportedGame>>();
+  async saveImportedGames(userId: string, games: ImportedGame[]): Promise<number> {
+    const m = this.imported.get(userId) ?? new Map<string, ImportedGame>();
+    this.imported.set(userId, m);
+    let added = 0;
+    for (const g of games) { const k = `${g.source}:${g.extId}`; if (!m.has(k)) { m.set(k, { ...g }); added++; } }
+    return added;
+  }
+  async listImportedGames(userId: string, limit: number): Promise<ImportedGame[]> {
+    return [...(this.imported.get(userId)?.values() ?? [])].sort((a, b) => b.playedAt.localeCompare(a.playedAt)).slice(0, limit);
+  }
+  async deleteImportedGames(userId: string): Promise<number> {
+    const n = this.imported.get(userId)?.size ?? 0;
+    this.imported.delete(userId);
+    return n;
   }
 
   async getProfile(pseudo: string): Promise<Omit<PlayerProfile, "liveGameId"> | null> {

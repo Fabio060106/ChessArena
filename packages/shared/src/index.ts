@@ -261,6 +261,17 @@ export interface RepertoireGame {
   outcome: "win" | "loss" | "draw";
   timeControl: TimeControlId;
   pgn: string;
+  /** partie importée d'un autre site (absent : jouée sur le site) */
+  source?: "lichess";
+}
+
+/** GET /account/imports : parties importées (Lichess) et état du dernier import. */
+export interface ImportsResponse {
+  count: number;
+  accounts: string[];
+  status: { state: "idle" | "running" | "done" | "error"; account: string | null; found: number; added: number; error: string | null };
+  /** ouvertures les plus jouées dans les parties importées */
+  openings: Array<{ name: string; color: Color; games: number; score: number }>;
 }
 
 /** GET /account/repertoire : les parties + le document de répertoire enregistré (null au départ). */

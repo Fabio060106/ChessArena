@@ -4,6 +4,7 @@ import { PageHeader } from "../../components/PageHeader";
 import { useRouter } from "next/navigation";
 import type { Color, RepertoireResponse } from "@chessarena/shared";
 import { GameBoard } from "../../components/GameBoard";
+import { ImportLichess } from "../../components/ImportLichess";
 import { useSettings } from "../../lib/settings";
 import { Engine, ENGINE_NAME, pvToSan, scoreToCp, terminalScore, winPct } from "../../lib/engine";
 import {
@@ -24,6 +25,7 @@ export default function RepertoirePage() {
   const [me, setMe] = useState<string | null>(null);
   const [resp, setResp] = useState<RepertoireResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
   const [doc, setDoc] = useState<RepertoireDoc>(emptyDoc);
   const [color, setColor] = useState<Color>("w");
   const [mode, setMode] = useState<"tree" | "train">("tree");
@@ -47,7 +49,8 @@ export default function RepertoirePage() {
         if (!r.ok) throw new Error(r.status === 503 ? "db" : "net");
         const d = (await r.json()) as RepertoireResponse;
         setResp(d);
-        setDoc(asDoc(d.data));
+        if (reload === 0) setDoc(asDoc(d.data));
+        started.current = false;
         // couleur par défaut : celle avec le plus de parties
         const w = d.games.filter((g) => g.color === "w").length;
         setColor(w >= d.games.length - w ? "w" : "b");
@@ -55,7 +58,9 @@ export default function RepertoirePage() {
       .catch((e: Error) => setLoadError(e.message === "db"
         ? "Le répertoire nécessite la base de données du serveur."
         : "Impossible de charger tes parties (le serveur se réveille peut-être : réessaie dans une minute)."));
-  }, [me]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me, reload]);
+  const onImported = useCallback(() => setReload((n) => n + 1), []);
 
   useEffect(() => () => engineRef.current?.terminate(), []);
   const engine = useCallback(() => (engineRef.current ??= new Engine()), []);
@@ -144,6 +149,7 @@ export default function RepertoirePage() {
       <div className="mx-auto max-w-[1400px] px-2 pb-8 sm:px-3 lg:px-6">
         {loadError && <p role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{loadError}</p>}
         {!resp && !loadError && <p className="px-1 text-sm text-muted">Chargement de tes parties…</p>}
+        {resp && <ImportLichess onImported={onImported} />}
         {resp && (
           <>
             {/* ─── Bandeau : couleur, analyse, entraînement, export ─── */}
