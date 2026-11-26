@@ -1,7 +1,7 @@
 import type pg from "pg";
 
 /** Version du format d'analyse pédagogique (le navigateur et le serveur doivent s'accorder). */
-export const REVIEW_VERSION = 2;
+export const REVIEW_VERSION = 3;
 export const REVIEW_MAX_BYTES = 400_000;
 
 export interface ReviewStore {
@@ -33,7 +33,7 @@ export class PgReviewStore implements ReviewStore {
   }
 }
 
-export const reviewStoreKey = (relayId: string, round: number, index: number, plies: number) => `${relayId}:${round}:${index}:${plies}`;
+export const reviewStoreKey = (relayId: string, round: number, index: number, plies: number) => `v${REVIEW_VERSION}:${relayId}:${round}:${index}:${plies}`;
 
 /**
  * Vérifie une analyse envoyée par un navigateur : bon format, bonne partie (mêmes coups), taille bornée.

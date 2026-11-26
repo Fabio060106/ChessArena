@@ -37,8 +37,8 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
   const [review, setReview] = useState<TeachingReview | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [failed, setFailed] = useState(false);
-  const [tab, setTab] = useState<"summary" | "moves" | "quiz">("summary");
-  const localKey = `arena.teach.${relayId}.${round}.${index}.${sans.length}`;
+  const [tab, setTab] = useState<"lesson" | "summary" | "moves" | "quiz">("lesson");
+  const localKey = `arena.teach${TEACHING_VERSION}.${relayId}.${round}.${index}.${sans.length}`;
 
   useEffect(() => {
     setReview(null); setFailed(false); setProgress(null);
@@ -87,16 +87,41 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
   return (
     <section className="panel flex flex-col gap-3 p-3" aria-label="Analyse Stockfish de la partie">
       <div className="flex gap-1 rounded-lg bg-surface-2 p-0.5" role="tablist" aria-label="Vues de l'analyse">
-        {([["summary", "Résumé"], ["moves", "Coup par coup"], ["quiz", `Quiz${review.quiz.length ? ` (${review.quiz.length})` : ""}`]] as const).map(([k, label]) => (
+        {([["lesson", "Cours"], ["summary", "Résumé"], ["moves", "Coups"], ["quiz", `Quiz${review.quiz.length ? ` (${review.quiz.length})` : ""}`]] as const).map(([k, label]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
             className={`flex-1 rounded-md px-2 py-1.5 text-xs font-semibold sm:text-sm ${tab === k ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>{label}</button>
         ))}
       </div>
+      {tab === "lesson" && <Lesson review={review} onGo={onGo} />}
       {tab === "summary" && <Summary review={review} names={names} ucis={ucis} onGo={onGo} />}
       {tab === "moves" && <MoveByMove review={review} onGo={onGo} />}
       {tab === "quiz" && <Quiz review={review} names={names} fens={steps.map((x) => x.fen)} onGo={onGo} />}
       <p className="text-[11px] text-muted/80">{ENGINE_NAME}, profondeur {DEPTH}, {LINES} suites par position. Explications générées automatiquement à partir de l'analyse.</p>
     </section>
+  );
+}
+
+/** La partie racontée comme dans un livre : ouverture, milieu de jeu, finale, tournant ; puis les leçons. */
+function Lesson({ review, onGo }: { review: TeachingReview; onGo: (p: number) => void }) {
+  return (
+    <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pr-1">
+      {review.lesson.chapters.map((c) => (
+        <section key={c.title}>
+          <h3 className="mb-1 font-display text-sm font-bold text-gold">{c.title}</h3>
+          <p className="text-[13.5px] leading-relaxed">{c.text}</p>
+          {c.ply !== null && <button type="button" onClick={() => onGo(c.ply!)} className="mt-1 text-xs text-neon hover:underline">Voir la position</button>}
+        </section>
+      ))}
+      {review.lesson.takeaways.length > 0 && (
+        <section className="rounded-lg bg-surface-2 p-3">
+          <h3 className="mb-1.5 font-display text-sm font-bold text-neon">Ce qu'il faut retenir</h3>
+          <ul className="flex list-disc flex-col gap-1.5 pl-4 text-[13px] leading-snug">
+            {review.lesson.takeaways.map((t) => <li key={t}>{t}</li>)}
+          </ul>
+        </section>
+      )}
+      <p className="text-xs text-muted">Commentaires générés automatiquement à partir de l'analyse de {ENGINE_NAME}. L'onglet « Coups » commente chaque coup de la partie.</p>
+    </div>
   );
 }
 
@@ -186,7 +211,7 @@ function MoveRow({ m, onGo }: { m: TeachMove; onGo: (p: number) => void }) {
       <span className="block text-[13px] leading-snug text-muted">{m.comment}</span>
       {!m.theory && m.alternatives.length > 0 && (
         <span className="mt-0.5 block text-xs text-muted/90">
-          Autres options : {m.alternatives.map((a, i) => <span key={i}>{i > 0 && " · "}<b className="text-text">{a.san}</b> ({a.eval}){i === 0 && a.line ? ` — ${a.line}` : ""}</span>)}
+          Autres options : {m.alternatives.map((a, i) => <span key={i}>{i > 0 && " · "}<b className="text-text">{a.san}</b> ({a.eval}){a.idea ? `, ${a.idea}` : ""}{i === 0 && a.line ? ` — ${a.line}` : ""}</span>)}
         </span>
       )}
     </li>

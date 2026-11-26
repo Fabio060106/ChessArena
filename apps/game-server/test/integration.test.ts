@@ -776,7 +776,7 @@ describe("retransmissions DGT / LiveChessCloud", () => {
     expect(g.game.turn).toBe("w");
 
     // analyse partagée : refusée tant que la partie n'est pas finie ; ensuite gardée et servie à tous
-    const review = { version: 2, summary: "Victoire des Blancs.", moves: ["e4", "e5"].map((san, i) => ({ ply: i + 1, san })) };
+    const review = { version: 3, summary: "Victoire des Blancs.", moves: ["e4", "e5"].map((san, i) => ({ ply: i + 1, san })) };
     // envoi par HTTP (une analyse dépasse la taille maximale d'un message websocket)
     const save = async (rv: unknown, sans = ["e4", "e5"], tries = 6): Promise<{ ok: boolean; saved?: boolean; status?: number }> => {
       const r = await fetch(`${url}/account/relay-review`, {

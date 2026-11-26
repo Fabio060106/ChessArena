@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EngineLine } from "./engine";
 import { buildTeaching, quizPrompt } from "./pedagogy";
-import { openingOf } from "./openings";
+import { openingIdea, openingOf } from "./openings";
 import { replayFromSans } from "./replay";
 
 const L = (cp: number, pv: string[]): EngineLine => ({ depth: 13, score: { cp, mate: null }, pv });
@@ -9,7 +9,9 @@ const M = (mate: number, pv: string[]): EngineLine => ({ depth: 13, score: { cp:
 
 describe("ouvertures", () => {
   it("la plus longue correspondance", () => {
-    expect(openingOf("e4 e5 Nf3 Nc6 Bb5 Nf6 O-O Nxe4 d4".split(" "))).toEqual({ name: "Défense berlinoise (variante du « mur de Berlin »)", plies: 8 });
+    expect(openingOf("e4 e5 Nf3 Nc6 Bb5 Nf6 O-O Nxe4 Re1".split(" "))).toEqual({ name: "Défense berlinoise, variante ouverte", plies: 8 });
+    expect(openingOf("e4 e5 Nf3 Nc6 Bb5 Nf6 O-O Nxe4 d4 Nd6 Bxc6 dxc6 dxe5 Nf5 Qxd8+ Kxd8".split(" ")).name).toBe("Défense berlinoise (variante du « mur de Berlin »)");
+    expect(openingIdea("Défense berlinoise, variante ouverte")).toMatch(/contre-attaquent/);
     expect(openingOf("d4 Nf6 c4 e6 g3 d5".split(" ")).name).toBe("Ouverture catalane");
     expect(openingOf(["a3"]).name).toBeNull();
   });
@@ -34,16 +36,17 @@ describe("analyse pédagogique", () => {
   const r = buildTeaching({ sans, ucis, fens, lines, names: { w: "Gukesh", b: "Sindarov" }, result: "1-0" });
 
   it("un commentaire pour chaque coup", () => {
-    expect(r.version).toBe(2);
+    expect(r.version).toBe(3);
     expect(r.moves).toHaveLength(7);
     expect(r.moves.map((m) => m.ply)).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    expect(r.moves[0]!.comment).toMatch(/Coup théorique/);
+    expect(r.moves[0]!.comment).toMatch(/Le pion occupe le centre en e4\. (Coup de théorie|C.est la position de référence)/);
+    expect(r.moves[2]!.comment).toMatch(/Développement du fou en c4, vers le centre/);
     expect(r.moves.every((m) => m.comment.length > 5)).toBe(true);
   });
   it("la gaffe est expliquée : mat permis, avec la suite ; meilleure défense proposée", () => {
     const g = r.moves[5]!;
     expect(g).toMatchObject({ san: "Nf6", mark: "??", best: "g6" });
-    expect(g.comment).toMatch(/^Gaffe des Noirs\. Ce coup permet aux Blancs de mater en 1 : Qxf7#\./);
+    expect(g.comment).toMatch(/^Une grave erreur des Noirs\. L'idée était sans doute : développement du cavalier en f6.*Ce coup permet aux Blancs de mater en 1 : Qxf7#\. Il fallait jouer g6/);
     expect(g.alternatives.map((a) => a.san)).toEqual(["g6", "Qe7"]);
     expect(g.goodUcis).toEqual(["g7g6"]);
   });
@@ -52,6 +55,13 @@ describe("analyse pédagogique", () => {
     expect(r.quiz).toEqual([6, 7]);
     expect(quizPrompt(r.moves[5]!, { w: "Gukesh", b: "Sindarov" })).toMatch(/Sindarov \(les Noirs\) s'est trompé ici\. Trouve un meilleur coup que Nf6/);
     expect(r.summary).toMatch(/^Partie italienne|^Ouverture du pion roi|^Partie ouverte/);
+  });
+
+  it("le cours : chapitres et leçons à retenir", () => {
+    expect(r.lesson.chapters.map((c) => c.title)).toEqual(["L'ouverture", "Le tournant de la partie"]);
+    expect(r.lesson.chapters[0]!.text).toMatch(/La partie commence par la partie italienne|Ouverture du pion roi|partie ouverte/i);
+    expect(r.lesson.chapters[1]!.text).toMatch(/Le moment décisif est 3… Nf6\?\? des Noirs\..*Gukesh remporte la partie \(1-0\)/);
+    expect(r.lesson.takeaways[0]).toMatch(/coups forcés/);
   });
 
   it("pièce en prise repérée même si la meilleure réponse de l'adversaire est un autre coup gagnant", () => {
@@ -63,6 +73,7 @@ describe("analyse pédagogique", () => {
       lines: [[L(30, ["e2e4"])], [L(30, ["e7e5"])], [L(30, ["g1f3"]), L(0, ["b1c3"])], [L(-500, ["d7d5"]), L(-490, ["b8a6"]), L(0, ["g8f6"])]],
     });
     expect(r2.moves[2]!.mark).toBe("??");
-    expect(r2.moves[2]!.comment).toMatch(/laisse le fou en a6 sans protection suffisante/);
+    expect(r2.moves[2]!.comment).toMatch(/Le fou en a6 n'est plus assez protégé : Nxa6 le gagne/);
+    expect(r2.moves[2]!.comment).toMatch(/Il fallait jouer Nf3, qui menaçait le pion e5|Il fallait jouer Nf3/);
   });
 });
