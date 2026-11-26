@@ -78,7 +78,11 @@ describe("RelayService avec Lichess", () => {
     const b = mk(); await b.start();
     expect(await b.seed({ name: "CM", source: "lichess", lccId: "round:L3j03TZq", round: 0 })).toBeNull();
     expect(b.list()).toHaveLength(1);
-    a.close(); b.close();
+    // une retransmission DGT ajoutée à la main : pas de Lichess en plus
+    const c = new RelayService({ store: new InMemoryRelayStore(), autoStart: false, fetchJson: async () => null, fetchText: async () => null, watchers: () => 0, onRound: () => {}, onGame: () => {} });
+    await c.add({ name: "CM (DGT)", source: "lcc", lccId: "0f1e2d3c-1111-2222-3333-444455556666", round: 0, createdBy: "x" });
+    expect(await c.seed({ name: "CM", source: "lichess", lccId: "round:L3j03TZq", round: 0 })).toBeNull();
+    a.close(); b.close(); c.close();
   });
   it("suit le tournoi, passe à la ronde suivante, ralentit en cas de « trop de requêtes »", async () => {
     const json = new Map<string, unknown>();

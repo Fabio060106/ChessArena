@@ -140,11 +140,12 @@ export class RelayService {
   }
 
   /**
-   * Ajoute une retransmission par défaut si aucune retransmission de la même source n'existe déjà
+   * Ajoute une retransmission par défaut s'il n'y en a encore aucune
    * (ex. le Championnat du monde), pour qu'elle apparaisse sans réglage manuel.
    */
   async seed(input: { name: string; source: "lcc" | "lichess"; lccId: string; round: number }): Promise<RelayRecord | null> {
-    if ([...this.live.values()].some((l) => (l.rec.source ?? "lcc") === input.source)) return null;
+    // une retransmission existe déjà (Lichess ou DGT ajoutée à la main) : on n'en ajoute pas d'autre
+    if (this.live.size > 0) return null;
     return this.add({ ...input, createdBy: "auto" });
   }
 
