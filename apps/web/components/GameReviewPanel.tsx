@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Engine, ENGINE_NAME, terminalScore, type EngineLine } from "../lib/engine";
 import { buildTeaching, quizPrompt, TEACHING_VERSION, type TeachMove, type TeachingReview } from "../lib/pedagogy";
 import { replayFromSans } from "../lib/replay";
@@ -25,13 +25,15 @@ function analyseMulti(engine: Engine, fen: string): Promise<EngineLine[]> {
  * Analyse pédagogique d'une partie terminée : calculée une seule fois par Stockfish (dans le navigateur du premier
  * spectateur), puis partagée avec tous via le serveur. Trois vues : résumé, coup par coup, quiz.
  */
-export function GameReviewPanel({ relayId, round, index, sans, ucis, names, result, onGo, getAuth }: {
+export function GameReviewPanel({ relayId, round, index, sans, ucis, names, result, onGo, getAuth, ply = -1 }: {
   relayId: string; round: number; index: number;
   sans: readonly string[]; ucis: readonly string[];
   names: { w: string; b: string };
   result: string | null;
   onGo: (ply: number) => void;
   getAuth: AuthProvider;
+  /** demi-coup affiché sur l'échiquier (surligné dans la partie commentée) */
+  ply?: number;
 }) {
   const steps = useMemo(() => replayFromSans(sans), [sans]);
   const [review, setReview] = useState<TeachingReview | null>(null);
@@ -87,12 +89,12 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
   return (
     <section className="panel flex flex-col gap-3 p-3" aria-label="Analyse Stockfish de la partie">
       <div className="flex gap-1 rounded-lg bg-surface-2 p-0.5" role="tablist" aria-label="Vues de l'analyse">
-        {([["lesson", "Cours"], ["summary", "Résumé"], ["moves", "Coups"], ["quiz", `Quiz${review.quiz.length ? ` (${review.quiz.length})` : ""}`]] as const).map(([k, label]) => (
+        {([["lesson", "Commentée"], ["summary", "Résumé"], ["moves", "Coups"], ["quiz", `Quiz${review.quiz.length ? ` (${review.quiz.length})` : ""}`]] as const).map(([k, label]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
             className={`flex-1 rounded-md px-2 py-1.5 text-xs font-semibold sm:text-sm ${tab === k ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>{label}</button>
         ))}
       </div>
-      {tab === "lesson" && <Lesson review={review} onGo={onGo} />}
+      {tab === "lesson" && <Lesson review={review} onGo={onGo} ply={ply} result={result} />}
       {tab === "summary" && <Summary review={review} names={names} ucis={ucis} onGo={onGo} />}
       {tab === "moves" && <MoveByMove review={review} onGo={onGo} />}
       {tab === "quiz" && <Quiz review={review} names={names} fens={steps.map((x) => x.fen)} onGo={onGo} />}
@@ -101,26 +103,56 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
   );
 }
 
-/** La partie racontée comme dans un livre : ouverture, milieu de jeu, finale, tournant ; puis les leçons. */
-function Lesson({ review, onGo }: { review: TeachingReview; onGo: (p: number) => void }) {
+/**
+ * La partie commentée, comme dans un livre : les coups se suivent, et le commentaire s'insère juste après
+ * les coups qui le méritent (erreurs, coups « ! », fin de la théorie, roque, coups doubles, entrée en finale…),
+ * avec la variante entre parenthèses. Toucher un coup l'affiche sur l'échiquier.
+ */
+function Lesson({ review, onGo, ply, result }: { review: TeachingReview; onGo: (p: number) => void; ply: number; result: string | null }) {
+  // paragraphes : une suite de coups, terminée par un coup commenté
+  const blocks: Array<{ moves: TeachMove[]; note: TeachMove | null }> = [];
+  let cur: TeachMove[] = [];
+  for (const m of review.moves) {
+    cur.push(m);
+    if (m.note) { blocks.push({ moves: cur, note: m }); cur = []; }
+  }
+  if (cur.length) blocks.push({ moves: cur, note: null });
+  const moveBtn = (m: TeachMove, i: number) => {
+    const showNum = m.mover === "w" || i === 0;
+    return (
+      <Fragment key={m.ply}><span className="whitespace-nowrap">
+        {showNum && <span className="text-muted">{Math.ceil(m.ply / 2)}{m.mover === "w" ? "." : "…"}&nbsp;</span>}
+        <button type="button" onClick={() => onGo(m.ply)} aria-current={m.ply === ply ? "true" : undefined}
+          className={`rounded px-0.5 font-semibold ${m.ply === ply ? "bg-neon/20 text-neon" : "hover:bg-surface-2"} ${m.mark === "??" || m.mark === "?" ? "text-danger" : m.mark === "?!" ? "text-gold" : m.mark === "!" ? "text-neon" : ""}`}>
+          {m.san}{m.mark}
+        </button>
+      </span>{" "}</Fragment>
+    );
+  };
   return (
-    <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pr-1">
-      {review.lesson.chapters.map((c) => (
-        <section key={c.title}>
-          <h3 className="mb-1 font-display text-sm font-bold text-gold">{c.title}</h3>
-          <p className="text-[13.5px] leading-relaxed">{c.text}</p>
-          {c.ply !== null && <button type="button" onClick={() => onGo(c.ply!)} className="mt-1 text-xs text-neon hover:underline">Voir la position</button>}
-        </section>
+    <div className="flex flex-col gap-2.5 font-serif text-[14.5px] leading-relaxed lg:max-h-[70vh] lg:overflow-y-auto lg:pr-1" aria-label="Partie commentée">
+      {review.lesson.intro && <p className="font-sans text-[13.5px] italic text-muted">{review.lesson.intro}</p>}
+      {blocks.map((b, k) => (
+        <div key={k}>
+          <p className="font-sans">{b.moves.map(moveBtn)}</p>
+          {b.note && (
+            <p className="mt-1 border-l-2 border-gold/50 pl-2.5">
+              {b.note.note}
+              {b.note.variation && <span className="font-sans text-[13px] text-muted"> ({b.note.variation})</span>}
+            </p>
+          )}
+        </div>
       ))}
+      {result && <p className="font-sans font-bold">{result}</p>}
       {review.lesson.takeaways.length > 0 && (
-        <section className="rounded-lg bg-surface-2 p-3">
+        <section className="rounded-lg bg-surface-2 p-3 font-sans">
           <h3 className="mb-1.5 font-display text-sm font-bold text-neon">Ce qu'il faut retenir</h3>
           <ul className="flex list-disc flex-col gap-1.5 pl-4 text-[13px] leading-snug">
-            {review.lesson.takeaways.map((t) => <li key={t}>{t}</li>)}
+            {review.lesson.takeaways.slice(0, 3).map((t) => <li key={t}>{t}</li>)}
           </ul>
         </section>
       )}
-      <p className="text-xs text-muted">Commentaires générés automatiquement à partir de l'analyse de {ENGINE_NAME}. L'onglet « Coups » commente chaque coup de la partie.</p>
+      <p className="font-sans text-xs text-muted">Commentaires générés automatiquement à partir de l'analyse de {ENGINE_NAME}.</p>
     </div>
   );
 }
@@ -193,7 +225,7 @@ function MoveByMove({ review, onGo }: { review: TeachingReview; onGo: (p: number
       <label className="flex items-center gap-2 text-xs text-muted">
         <input type="checkbox" checked={onlyKey} onChange={(e) => setOnlyKey(e.target.checked)} /> Seulement les coups marquants (!, ?!, ?, ??)
       </label>
-      <ol className="flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto pr-1">
+      <ol className="flex flex-col gap-1.5 lg:max-h-[60vh] lg:overflow-y-auto lg:pr-1">
         {list.map((m) => <MoveRow key={m.ply} m={m} onGo={onGo} />)}
       </ol>
     </div>

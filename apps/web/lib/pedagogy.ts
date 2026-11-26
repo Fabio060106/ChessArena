@@ -4,7 +4,7 @@ import { openingIdea, openingOf } from "./openings";
 import { cap, evalWords, ideaOf, isEndgame, moveFacts, NAME, OF_SIDE, opp, pieceList, shortIdea, SIDE, SIDE_CAP, TO_SIDE, VALUE, type MoveFacts } from "./commentary";
 
 /** Version du format (doit correspondre à REVIEW_VERSION côté serveur). */
-export const TEACHING_VERSION = 3;
+export const TEACHING_VERSION = 4;
 
 export type TeachMark = "!" | "?!" | "?" | "??" | "";
 
@@ -21,8 +21,12 @@ export interface TeachMove {
   best: string | null;
   /** autres coups possibles (2 au plus), avec leur évaluation et la suite */
   alternatives: TeachAlternative[];
-  /** commentaire en français, façon livre d'échecs */
+  /** commentaire complet (onglet « Coups ») */
   comment: string;
+  /** commentaire « de livre » glissé dans la partie après ce coup (null : le coup se lit sans commentaire) */
+  note: string | null;
+  /** variante entre parenthèses, après la note (ex. « 22… g6! 23. Qd2 Qd8 (−0,3) ») */
+  variation: string | null;
   /** coup de la théorie d'ouverture */
   theory: boolean;
   /** quiz : coups acceptés comme bonne réponse (UCI), dans la position d'avant */
@@ -37,8 +41,8 @@ export interface TeachingReview extends GameReview {
   moves: TeachMove[];
   /** demi-coups proposés au quiz « trouve le meilleur coup » (erreurs et coups « ! ») */
   quiz: number[];
-  /** le « cours » : la partie racontée par phases, puis les leçons à retenir */
-  lesson: { chapters: LessonChapter[]; takeaways: string[] };
+  /** la partie commentée : une introduction (l'ouverture et ses idées), puis les notes des coups, puis les leçons */
+  lesson: { intro: string; chapters: LessonChapter[]; takeaways: string[] };
 }
 
 /** Chances de gain (0–100) du joueur `c`. */
@@ -46,6 +50,14 @@ const winFor = (s: Score, c: "w" | "b") => { const w = winPct(scoreToCp(s)); ret
 const mateFor = (s: Score, c: "w" | "b"): number | null => (s.mate !== null && s.mate !== 0 && (s.mate > 0) === (c === "w") ? Math.abs(s.mate) : null);
 const lower = (x: string) => x.replace(/^(Défense|Partie|Ouverture|Gambit|Système)/, (w) => w.toLowerCase());
 const num = (ply: number) => `${Math.ceil(ply / 2)}${ply % 2 === 1 ? "." : "…"}`;
+
+/** Suite numérotée comme dans un livre : « 22… g6 23. Qd2 Qd8 ». `ply` = demi-coup du premier coup de la suite. */
+export function numberedLine(fen: string, pv: readonly string[], ply: number, n = 6): string {
+  return pvToSan(fen, [...pv], n).map((san, i) => {
+    const k = ply + i;
+    return i === 0 ? `${num(k)} ${san}` : k % 2 === 1 ? `${num(k)} ${san}` : san;
+  }).join(" ");
+}
 
 type ErrKind = "allowsMate" | "missedMate" | "hanging" | "fork" | "missedCapture" | "missedTactic" | "positional";
 
@@ -73,6 +85,12 @@ export function buildTeaching(p: {
   const kinds = new Map<number, ErrKind>();
   const facts: Array<MoveFacts | null> = [];
   let lastWords = "la position est équilibrée";
+  let lastNote = 0;
+  // les conseils généraux ne sont donnés qu'une fois par partie
+  const said = new Set<string>();
+  const moral = (k: string, txt: string) => (said.has(k) ? "" : (said.add(k), txt));
+  const castled = { w: false, b: false };
+  const endgameAt = p.fens.findIndex((fe, i) => i > 0 && isEndgame(fe));
   for (let ply = 1; ply <= p.sans.length && ply < p.lines.length; ply++) {
     const mover: "w" | "b" = ply % 2 === 1 ? "w" : "b";
     const them = opp(mover);
@@ -84,9 +102,9 @@ export function buildTeaching(p: {
     const bestUci = best.pv[0] ?? null;
     const isBest = bestUci === played;
     const loss = Math.max(0, winFor(best.score, mover) - winFor(after[0]!.score, mover));
-    const f = moveFacts(fenBefore, played, ply, ply > 1 ? p.ucis[ply - 2]!.slice(2, 4) : null);
+    const f = moveFacts(fenBefore, played, ply, ply > 1 && p.sans[ply - 2]!.includes("x") ? p.ucis[ply - 2]!.slice(2, 4) : null);
     facts.push(f);
-    const bf = bestUci && !isBest ? moveFacts(fenBefore, bestUci, ply, ply > 1 ? p.ucis[ply - 2]!.slice(2, 4) : null) : null;
+    const bf = bestUci && !isBest ? moveFacts(fenBefore, bestUci, ply, ply > 1 && p.sans[ply - 2]!.includes("x") ? p.ucis[ply - 2]!.slice(2, 4) : null) : null;
     const alternatives: TeachAlternative[] = before
       .filter((l) => l.pv[0] && l.pv[0] !== played)
       .slice(0, 2)
@@ -110,7 +128,7 @@ export function buildTeaching(p: {
       const missed = mateFor(best.score, mover);
       // la réponse de l'adversaire qui punit le coup : prise, fourchette, menace
       const top = winFor(after[0]!.score, them);
-      const replies = after.filter((l) => l.pv[0] && winFor(l.score, them) >= top - 10).map((l) => ({ l, f: moveFacts(fenAfter, l.pv[0]!, ply + 1, played.slice(2, 4)) }));
+      const replies = after.filter((l) => l.pv[0] && winFor(l.score, them) >= top - 10).map((l) => ({ l, f: moveFacts(fenAfter, l.pv[0]!, ply + 1, san.includes("x") ? played.slice(2, 4) : null) }));
       // une prise qui gagne du matériel (pas la simple reprise d'un échange égal)
       const grab = replies.find((r) => r.f?.captured && VALUE[r.f.captured]! >= 1 && !(r.f.recapture && f?.captured && VALUE[f.captured]! >= VALUE[r.f.captured]!)) ?? null;
       const fork = replies.find((r) => (r.f?.targets.filter((t) => t.value >= 3).length ?? 0) >= 2 || (r.f?.check && r.f.targets.some((t) => t.value >= 3))) ?? null;
@@ -118,16 +136,16 @@ export function buildTeaching(p: {
       let kind: ErrKind = "positional";
       if (missed && !isBest) {
         kind = "missedMate";
-        why = `Il y avait pourtant un mat en ${missed} : ${pvToSan(fenBefore, best.pv, Math.min(2 * missed - 1, 9)).join(" ")}. Quand le roi adverse est exposé, il faut d'abord examiner tous les échecs.`;
+        why = `Il y avait pourtant un mat en ${missed} : ${pvToSan(fenBefore, best.pv, Math.min(2 * missed - 1, 9)).join(" ")}.${moral("mate", " Quand le roi adverse est exposé, il faut d'abord examiner tous les échecs.")}`;
       } else if (allows) {
         kind = "allowsMate";
         why = `Ce coup permet ${TO_SIDE[them]} de mater en ${allows} : ${pvToSan(fenAfter, after[0]!.pv, Math.min(2 * allows - 1, 9)).join(" ")}.`;
       } else if (bf?.captured && VALUE[bf.captured]! >= 3 && !f?.captured) {
         kind = "missedCapture";
-        why = `Il y avait du matériel à gagner : ${NAME[bf.captured]} en ${bf.to} pouvait être pris. Quand l'adversaire laisse une pièce en prise, il faut le punir tout de suite.`;
+        why = `Il y avait du matériel à gagner : ${NAME[bf.captured]} en ${bf.to} pouvait être pris.${moral("punish", " Quand l'adversaire laisse une pièce en prise, il faut le punir tout de suite.")}`;
       } else if (grab?.f && winFor(after[0]!.score, them) >= 60) {
         kind = "hanging";
-        why = `${cap(NAME[grab.f.captured!]!)} en ${grab.f.to} n'est plus assez protégé${["q", "r"].includes(grab.f.captured!) ? "e" : ""} : ${grab.f.san} le gagne. Avant de jouer, il faut toujours vérifier ce que le coup laisse sans défense.`;
+        why = `${cap(NAME[grab.f.captured!]!)} en ${grab.f.to} n'est plus assez protégé${["q", "r"].includes(grab.f.captured!) ? "e" : ""} : ${grab.f.san} le gagne.${moral("hang", " Avant de jouer, il faut toujours vérifier ce que le coup laisse sans défense.")}`;
       } else if (fork?.f && winFor(after[0]!.score, them) >= 60) {
         kind = "fork";
         why = `Ce coup autorise ${fork.f.san}, ${shortIdea(fork.f) || "un coup double"} : impossible de tout sauver.`;
@@ -136,7 +154,7 @@ export function buildTeaching(p: {
       }
       kinds.set(ply, kind);
       parts.push(`${label} ${OF_SIDE[mover]}.`);
-      if (idea && kind !== "missedMate") parts.push(`L'idée était sans doute : ${idea.charAt(0).toLowerCase()}${idea.slice(1)}`);
+      if (idea && kind !== "missedMate") parts.push(`L'idée : ${idea.charAt(0).toLowerCase()}${idea.slice(1)}`);
       if (why) parts.push(why);
       if (bf && kind !== "missedMate") {
         const si = kind === "missedCapture" ? "" : shortIdea(bf);
@@ -167,12 +185,32 @@ export function buildTeaching(p: {
       const s = bf ? shortIdea(bf) : "";
       parts.push(`${idea ? "Correct" : "Un coup jouable"}, mais ${bf?.san ?? "un autre coup"}${s ? `, ${s},` : ""} était un peu plus précis (${formatScore(best.score)}).`);
     }
+    // la note « de livre » : seulement là où un commentateur s'arrêterait
+    let note: string | null = null;
+    let variation: string | null = null;
+    if (mark === "??" || mark === "?" || mark === "?!") {
+      note = parts.filter((x) => !x.startsWith("Il fallait jouer")).join(" ");
+      if (best.pv.length) variation = `${numberedLine(fenBefore, best.pv, ply, 6)}, ${formatScore(best.score)}`;
+    } else if (mark === "!") {
+      note = parts.join(" ");
+    } else if (opening.plies > 0 && ply === opening.plies) {
+      note = `${idea ? `${idea} ` : ""}C'est la position de référence de la ${lower(opening.name ?? "")} : la partie quitte maintenant la théorie la plus connue.`.replace("de la gambit", "du gambit").replace("de la système", "du système");
+    } else if (ply === endgameAt) {
+      note = `${idea ? `${idea} ` : ""}La partie entre en finale : ${SIDE.w} ont ${pieceList(fenAfter, "w")}, ${SIDE.b} ${pieceList(fenAfter, "b")}. ${cap(words)}.`;
+    } else if (f && !theory && ((f.castle && !castled[mover]) || f.promotion || f.queenTrade || f.mate
+      || (f.targets.filter((t) => t.value >= 3).length >= 2) || (f.check && f.targets.some((t) => t.value >= 3)))) {
+      note = idea;
+    } else if (f && !theory && idea && ply - lastNote >= 10) {
+      note = `${idea}${words !== lastWords || ply - lastNote >= 16 ? ` ${cap(words)}.` : ""}`;
+    }
+    if (f?.castle) castled[mover] = true;
+    if (note) lastNote = ply;
     lastWords = words;
     // bonnes réponses au quiz : les coups qui gardent presque autant de chances que le meilleur
     const goodUcis = before.filter((l) => l.pv[0] && winFor(best.score, mover) - winFor(l.score, mover) < 5).map((l) => l.pv[0]!);
     moves.push({
       ply, san, mover, mark, evalAfter: formatScore(after[0]!.score),
-      best: isBest ? null : bf?.san ?? null, alternatives, comment: parts.join(" "), theory,
+      best: isBest ? null : bf?.san ?? null, alternatives, comment: parts.join(" "), note, variation, theory,
       goodUcis: mark === "!" ? [played] : goodUcis.filter((u) => mark === "" || u !== played),
     });
   }
@@ -196,7 +234,7 @@ function buildLesson(p: {
   const ev = (ply: number) => p.lines[Math.min(ply, p.lines.length - 1)]![0]!.score;
   const who = (c: "w" | "b") => `${p.names[c]} (${SIDE[c]})`;
   const chapters: LessonChapter[] = [];
-  if (!n) return { chapters, takeaways: [] };
+  if (!n) return { intro: "", chapters, takeaways: [] };
 
   // limites des phases : fin de l'ouverture (théorie, ou au plus tard au 12e coup), début de la finale
   const endgameAt = p.fens.findIndex((f, i) => i > 0 && isEndgame(f));
@@ -299,7 +337,11 @@ function buildLesson(p: {
   add(p.facts.slice(0, 30).some((f) => f?.castle) || p.facts.slice(0, 20).some((f) => f?.develops), "En ouverture : développe les pièces vers le centre, roque tôt, et ne joue pas deux fois la même pièce sans raison.");
   add(endgameAt > 0, "En finale, active ton roi et pousse les pions passés : ce sont les deux idées qui gagnent le plus de finales.");
   add(true, "Rejoue les moments clés dans l'onglet Quiz : trouver soi-même le bon coup est la meilleure façon de progresser.");
-  return { chapters, takeaways };
+  const idea = openingIdea(p.opening.name);
+  const intro = p.opening.name
+    ? `${p.names.w} (Blancs) contre ${p.names.b} (Noirs). ${cap(lower(p.opening.name))}. ${idea ?? ""}`.trim()
+    : `${p.names.w} (Blancs) contre ${p.names.b} (Noirs).`;
+  return { intro, chapters, takeaways };
 }
 
 /** Texte du quiz pour une position : qui joue, et ce qu'on cherche. */

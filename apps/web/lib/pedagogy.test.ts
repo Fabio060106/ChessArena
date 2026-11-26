@@ -36,7 +36,7 @@ describe("analyse pédagogique", () => {
   const r = buildTeaching({ sans, ucis, fens, lines, names: { w: "Gukesh", b: "Sindarov" }, result: "1-0" });
 
   it("un commentaire pour chaque coup", () => {
-    expect(r.version).toBe(3);
+    expect(r.version).toBe(4);
     expect(r.moves).toHaveLength(7);
     expect(r.moves.map((m) => m.ply)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(r.moves[0]!.comment).toMatch(/Le pion occupe le centre en e4\. (Coup de théorie|C.est la position de référence)/);
@@ -46,7 +46,7 @@ describe("analyse pédagogique", () => {
   it("la gaffe est expliquée : mat permis, avec la suite ; meilleure défense proposée", () => {
     const g = r.moves[5]!;
     expect(g).toMatchObject({ san: "Nf6", mark: "??", best: "g6" });
-    expect(g.comment).toMatch(/^Une grave erreur des Noirs\. L'idée était sans doute : développement du cavalier en f6.*Ce coup permet aux Blancs de mater en 1 : Qxf7#\. Il fallait jouer g6/);
+    expect(g.comment).toMatch(/^Une grave erreur des Noirs\. L'idée : développement du cavalier en f6.*Ce coup permet aux Blancs de mater en 1 : Qxf7#\. Il fallait jouer g6/);
     expect(g.alternatives.map((a) => a.san)).toEqual(["g6", "Qe7"]);
     expect(g.goodUcis).toEqual(["g7g6"]);
   });
@@ -62,6 +62,14 @@ describe("analyse pédagogique", () => {
     expect(r.lesson.chapters[0]!.text).toMatch(/La partie commence par la partie italienne|Ouverture du pion roi|partie ouverte/i);
     expect(r.lesson.chapters[1]!.text).toMatch(/Le moment décisif est 3… Nf6\?\? des Noirs\..*Gukesh remporte la partie \(1-0\)/);
     expect(r.lesson.takeaways[0]).toMatch(/coups forcés/);
+  });
+
+  it("partie commentée façon livre : notes seulement sur les coups marquants, variante numérotée", () => {
+    expect(r.moves.filter((m) => m.note).map((m) => m.san)).toEqual(["e5", "Nf6", "Qxf7#"]); // e5 : fin de la théorie reconnue
+    expect(r.moves[5]!.note).toMatch(/^Une grave erreur des Noirs\..*mater en 1 : Qxf7#/);
+    expect(r.moves[5]!.note).not.toMatch(/Il fallait jouer/);
+    expect(r.moves[5]!.variation).toBe("3… g6 4. Qf3 Nf6, 0,0");
+    expect(r.lesson.intro).toMatch(/^Gukesh \(Blancs\) contre Sindarov \(Noirs\)\./);
   });
 
   it("pièce en prise repérée même si la meilleure réponse de l'adversaire est un autre coup gagnant", () => {

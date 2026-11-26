@@ -1,7 +1,7 @@
 import type pg from "pg";
 
 /** Version du format d'analyse pédagogique (le navigateur et le serveur doivent s'accorder). */
-export const REVIEW_VERSION = 3;
+export const REVIEW_VERSION = 4;
 export const REVIEW_MAX_BYTES = 400_000;
 
 export interface ReviewStore {

@@ -165,7 +165,7 @@ function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
     const sec = relayClock(game, c, now, receivedAt.current);
     const running = game.live && !game.result && game.turn === c && game.sans.length > 0;
     return (
-      <div className="panel flex items-center gap-2 px-3 py-2">
+      <div className="panel flex items-center gap-2 px-3 py-2 max-lg:rounded-lg max-lg:px-2 max-lg:py-0.5">
         <span className={`size-3 shrink-0 rounded-sm border border-line ${c === "w" ? "bg-[#f3f3f3]" : "bg-[#222]"}`} aria-hidden />
         <span className="min-w-0 flex-1 truncate text-sm">
           {p.title && <span className="mr-1 font-semibold text-gold">{p.title}</span>}
@@ -173,7 +173,7 @@ function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
           {game.result && <span className="ml-2 text-muted">{c === "w" ? game.result.split("-")[0] : game.result.split("-")[1]}</span>}
         </span>
         <span role="timer" aria-label={`Pendule ${c === "w" ? "des Blancs" : "des Noirs"}`}
-          className={`tabular rounded-md px-2 py-0.5 font-display text-lg ${running ? "bg-neon/15 text-neon" : "text-muted"} ${sec !== null && sec < 300 && running ? "!text-danger" : ""}`}>
+          className={`tabular rounded-md px-2 py-0.5 font-display text-lg max-lg:text-sm ${running ? "bg-neon/15 text-neon" : "text-muted"} ${sec !== null && sec < 300 && running ? "!text-danger" : ""}`}>
           {formatClock(sec)}
         </span>
       </div>
@@ -182,10 +182,13 @@ function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
   const bestSan = eng.line?.pv[0] ? pvToSan(fen, eng.line.pv, 5).join(" ") : null;
 
   return (
-    <div className="mx-auto grid max-w-[1400px] gap-4 px-2 pb-6 sm:px-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:px-6">
-      <div className="flex min-w-0 flex-col gap-2">
-        {header}
-        <section className="mx-auto flex w-full flex-col gap-1.5" style={{ maxWidth: "min(100%, max(320px, calc(100dvh - 340px)))" }}>
+    <>
+    {/* téléphone : l'en-tête défile normalement, l'échiquier reste ensuite collé en haut de l'écran pendant qu'on lit les coups */}
+    <div className="mx-auto max-w-[1400px] px-2 pb-2 sm:px-3 lg:hidden">{header}</div>
+    <div className="mx-auto grid max-w-[1400px] grid-cols-1 gap-4 px-2 pb-6 sm:px-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:px-6">
+      <div className="flex min-w-0 flex-col gap-2 max-lg:sticky max-lg:top-0 max-lg:z-30 max-lg:-mx-2 max-lg:border-b max-lg:border-line max-lg:bg-ink max-lg:px-2 max-lg:pb-1.5 max-lg:pt-1 max-lg:shadow-lg">
+        <div className="max-lg:hidden">{header}</div>
+        <section data-board className="mx-auto flex w-full flex-col gap-1 lg:gap-1.5 max-w-[min(100%,44dvh)] sm:max-w-[min(100%,48dvh)] lg:max-w-[min(100%,max(320px,calc(100dvh_-_340px)))]">
           {row(top)}
           <EvalBar cp={eng.cp} flip={bottom === "b"} />
           <div className="relative">
@@ -201,24 +204,31 @@ function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
             )}
           </div>
           {row(bottom)}
-          <p role="status" className="px-1 text-center text-sm">
+          {/* téléphone : navigation, évaluation et outils sur une seule ligne compacte */}
+          <div className="flex items-center gap-1.5 lg:hidden">
+            {last > 0 && <div className="min-w-0 flex-1 [&_button]:!px-0 [&_button]:!py-1 [&_button]:!text-sm"><MoveNav compact ply={ply} last={last} go={go} /></div>}
+            <span className="tabular shrink-0 text-xs font-semibold">{eng.label.split(" ·")[0]}</span>
+            <a href={`/analyse?m=${game.ucis.slice(0, ply).join(",")}`} aria-label="Analyser cette position" className="shrink-0 rounded-lg border border-neon/50 px-2 py-1 text-xs font-semibold text-neon">Analyser</a>
+            <FlipButton onFlip={flip} />
+          </div>
+          <p role="status" className={`px-1 text-center text-sm ${game.result ? "max-lg:hidden" : "max-lg:text-xs"}`}>
             {game.result
               ? <span className="font-semibold">Partie terminée · {game.result} — {game.result === "1/2-1/2" ? "nulle" : `victoire de ${game.result === "1-0" ? game.white.name : game.black.name}`}</span>
               : game.live ? <span className="text-muted">En direct · trait aux {game.turn === "w" ? "Blancs" : "Noirs"}</span>
               : <span className="text-muted">{game.sans.length ? "Partie en cours (pendules arrêtées)" : "Pas encore commencée"}</span>}
           </p>
-          <div className="flex flex-wrap items-center gap-2 px-1 text-sm">
+          <div className="flex flex-wrap items-center gap-2 px-1 text-sm max-lg:hidden">
             <span className="tabular font-semibold">{eng.label}</span>
-            {bestSan && <span className="min-w-0 flex-1 truncate text-xs text-muted">{bestSan}</span>}
+            {bestSan && <span className="min-w-0 flex-1 truncate text-xs text-muted max-lg:hidden">{bestSan}</span>}
             <a href={`/analyse?m=${game.ucis.slice(0, ply).join(",")}`} className="rounded-lg border border-neon/50 px-2.5 py-1 text-xs font-semibold text-neon hover:bg-neon/10">Analyser cette position</a>
             <FlipButton onFlip={flip} />
           </div>
         </section>
       </div>
-      <aside className="flex w-full flex-col gap-3">
+      <aside className="flex w-full min-w-0 flex-col gap-3">
         {game.result && game.sans.length > 0 && (
           <GameReviewPanel relayId={relayId} round={roundNo ?? 0} index={game.index} sans={game.sans} ucis={game.ucis} getAuth={getAuth}
-            names={{ w: game.white.name, b: game.black.name }} result={game.result} onGo={go} />
+            names={{ w: game.white.name, b: game.black.name }} result={game.result} onGo={go} ply={ply} />
         )}
         <div className="panel p-3">
           <div className="mb-3 flex gap-1 rounded-lg bg-surface-2 p-0.5" role="tablist">
@@ -241,6 +251,7 @@ function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
         </p>
       </aside>
     </div>
+    </>
   );
 }
 
