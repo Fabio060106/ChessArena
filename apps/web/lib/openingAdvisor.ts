@@ -1,6 +1,7 @@
 import { Chess } from "chess.js";
 import type { RepertoireGame } from "@chessarena/shared";
 import { openingIdea, openingOf } from "./openings";
+import type { StyleReport, Structure } from "./styleAnalysis";
 
 /**
  * Conseiller d'ouvertures : lit les parties du joueur (site + Lichess), en tire un profil
@@ -26,6 +27,10 @@ export interface OpeningOption {
   simplifies: boolean;
   /** solide : peu de risque de perdre vite */
   solid: boolean;
+  /** structure de centre typique */
+  structure: Structure;
+  /** défense de contre-attaque (on laisse l'initiative pour mieux riposter) */
+  counter: boolean;
   /** reconnaît la famille dans les noms d'ouverture (Lichess en anglais, site en français) */
   match: RegExp;
   plan: string;
@@ -33,47 +38,47 @@ export interface OpeningOption {
 
 export const CATALOG: OpeningOption[] = [
   // ─── Blancs ───
-  { id: "italian", name: "Partie italienne (Giuoco Pianissimo)", slot: "w", moves: "e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d3", sharp: 0.35, theory: 1, minRating: 0, simplifies: false, solid: true, match: /italian|italienne|giuoco/i,
+  { id: "italian", structure: "semi", counter: false, name: "Partie italienne (Giuoco Pianissimo)", slot: "w", moves: "e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d3", sharp: 0.35, theory: 1, minRating: 0, simplifies: false, solid: true, match: /italian|italienne|giuoco/i,
     plan: "Développement rapide, roque, puis manœuvre lente (a4, Re1, Nbd2-f1-g3) avant d'ouvrir avec d4 au bon moment." },
-  { id: "evans", name: "Gambit Evans", slot: "w", moves: "e4 e5 Nf3 Nc6 Bc4 Bc5 b4", sharp: 0.85, theory: 2, minRating: 1100, simplifies: false, solid: false, match: /evans/i,
+  { id: "evans", structure: "open", counter: false, name: "Gambit Evans", slot: "w", moves: "e4 e5 Nf3 Nc6 Bc4 Bc5 b4", sharp: 0.85, theory: 2, minRating: 1100, simplifies: false, solid: false, match: /evans/i,
     plan: "Un pion sacrifié pour gagner du temps : c3 et d4 construisent un grand centre et le jeu va vite vers le roi noir." },
-  { id: "scotch", name: "Partie écossaise", slot: "w", moves: "e4 e5 Nf3 Nc6 d4 exd4 Nxd4", sharp: 0.55, theory: 2, minRating: 1200, simplifies: false, solid: true, match: /scotch|écossaise/i,
+  { id: "scotch", structure: "open", counter: false, name: "Partie écossaise", slot: "w", moves: "e4 e5 Nf3 Nc6 d4 exd4 Nxd4", sharp: 0.55, theory: 2, minRating: 1200, simplifies: false, solid: true, match: /scotch|écossaise/i,
     plan: "Le centre s'ouvre dès le 3e coup : pièces actives, jeu clair, peu de pièges à connaître côté blanc." },
-  { id: "ruy", name: "Partie espagnole", slot: "w", moves: "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7", sharp: 0.45, theory: 3, minRating: 1700, simplifies: false, solid: true, match: /ruy lopez|espagnole|spanish/i,
+  { id: "ruy", structure: "semi", counter: false, name: "Partie espagnole", slot: "w", moves: "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7", sharp: 0.45, theory: 3, minRating: 1700, simplifies: false, solid: true, match: /ruy lopez|espagnole|spanish/i,
     plan: "Pression durable sur e5, plan c3-d4, longues manœuvres : l'ouverture de référence pour progresser en stratégie." },
-  { id: "london", name: "Système de Londres", slot: "w", moves: "d4 d5 Bf4 Nf6 e3 e6 Nf3 c5 c3", sharp: 0.2, theory: 1, minRating: 0, simplifies: false, solid: true, match: /london|londres/i,
+  { id: "london", structure: "closed", counter: false, name: "Système de Londres", slot: "w", moves: "d4 d5 Bf4 Nf6 e3 e6 Nf3 c5 c3", sharp: 0.2, theory: 1, minRating: 0, simplifies: false, solid: true, match: /london|londres/i,
     plan: "Toujours la même structure (d4, Bf4, e3, c3, Nbd2) : peu de théorie, une position saine, des plans d'attaque simples (Ne5, h4)." },
-  { id: "qgambit", name: "Gambit dame", slot: "w", moves: "d4 d5 c4 e6 Nc3 Nf6 Bg5", sharp: 0.35, theory: 2, minRating: 1400, simplifies: false, solid: true, match: /queen'?s gambit|gambit dame/i,
+  { id: "qgambit", structure: "closed", counter: false, name: "Gambit dame", slot: "w", moves: "d4 d5 c4 e6 Nc3 Nf6 Bg5", sharp: 0.35, theory: 2, minRating: 1400, simplifies: false, solid: true, match: /queen'?s gambit|gambit dame/i,
     plan: "Pression sur le centre noir, attaque de minorité (b4-b5) ou jeu central avec e4 : de la stratégie classique." },
-  { id: "kgambit", name: "Gambit du roi", slot: "w", moves: "e4 e5 f4", sharp: 0.95, theory: 2, minRating: 1000, simplifies: false, solid: false, match: /king'?s gambit|gambit du roi/i,
+  { id: "kgambit", structure: "open", counter: false, name: "Gambit du roi", slot: "w", moves: "e4 e5 f4", sharp: 0.95, theory: 2, minRating: 1000, simplifies: false, solid: false, match: /king'?s gambit|gambit du roi/i,
     plan: "f4 ouvre la colonne f pour attaquer le roi noir : initiative maximale, risques assumés." },
-  { id: "english", name: "Ouverture anglaise", slot: "w", moves: "c4 e5 Nc3 Nf6 g3 d5 cxd5 Nxd5 Bg2", sharp: 0.3, theory: 2, minRating: 1700, simplifies: false, solid: true, match: /english|anglaise/i,
+  { id: "english", structure: "semi", counter: false, name: "Ouverture anglaise", slot: "w", moves: "c4 e5 Nc3 Nf6 g3 d5 cxd5 Nxd5 Bg2", sharp: 0.3, theory: 2, minRating: 1700, simplifies: false, solid: true, match: /english|anglaise/i,
     plan: "Contrôle de d5 à distance, fou en fianchetto : un jeu souple qui contourne la théorie des débuts 1.e4 et 1.d4." },
   // ─── Noirs contre 1.e4 ───
-  { id: "caro", name: "Défense Caro-Kann", slot: "b-e4", moves: "e4 c6 d4 d5 Nc3 dxe4 Nxe4 Bf5", sharp: 0.25, theory: 2, minRating: 0, simplifies: true, solid: true, match: /caro/i,
+  { id: "caro", structure: "semi", counter: false, name: "Défense Caro-Kann", slot: "b-e4", moves: "e4 c6 d4 d5 Nc3 dxe4 Nxe4 Bf5", sharp: 0.25, theory: 2, minRating: 0, simplifies: true, solid: true, match: /caro/i,
     plan: "Une structure de pions très solide et un fou de cases blanches actif : on perd rarement vite, et les finales sont souvent bonnes pour les Noirs." },
-  { id: "french", name: "Défense française", slot: "b-e4", moves: "e4 e6 d4 d5 Nc3 Nf6", sharp: 0.45, theory: 2, minRating: 1100, simplifies: false, solid: true, match: /french|française/i,
+  { id: "french", structure: "closed", counter: true, name: "Défense française", slot: "b-e4", moves: "e4 e6 d4 d5 Nc3 Nf6", sharp: 0.45, theory: 2, minRating: 1100, simplifies: false, solid: true, match: /french|française/i,
     plan: "Chaîne de pions solide, puis contre-attaque du centre blanc par …c5 et …f6." },
-  { id: "e5", name: "1…e5 (jeu ouvert classique)", slot: "b-e4", moves: "e4 e5 Nf3 Nc6", sharp: 0.45, theory: 2, minRating: 0, simplifies: false, solid: true, match: /^(?!.*sicilian)(italian|ruy|scotch|four knights|petrov|russian|philidor|king'?s gambit|vienna|bishop'?s opening|ponziani|two knights|partie|défense des deux|défense russe)/i,
+  { id: "e5", structure: "open", counter: false, name: "1…e5 (jeu ouvert classique)", slot: "b-e4", moves: "e4 e5 Nf3 Nc6", sharp: 0.45, theory: 2, minRating: 0, simplifies: false, solid: true, match: /^(?!.*sicilian)(italian|ruy|scotch|four knights|petrov|russian|philidor|king'?s gambit|vienna|bishop'?s opening|ponziani|two knights|partie|défense des deux|défense russe)/i,
     plan: "Les principes à l'état pur : développement, centre, roque. Prépare surtout l'Italienne et l'Espagnole." },
-  { id: "sicilian", name: "Défense sicilienne (Najdorf)", slot: "b-e4", moves: "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6", sharp: 0.85, theory: 3, minRating: 1700, simplifies: false, solid: false, match: /sicilian|sicilienne/i,
+  { id: "sicilian", structure: "semi", counter: true, name: "Défense sicilienne (Najdorf)", slot: "b-e4", moves: "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6", sharp: 0.85, theory: 3, minRating: 1700, simplifies: false, solid: false, match: /sicilian|sicilienne/i,
     plan: "La défense la plus combative : positions déséquilibrées, attaques sur les deux ailes, beaucoup de calcul." },
-  { id: "dragon", name: "Sicilienne Dragon", slot: "b-e4", moves: "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6", sharp: 0.9, theory: 2, minRating: 1400, simplifies: false, solid: false, match: /dragon/i,
+  { id: "dragon", structure: "semi", counter: true, name: "Sicilienne Dragon", slot: "b-e4", moves: "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6", sharp: 0.9, theory: 2, minRating: 1400, simplifies: false, solid: false, match: /dragon/i,
     plan: "Fou en g7 sur la grande diagonale et contre-attaque sur l'aile dame : une course à l'attaque." },
-  { id: "scandi", name: "Défense scandinave", slot: "b-e4", moves: "e4 d5 exd5 Qxd5 Nc3 Qa5", sharp: 0.4, theory: 1, minRating: 0, simplifies: false, solid: true, match: /scandinavian|scandinave/i,
+  { id: "scandi", structure: "open", counter: false, name: "Défense scandinave", slot: "b-e4", moves: "e4 d5 exd5 Qxd5 Nc3 Qa5", sharp: 0.4, theory: 1, minRating: 0, simplifies: false, solid: true, match: /scandinavian|scandinave/i,
     plan: "On impose son jeu dès le premier coup, avec une structure simple et peu de théorie." },
   // ─── Noirs contre 1.d4 ───
-  { id: "qgd", name: "Gambit dame refusé", slot: "b-d4", moves: "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7", sharp: 0.25, theory: 2, minRating: 0, simplifies: true, solid: true, match: /queen'?s gambit declined|gambit dame refusé/i,
+  { id: "qgd", structure: "closed", counter: false, name: "Gambit dame refusé", slot: "b-d4", moves: "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7", sharp: 0.25, theory: 2, minRating: 0, simplifies: true, solid: true, match: /queen'?s gambit declined|gambit dame refusé/i,
     plan: "Le centre d5 tient, développement naturel, égalisation sûre : l'arme des joueurs solides." },
-  { id: "slav", name: "Défense slave", slot: "b-d4", moves: "d4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4", sharp: 0.35, theory: 2, minRating: 1200, simplifies: false, solid: true, match: /slav/i,
+  { id: "slav", structure: "closed", counter: false, name: "Défense slave", slot: "b-d4", moves: "d4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4", sharp: 0.35, theory: 2, minRating: 1200, simplifies: false, solid: true, match: /slav/i,
     plan: "Comme la Caro-Kann contre 1.d4 : structure solide, fou de cases blanches libre." },
-  { id: "kid", name: "Défense est-indienne", slot: "b-d4", moves: "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O", sharp: 0.85, theory: 3, minRating: 1600, simplifies: false, solid: false, match: /king'?s indian|est-indienne/i,
+  { id: "kid", structure: "closed", counter: true, name: "Défense est-indienne", slot: "b-d4", moves: "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O", sharp: 0.85, theory: 3, minRating: 1600, simplifies: false, solid: false, match: /king'?s indian|est-indienne/i,
     plan: "On laisse le centre aux Blancs pour l'attaquer ensuite par …e5 et une attaque de pions sur l'aile roi." },
-  { id: "nimzo", name: "Défense nimzo-indienne", slot: "b-d4", moves: "d4 Nf6 c4 e6 Nc3 Bb4", sharp: 0.5, theory: 3, minRating: 1700, simplifies: false, solid: true, match: /nimzo/i,
+  { id: "nimzo", structure: "semi", counter: false, name: "Défense nimzo-indienne", slot: "b-d4", moves: "d4 Nf6 c4 e6 Nc3 Bb4", sharp: 0.5, theory: 3, minRating: 1700, simplifies: false, solid: true, match: /nimzo/i,
     plan: "Clouage du cavalier c3, lutte pour e4, souvent la paire de fous contre une meilleure structure." },
-  { id: "dutch", name: "Défense hollandaise", slot: "b-d4", moves: "d4 f5 c4 Nf6 g3 e6 Bg2 Be7", sharp: 0.75, theory: 2, minRating: 1300, simplifies: false, solid: false, match: /dutch|hollandaise/i,
+  { id: "dutch", structure: "closed", counter: true, name: "Défense hollandaise", slot: "b-d4", moves: "d4 f5 c4 Nf6 g3 e6 Bg2 Be7", sharp: 0.75, theory: 2, minRating: 1300, simplifies: false, solid: false, match: /dutch|hollandaise/i,
     plan: "…f5 contrôle e4 et prépare une attaque à l'aile roi : un jeu combatif contre 1.d4." },
-  { id: "londonb", name: "Mise en place simple (…d5, …Nf6, …c6, …Bf5)", slot: "b-d4", moves: "d4 d5 Nf3 Nf6 c4 c6", sharp: 0.2, theory: 1, minRating: 0, simplifies: false, solid: true, match: /^$/,
+  { id: "londonb", structure: "closed", counter: false, name: "Mise en place simple (…d5, …Nf6, …c6, …Bf5)", slot: "b-d4", moves: "d4 d5 Nf3 Nf6 c4 c6", sharp: 0.2, theory: 1, minRating: 0, simplifies: false, solid: true, match: /^$/,
     plan: "Une mise en place simple (…d5, …Nf6, …c6, …Bf5, …e6) qui marche contre presque tout." },
 ];
 
@@ -204,7 +209,43 @@ export function buildProfile(games: readonly RepertoireGame[]): PlayerProfile {
 
 export interface Advice { option: OpeningOption; score: number; reasons: string[]; current: FamilyStat | null; idea: string | null }
 
-export function recommend(p: PlayerProfile, slot: Slot, n = 2): Advice[] {
+/** Ajustement d'après le style lu dans les parties (structures, finales, attaque, défense, ouverture). */
+function styleFit(o: OpeningOption, st: StyleReport | null): { delta: number; why: string[] } {
+  if (!st) return { delta: 0, why: [] };
+  let delta = 0;
+  const why: string[] = [];
+  const S = st.structures;
+  const ok = (b: { games: number; score: number | null }) => b.games >= 5 && b.score !== null;
+  const STRUCT = { open: "ouvertes", semi: "semi-ouvertes", closed: "fermées" } as const;
+  // les structures où le joueur marque le plus
+  const ranked = (["open", "semi", "closed"] as const).filter((k) => ok(S[k])).sort((a, b) => S[b].score! - S[a].score!);
+  if (ranked.length >= 2) {
+    const best = ranked[0]!, worst = ranked.at(-1)!;
+    const gap = S[best].score! - S[worst].score!;
+    if (gap >= 8 && o.structure === best) { delta += Math.min(2, gap / 8); why.push(`mène à des positions ${STRUCT[best]}, où tu marques ${S[best].score} % (contre ${S[worst].score} % dans les ${STRUCT[worst]})`); }
+    if (gap >= 8 && o.structure === worst) delta -= Math.min(2, gap / 8);
+  }
+  const ax = Object.fromEntries(st.axes.map((a) => [a.id, a.value])) as Record<string, number | null>;
+  if (ax.opening !== null && ax.opening !== undefined && ax.opening < 55) {
+    if (o.theory === 1) { delta += 1; why.push(`peu de théorie : Stockfish montre que tu perds des points dès l'ouverture (précision ${ax.opening}/100)`); }
+    if (o.theory === 3) delta -= 1;
+  }
+  if (ax.endgame !== null && ax.endgame !== undefined) {
+    if (ax.endgame >= 60 && o.simplifies) { delta += 0.8; why.push(`les échanges y sont fréquents, et la finale est un de tes points forts (${ax.endgame}/100)`); }
+    if (ax.endgame <= 40 && o.simplifies) delta -= 0.8;
+  }
+  if (ax.attack !== null && ax.attack !== undefined) {
+    if (ax.attack >= 55 && o.sharp >= 0.6) { delta += 0.8; why.push("tu aimes attaquer le roi adverse : cette ouverture t'en donne l'occasion"); }
+    if (ax.attack <= 25 && o.sharp >= 0.75) delta -= 0.6;
+  }
+  if (ax.defense !== null && ax.defense !== undefined && ax.defense >= 55 && o.counter) { delta += 0.7; why.push("tu sais défendre puis contre-attaquer : c'est l'esprit de cette défense"); }
+  const d = st.deep;
+  if (d && d.errors.hanging + d.errors.missedTactic >= 6 && o.sharp >= 0.8) { delta -= 0.6; }
+  if (d && d.winning >= 3 && d.notConverted / d.winning >= 0.35 && o.simplifies) { delta += 0.4; why.push("les positions simples aident à convertir l'avantage, ton point à améliorer"); }
+  return { delta, why };
+}
+
+export function recommend(p: PlayerProfile, slot: Slot, n = 2, style: StyleReport | null = null): Advice[] {
   const r = p.rating ?? 1500;
   const color = slot === "w" ? "w" : "b";
   const out: Advice[] = [];
@@ -235,7 +276,11 @@ export function recommend(p: PlayerProfile, slot: Slot, n = 2): Advice[] {
       else { s += 0.5; why.push(`tu la connais déjà (${cur.games} parties)`); }
     }
     if (slot === "w" && p.firstMove && o.moves.startsWith(p.firstMove)) { s += 0.4; why.push(`commence par 1.${p.firstMove}, ton premier coup habituel`); }
-    out.push({ option: o, score: s, reasons: why.slice(0, 3), current: cur, idea: openingIdea(o.name.replace(/ \(.*\)$/, "")) });
+    const sf = styleFit(o, style);
+    s += sf.delta;
+    // d'abord ce que disent les parties (style), puis le reste
+    const reasons = [...why.filter((x) => x.startsWith("tu la joues")), ...sf.why, ...why.filter((x) => !x.startsWith("tu la joues"))];
+    out.push({ option: o, score: s, reasons: reasons.slice(0, 4), current: cur, idea: openingIdea(o.name.replace(/ \(.*\)$/, "")) });
   }
   return out.sort((a, b) => b.score - a.score).slice(0, n);
 }

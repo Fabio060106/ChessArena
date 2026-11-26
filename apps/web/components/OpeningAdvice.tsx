@@ -1,7 +1,12 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RepertoireGame } from "@chessarena/shared";
 import { buildProfile, recommend, ucisOf, type Slot } from "../lib/openingAdvisor";
+import { buildStyle, deepAnalyse, type DeepStats } from "../lib/styleAnalysis";
+import { Engine, terminalScore } from "../lib/engine";
+
+const DEEP_GAMES = 20;
+const DEEP_DEPTH = 9;
 
 const SLOTS: Array<[Slot, string]> = [["w", "Avec les Blancs"], ["b-e4", "Noirs contre 1.e4"], ["b-d4", "Noirs contre 1.d4"]];
 const MIN_GAMES = 10;
@@ -9,7 +14,30 @@ const MIN_GAMES = 10;
 /** « Ouvertures conseillées pour toi » : profil du joueur (niveau, style, forces, faiblesses) et ouvertures adaptées. */
 export function OpeningAdvice({ games }: { games: readonly RepertoireGame[] }) {
   const profile = useMemo(() => (games.length >= MIN_GAMES ? buildProfile(games) : null), [games]);
-  const advice = useMemo(() => (profile ? SLOTS.map(([slot, label]) => ({ slot, label, list: recommend(profile, slot) })) : []), [profile]);
+  // analyse approfondie (Stockfish) : gardée sur l'appareil pour ces parties-là
+  const deepKey = useMemo(() => `arena.style1.${[...games].sort((a, b) => b.endedAt.localeCompare(a.endedAt)).slice(0, DEEP_GAMES).map((g) => g.gameId).join(",").slice(0, 400)}`, [games]);
+  const [deep, setDeep] = useState<DeepStats | null>(null);
+  const [deepProgress, setDeepProgress] = useState<number | null>(null);
+  const cancel = useRef(false);
+  useEffect(() => {
+    try { const raw = localStorage.getItem(deepKey); setDeep(raw ? (JSON.parse(raw) as DeepStats) : null); } catch { setDeep(null); }
+  }, [deepKey]);
+  useEffect(() => () => { cancel.current = true; }, []);
+  const runDeep = async () => {
+    let engine: Engine | null = null;
+    try { engine = new Engine(); } catch { return; }
+    cancel.current = false;
+    setDeepProgress(0);
+    const res = await deepAnalyse(games, async (fen) => {
+      const t = terminalScore(fen);
+      return t ? { depth: 0, score: t, pv: [] } : engine!.analyse(fen, DEEP_DEPTH);
+    }, { maxGames: DEEP_GAMES, onProgress: (d, t) => setDeepProgress(Math.round((100 * d) / t)), cancelled: () => cancel.current }).catch(() => null);
+    engine.terminate();
+    setDeepProgress(null);
+    if (res) { setDeep(res); try { localStorage.setItem(deepKey, JSON.stringify(res)); } catch { /* plein */ } }
+  };
+  const style = useMemo(() => (profile ? buildStyle(games, deep) : null), [profile, games, deep]);
+  const advice = useMemo(() => (profile ? SLOTS.map(([slot, label]) => ({ slot, label, list: recommend(profile, slot, 2, style) })) : []), [profile, style]);
   const [slot, setSlot] = useState<Slot>("w");
   if (!profile) {
     return (
@@ -56,6 +84,33 @@ export function OpeningAdvice({ games }: { games: readonly RepertoireGame[] }) {
           <ul className="flex list-disc flex-col gap-1 pl-4 text-[13px]">{(profile.weaknesses.length ? profile.weaknesses : ["Rien de marquant : continue comme ça."]).map((t) => <li key={t}>{t}</li>)}</ul>
         </div>
       </div>
+      {/* le style, lu dans les parties */}
+      {style && (
+        <div className="rounded-lg border border-line p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-display text-sm font-bold">Ton style d'après tes parties</h3>
+            {deep ? <span className="text-[11px] text-muted">analyse Stockfish de {deep.games} parties</span> : null}
+            <button type="button" disabled={deepProgress !== null} onClick={() => void runDeep()}
+              className="ml-auto rounded-lg border border-neon/50 px-2.5 py-1 text-xs font-semibold text-neon disabled:opacity-60">
+              {deepProgress !== null ? `Analyse en cours… ${deepProgress} %` : deep ? "Relancer l'analyse Stockfish" : "Analyse approfondie (Stockfish, ~2 min)"}
+            </button>
+          </div>
+          <div className="mt-2 grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+            {style.axes.map((a) => (
+              <div key={a.id} title={a.hint}>
+                <div className="flex justify-between text-xs"><span>{a.label}</span><span className="tabular text-muted">{a.value === null ? "—" : `${a.value}/100`}</span></div>
+                <div className="mt-0.5 h-1.5 rounded bg-surface-2"><div className={`h-full rounded ${a.value === null ? "" : a.id === "attack" || a.id === "risk" ? "bg-neon" : a.value >= 60 ? "bg-win" : a.value >= 40 ? "bg-gold" : "bg-danger"}`} style={{ width: `${a.value ?? 0}%` }} /></div>
+              </div>
+            ))}
+          </div>
+          {!deep && <p className="mt-2 text-[11px] text-muted">Les notes « Ouverture », « Milieu de jeu » et « Défense » demandent l'analyse approfondie : Stockfish rejoue tes {DEEP_GAMES} dernières parties pour mesurer où tu perds des points.</p>}
+          {style.findings.length > 0 && (
+            <ul className="mt-2 flex flex-col gap-1 text-[13px]">
+              {style.findings.map((f) => <li key={f} className="border-l-2 border-neon/40 pl-2">{f}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
       {/* les ouvertures conseillées */}
       <div className="flex gap-1 rounded-lg bg-surface-2 p-0.5" role="tablist" aria-label="Conseils pour">
         {SLOTS.map(([k, label]) => (
