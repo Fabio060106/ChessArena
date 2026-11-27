@@ -28,12 +28,12 @@ export class PgTournamentStore implements TournamentStore {
       await c.query(
         `INSERT INTO tournaments (id, format, size, time_control, currency, buy_in_cents, sponsor_added_cents, rake_bps,
                                   payout_structure_bps, status, cancel_reason, ranking, created_at, started_at, finished_at)
-         VALUES ($1,'sit_and_go',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         VALUES ($1,$15,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, cancel_reason = EXCLUDED.cancel_reason,
            ranking = EXCLUDED.ranking, sponsor_added_cents = EXCLUDED.sponsor_added_cents,
            started_at = EXCLUDED.started_at, finished_at = EXCLUDED.finished_at`,
         [s.id, s.size, s.timeControl, s.currency, s.buyInCents, s.sponsorAddedCents, s.rakeBps, s.payoutBps,
-          s.status, s.cancelReason, ranking, s.createdAt, s.startedAt, s.finishedAt],
+          s.status, s.cancelReason, ranking, s.createdAt, s.startedAt, s.finishedAt, s.system === "swiss" ? "swiss" : "sit_and_go"],
       );
       for (const p of s.players) {
         await c.query(

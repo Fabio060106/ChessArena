@@ -6,18 +6,20 @@ import type { FinishedGame } from "../game/GameRoom.js";
 
 const BUY_IN = 500;
 
-function setup(size: number, opts: { buyIn?: number; random?: () => number } = {}) {
+function setup(size: number, opts: { buyIn?: number; random?: () => number; swiss?: number | true; payoutBps?: number[]; pause?: number } = {}) {
   const ledger = new InMemoryLedger();
   const started: StartGameRequest[] = [];
   const snapshots: SngSnapshot[] = [];
   const sng = new SitAndGo(
-    { id: "T1", formatId: "f", size, timeControl: "blitz_3_0", currency: "PLAY", buyInCents: opts.buyIn ?? BUY_IN, rakeBps: 1000, payoutBps: [6500, 3500] },
+    { id: "T1", formatId: "f", size, timeControl: "blitz_3_0", currency: "PLAY", buyInCents: opts.buyIn ?? BUY_IN, rakeBps: 1000, payoutBps: opts.payoutBps ?? [6500, 3500],
+      ...(opts.swiss ? { system: "swiss" as const, swissRounds: opts.swiss === true ? 0 : opts.swiss } : {}) },
     {
       ledger,
       startGame: async (r) => { started.push(r); return r.gameId; },
       persist: async (s) => { snapshots.push(s); },
       emit: () => {},
       random: opts.random ?? (() => 0.1), // p1 a les Blancs en partie principale
+      swissPauseMs: opts.pause,
     },
   );
   const fund = async (u: string, c = 10_000) => ledger.faucet(u, c, `seed-${u}`);
@@ -339,5 +341,124 @@ describe("SitAndGo — n'importe quel nombre de joueurs, exempts", () => {
     expect(() => new SitAndGo({ ...base, size: 2 }, ports)).toThrow(); // à 2, ce n'est pas un tournoi
     expect(() => new SitAndGo({ ...base, size: 129 }, ports)).toThrow();
     expect(() => new SitAndGo({ ...base, size: 2.5 }, ports)).toThrow();
+  });
+});
+
+describe("SitAndGo — système suisse", () => {
+  /** termine toutes les parties en cours de la ronde : le mieux classé gagne, sauf nulle demandée */
+  const playRound = async (t: ReturnType<typeof setup>, draws: Set<string> = new Set()) => {
+    const live = t.started.filter((r) => !t.snapshots.at(-1)!.rounds.flat().some((m) => m.games.some((g) => g.gameId === r.gameId && g.result)));
+    const snap = t.sng.snapshot();
+    const cur = snap.rounds.at(-1)!.filter((m) => m.status === "playing");
+    for (const m of cur) {
+      const g = m.games.at(-1)!;
+      const req = live.find((r) => r.gameId === g.gameId)!;
+      const key = [m.p1, m.p2].sort().join("-");
+      const seed = (u: string) => snap.players.find((p) => p.userId === u)!.seed!;
+      await t.finish(req, draws.has(key) ? "1/2-1/2" : seed(req.white.userId) < seed(req.black.userId) ? "1-0" : "0-1");
+    }
+  };
+
+  it("5 joueurs : 4 rondes, un exempt par ronde, tout le monde joue, classement et gains au podium", async () => {
+    const t = setup(5, { swiss: true, payoutBps: [5000, 3000, 2000] });
+    await t.fill(5);
+    let s = t.sng.snapshot();
+    expect(s.system).toBe("swiss");
+    expect(s.totalRounds).toBe(4);
+    expect(s.status).toBe("running");
+    expect(s.rounds).toHaveLength(1);
+    expect(s.rounds[0]!.find((m) => m.result === "bye")!.p1).toBe("u5"); // le moins bien classé
+    expect(t.started.every((r) => r.tournament.swiss === true && r.tournament.kind === "main")).toBe(true);
+
+    for (let r = 1; r <= 4; r++) {
+      s = t.sng.snapshot();
+      expect(s.rounds).toHaveLength(r);
+      expect(s.currentRound).toBe(r);
+      await playRound(t);
+    }
+    s = t.sng.snapshot();
+    expect(s.status).toBe("finished");
+    const byes = s.rounds.flat().filter((m) => m.result === "bye").map((m) => m.p1);
+    expect(new Set(byes).size).toBe(4);
+    // le n°1 gagne tout : 4 points (3 victoires + exempt ou 4 victoires)
+    const top = s.players.find((p) => p.finalRank === 1)!;
+    expect(top.userId).toBe("u1");
+    expect(top.points).toBe(4);
+    expect(s.players.map((p) => p.finalRank).sort()).toEqual([1, 2, 3, 4, 5]);
+    // argent : cagnotte nette 2 250 (5 × 500 − 10 %) → 1 125 / 675 / 450, escrow vidé
+    const pay = Object.fromEntries(s.players.map((p) => [p.finalRank, p.payoutCents]));
+    expect([pay[1], pay[2], pay[3], pay[4], pay[5]]).toEqual([1125, 675, 450, 0, 0]);
+    expect(await t.ledger.balance(t.sng.escrowAccount, "PLAY")).toBe(0);
+    expect(s.players.every((p) => p.status === "winner" || p.status === "eliminated")).toBe(true);
+    // personne n'a rencontré deux fois le même adversaire
+    for (const p of s.players) {
+      const opp = s.rounds.flat().filter((m) => m.p2 && (m.p1 === p.userId || m.p2 === p.userId)).map((m) => (m.p1 === p.userId ? m.p2 : m.p1));
+      expect(new Set(opp).size).toBe(opp.length);
+    }
+  });
+
+  it("une nulle compte ½ point chacun et ne déclenche ni revanche ni Armageddon", async () => {
+    const t = setup(4, { swiss: 2, buyIn: 0 });
+    await t.fill(4);
+    const r1 = t.sng.snapshot().rounds[0]!;
+    const drawn = [r1[0]!.p1!, r1[0]!.p2!].sort().join("-");
+    const before = t.started.length;
+    await playRound(t, new Set([drawn]));
+    const s = t.sng.snapshot();
+    expect(s.rounds[0]![0]!.result).toBe("1/2-1/2");
+    expect(s.rounds[0]![0]!.winner).toBeNull();
+    expect(s.players.find((p) => p.userId === r1[0]!.p1)!.points).toBe(0.5);
+    // ronde 2 appariée directement : 2 nouvelles parties, aucune revanche
+    expect(s.rounds).toHaveLength(2);
+    expect(t.started.length).toBe(before + 2);
+    expect(t.started.every((r) => r.tournament.kind === "main")).toBe(true);
+  });
+
+  it("premier coup non joué : défaite du responsable (forfait), pas d'élimination ; sans responsable, la partie est rejouée", async () => {
+    const t = setup(4, { swiss: 3, buyIn: 0 });
+    await t.fill(4);
+    const [a, b] = t.started;
+    await t.finish(a!, "1/2-1/2", { aborted: true, abortedBy: "w", termination: "aborted" });
+    let s = t.sng.snapshot();
+    expect(s.rounds[0]![0]!.result).toBe("0-1");
+    const n = t.started.length;
+    await t.finish(b!, "1/2-1/2", { aborted: true, abortedBy: null, termination: "aborted" });
+    expect(t.started.length).toBe(n + 1); // rejouée
+    s = t.sng.snapshot();
+    expect(s.rounds).toHaveLength(1);
+    await t.finish(t.started.at(-1)!, "1-0");
+    s = t.sng.snapshot();
+    expect(s.rounds).toHaveLength(2);
+    // le forfait ne sort personne : 4 joueurs encore appariés en ronde 2
+    expect(s.rounds[1]!.flatMap((m) => [m.p1, m.p2]).filter(Boolean)).toHaveLength(4);
+  });
+
+  it("départ anticipé à 3 inscrits sur 8 : rondes ramenées à 2 (sans rencontre répétée)", async () => {
+    const t = setup(8, { swiss: 5, buyIn: 0 });
+    await t.fill(3);
+    await t.sng.startNow();
+    const s = t.sng.snapshot();
+    expect(s.totalRounds).toBe(2);
+    expect(s.rounds[0]!.filter((m) => m.p2).length).toBe(1);
+  });
+
+  it("pause entre les rondes : la ronde suivante est annoncée (nextRoundAt) puis appariée après le délai", async () => {
+    const t = setup(4, { swiss: 2, buyIn: 0, pause: 60 });
+    await t.fill(4);
+    await playRound(t);
+    let s = t.sng.snapshot();
+    expect(s.rounds).toHaveLength(1);
+    expect(s.nextRoundAt).toBeTruthy();
+    await new Promise((r) => setTimeout(r, 120));
+    s = t.sng.snapshot();
+    expect(s.rounds).toHaveLength(2);
+    expect(s.nextRoundAt).toBeUndefined();
+    await playRound(t);
+    expect(t.sng.snapshot().status).toBe("finished"); // pas de pause après la dernière ronde
+  });
+
+  it("refuse plus de 3 places payées, ou un nombre de rondes invalide", () => {
+    expect(() => setup(8, { swiss: true, payoutBps: [4000, 3000, 2000, 1000] })).toThrow(SngError);
+    expect(() => setup(8, { swiss: 99 })).toThrow(SngError);
   });
 });

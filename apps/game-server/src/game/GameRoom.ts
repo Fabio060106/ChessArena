@@ -40,6 +40,8 @@ export interface TournamentGameRef {
   round: number;
   slot: number;
   kind: "main" | "rematch" | "armageddon";
+  /** partie d'un suisse : la nulle compte ½ point, pas de revanche */
+  swiss?: boolean;
 }
 
 export interface RoomHooks {
@@ -161,7 +163,7 @@ export class GameRoom {
   startEvent(): GameStartEvent {
     return {
       gameId: this.id, white: this.white, black: this.black, timeControl: this.timeControl, stake: this.stake, fen: this.fen,
-      tournament: this.tournament ? { tournamentId: this.tournament.tournamentId, round: this.tournament.round, kind: this.tournament.kind } : null,
+      tournament: this.tournament ? { tournamentId: this.tournament.tournamentId, round: this.tournament.round, kind: this.tournament.kind, ...(this.tournament.swiss ? { swiss: true } : {}) } : null,
       firstMoveMs: this.firstMoveTimeoutMs,
     };
   }

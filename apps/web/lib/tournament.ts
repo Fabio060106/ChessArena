@@ -107,14 +107,15 @@ export function fieldSize(s: SngSnapshot): number {
   return s.status === "registering" ? s.size : s.players.filter((p) => p.seed !== null).length || s.size;
 }
 
-/** Le joueur attend-il sans partie (exempt, ou qualifié en attendant la fin du tour) ? */
-export function waitingInfo(s: SngSnapshot, userId: string): "bye" | "qualified" | null {
+/** Le joueur attend-il sans partie (exempt, qualifié, ou partie finie au suisse) en attendant la fin du tour ? */
+export function waitingInfo(s: SngSnapshot, userId: string): "bye" | "qualified" | "done" | null {
   if (s.status !== "running") return null;
   const me = s.players.find((p) => p.userId === userId);
   if (!me || me.status !== "playing") return null;
   const r = s.currentRound > 0 ? s.rounds[s.currentRound - 1] : undefined;
   const m = r?.find((x) => x.p1 === userId || x.p2 === userId);
   if (!m) return null;
+  if (isSwiss(s)) return m.result === "bye" ? "bye" : m.status === "done" ? "done" : null;
   if (m.status === "done" && m.p2 === null && m.round === 1) return "bye";
   if (m.status === "done" && m.winner === userId) return "qualified";
   return null;
@@ -160,4 +161,52 @@ export const KNOCKOUT_RULES = [
   "Nulle : revanche avec les couleurs inversées ; encore nulle : Armageddon (les Noirs passent en cas de nulle).",
   "Chaque partie démarre toute seule : 45 s pour jouer son premier coup, sinon le match est perdu.",
   "Pas de revanche hors tableau pendant le tournoi ; une revanche après coup est une partie normale, hors tournoi.",
+];
+
+// ─── Système suisse ─────────────────────────────────────────────────────────
+export const isSwiss = (s: Pick<SngSnapshot, "system">) => s.system === "swiss";
+
+/** Rondes d'un suisse à `players` joueurs (même règle que le serveur) : de quoi départager, sans rencontre répétée. */
+export function swissRoundsFor(players: number, chosen = 0): number {
+  const auto = players <= 2 ? 1 : Math.min(players - 1, Math.max(3, Math.ceil(Math.log2(players)) + 1), 11);
+  return Math.min(chosen || auto, Math.max(1, players - 1));
+}
+
+/** « 3,5 », « 1 », « ½ » */
+export function fmtPoints(p: number): string {
+  if (p === 0.5) return "½";
+  return p % 1 ? `${Math.floor(p)},5` : String(p);
+}
+
+export interface SwissRow { userId: string; rating: number; rank: number; points: number; buchholz: number; sb: number; payoutCents: Cents; playing: boolean }
+
+/** Classement suisse : rang final s'il est connu, sinon points, Buchholz, Sonneborn-Berger, tête de série. */
+export function swissRows(s: SngSnapshot): SwissRow[] {
+  const inGame = new Set(s.rounds.flat().filter((m) => m.status === "playing").flatMap((m) => [m.p1, m.p2]));
+  const players = s.players.filter((p) => ACTIVE.includes(p.status));
+  const sorted = [...players].sort((a, b) =>
+    (a.finalRank ?? 0) - (b.finalRank ?? 0) || (b.points ?? 0) - (a.points ?? 0) || (b.buchholz ?? 0) - (a.buchholz ?? 0)
+    || (b.sonnebornBerger ?? 0) - (a.sonnebornBerger ?? 0) || (a.seed ?? 999) - (b.seed ?? 999) || b.rating - a.rating);
+  return sorted.map((p, i) => ({
+    userId: p.userId, rating: p.rating, rank: p.finalRank ?? i + 1, points: p.points ?? 0, buchholz: p.buchholz ?? 0,
+    sb: p.sonnebornBerger ?? 0, payoutCents: p.payoutCents, playing: inGame.has(p.userId),
+  }));
+}
+
+/** Score d'un échiquier suisse : « 1-0 », « ½-½ », « exempt », « — ». */
+export function swissBoardScore(m: SngMatchView): string {
+  if (m.result === "bye") return "exempt (1 pt)";
+  if (!m.result) return "—";
+  const g = m.games.at(-1);
+  if (g?.termination === "aborted") return `${m.result} (forfait)`;
+  return m.result === "1/2-1/2" ? "½-½" : m.result;
+}
+
+/** Règles du suisse, en clair. */
+export const SWISS_RULES = [
+  "Système suisse : tout le monde joue toutes les rondes, personne n'est éliminé.",
+  "Victoire 1 point, nulle ½, défaite 0. À chaque ronde, tu rencontres un joueur qui a le même nombre de points que toi, jamais deux fois le même.",
+  "Les couleurs sont équilibrées (Blancs et Noirs en alternance). Nombre impair : un joueur est exempt et marque 1 point (une seule fois).",
+  "Chaque ronde démarre toute seule quand toutes les parties de la précédente sont finies : 45 s pour jouer son premier coup, sinon la partie est perdue.",
+  "Départage : Buchholz (points des adversaires rencontrés), puis Sonneborn-Berger, puis nombre de victoires.",
 ];

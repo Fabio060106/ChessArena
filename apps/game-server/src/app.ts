@@ -635,7 +635,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
     socket.on("sng:create", guard(socket, async (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);
-      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown } | null;
+      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown } | null;
       if (!p || typeof p !== "object" || typeof p.timeControl !== "string" || !(p.timeControl in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
       const blocked = canJoinTournament();
       if (blocked) return reply({ ok: false, code: blocked });
@@ -643,7 +643,11 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       const rating = (await repo.getRatings(user.userId))[timeControl].rating;
       try {
         const snapshot = await tournaments.createCustom(
-          { size: p.size as number, timeControl, buyInCents: p.buyInCents as number, name: typeof p.name === "string" ? p.name : undefined },
+          {
+            size: p.size as number, timeControl, buyInCents: p.buyInCents as number, name: typeof p.name === "string" ? p.name : undefined,
+            system: p.system === "swiss" ? "swiss" : p.system === undefined || p.system === "ko" ? "ko" : ("?" as "ko"),
+            rounds: p.rounds === undefined ? undefined : (p.rounds as number),
+          },
           user.userId, rating,
         );
         io.in(userRoom(user.userId)).socketsJoin(tournamentRoom(snapshot.id));

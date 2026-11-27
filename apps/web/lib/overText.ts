@@ -18,9 +18,17 @@ export function overText(over: GameOverEvent, start: GameStartEvent | null, me: 
       };
     }
     if (by === null) return { title: "Partie rejouée", tone: "neutral", line: "Personne n'a joué", note: "Aucun des deux joueurs n'est en cause : le match du tournoi est rejoué." };
+    if (t.swiss) return by === me
+      ? { title: "Défaite", tone: "loss", line: "Premier coup non joué à temps", note: "En tournoi, ne pas jouer son premier coup fait perdre la partie (0 point). Tu restes dans le tournoi pour la ronde suivante." }
+      : { title: "Victoire", tone: "win", line: "Ton adversaire n'a pas joué", note: "Ton adversaire n'a pas joué son premier coup à temps : 1 point pour toi." };
     return by === me
       ? { title: "Défaite", tone: "loss", line: "Premier coup non joué à temps", note: "En tournoi, ne pas jouer son premier coup fait perdre le match : ton adversaire passe au tour suivant." }
       : { title: "Victoire", tone: "win", line: "Ton adversaire n'a pas joué", note: "Ton adversaire n'a pas joué son premier coup à temps : tu passes au tour suivant." };
+  }
+  if (t?.swiss) {
+    const pts = iWon === null ? "½ point" : iWon ? "1 point" : "0 point";
+    return { title: iWon === null ? "Nulle" : iWon ? "Victoire" : "Défaite", tone: iWon === null ? "neutral" : iWon ? "win" : "loss",
+      note: `${pts} au classement. La ronde suivante démarre 10 secondes après la fin de toutes les parties (onglet Tournoi pour le classement).` };
   }
   if (t && iWon === null) {
     if (t.kind === "main") return { title: "Nulle", tone: "neutral", note: "Match nul : une revanche avec les couleurs inversées va départager. Elle démarre automatiquement." };
@@ -34,7 +42,8 @@ export function overText(over: GameOverEvent, start: GameStartEvent | null, me: 
 /**
  * En tournoi, la partie suivante démarre aussitôt (le résultat précédent disparaît) : on rappelle pourquoi on rejoue.
  */
-export function tournamentIntro(kind: "main" | "rematch" | "armageddon" | undefined, round = 1): string {
+export function tournamentIntro(kind: "main" | "rematch" | "armageddon" | undefined, round = 1, swiss = false): string {
+  if (swiss) return `Ronde ${round} du tournoi suisse. `;
   if (kind === "main" && round > 1) return "Qualifié ! Voici ton match du tour suivant. ";
   if (kind === "rematch") return "Revanche du tournoi après la nulle, couleurs inversées. ";
   if (kind === "armageddon") return "Armageddon après deux nulles : les Blancs doivent gagner, une nulle qualifie les Noirs. ";

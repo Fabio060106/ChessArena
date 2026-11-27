@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { SNG_MAX_SIZE, SNG_MIN_SIZE } from "@chessarena/shared";
+import { SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS } from "@chessarena/shared";
 import type {
-  Color, Cents, Currency, SngGameKind, SngGameView, SngMatchView, SngPlayerView, SngSize, SngSnapshot, TimeControlId,
+  Color, Cents, Currency, GameResult, SngGameKind, SngGameView, SngMatchView, SngPlayerView, SngSize, SngSnapshot, SngSystem, TimeControlId,
 } from "@chessarena/shared";
+import { defaultSwissRounds, pairRound, swissStandings, type SwissResult, type SwissStanding } from "./swiss.js";
 import type { FinishedGame, Seat, TournamentGameRef } from "../game/GameRoom.js";
 import { acct, applySettlement, InsufficientFundsError, type Ledger } from "../settlement/ledger.js";
 import { computeRake, settleTournament } from "../settlement/rake.js";
@@ -39,6 +40,12 @@ import type { AuditSink } from "../audit/auditLog.js";
  *      annoncée à l'avance). Partie non classée Elo.
  *   Partie annulée (1er coup non joué, abandon/départ avant 2 demi-coups) : perdue
  *   par le responsable (`abortedBy`). Sans responsable identifiable : rejouée.
+ *
+ * SYSTÈME SUISSE (`system: "swiss"`, voir swiss.ts)
+ *   • Tout le monde joue toutes les rondes (une partie par ronde, la nulle compte ½ point) ;
+ *     un exempt (nombre impair) marque 1 point. Rondes : `swissRounds`, sinon selon le nombre d'inscrits.
+ *   • Une ronde n'est appariée que lorsque la précédente est entièrement terminée.
+ *   • Classement final : points, Buchholz, Sonneborn-Berger, victoires, tête de série ; jusqu'à 3 places payées.
  */
 export interface SitAndGoConfig {
   id: string;
@@ -53,6 +60,10 @@ export interface SitAndGoConfig {
   /** tournoi créé par un joueur : son identifiant, et le nom choisi */
   createdBy?: string | null;
   name?: string | null;
+  /** « ko » (défaut) ou « swiss » */
+  system?: SngSystem;
+  /** suisse : rondes souhaitées (0 = selon le nombre d'inscrits) */
+  swissRounds?: number;
 }
 
 export interface StartGameRequest {
@@ -78,6 +89,8 @@ export interface SitAndGoPorts {
   /** RNG injectable (tirage des couleurs) — déterministe dans les tests. */
   random?: () => number;
   now?: () => number;
+  /** suisse : pause entre deux rondes (voir son résultat et le classement), 0 par défaut */
+  swissPauseMs?: number;
 }
 
 export class SngError extends Error {
@@ -98,6 +111,10 @@ interface Entry {
   eliminatedRound: number | null;
   finalRank: number | null;
   payoutCents: Cents;
+  /** suisse : adversaires et couleurs jouées (« - » = exempt) */
+  opponents: string[];
+  colors: Array<"w" | "b" | "-">;
+  hadBye: boolean;
 }
 
 interface GameRec {
@@ -117,6 +134,8 @@ interface Match {
   winner: string | null;
   status: "pending" | "playing" | "done";
   games: GameRec[];
+  /** suisse : résultat de l'échiquier */
+  result?: GameResult | "bye" | null;
 }
 
 /** Taille du tableau : puissance de 2 immédiatement supérieure (ou égale) au nombre de joueurs. */
@@ -161,9 +180,11 @@ export class SitAndGo {
   constructor(cfg: SitAndGoConfig, ports: SitAndGoPorts) {
     if (!Number.isInteger(cfg.size) || cfg.size < SNG_MIN_SIZE || cfg.size > SNG_MAX_SIZE) throw new SngError("INVALID_CONFIG", "taille de 3 à 128");
     if (cfg.payoutBps.reduce((a, b) => a + b, 0) !== 10_000) throw new SngError("INVALID_CONFIG", "structure de gains ≠ 100 %");
-    if (cfg.payoutBps.length > 2) throw new SngError("INVALID_CONFIG", "KO sans petite finale : 2 places payées au plus");
+    const swiss = cfg.system === "swiss";
+    if (cfg.payoutBps.length > (swiss ? 3 : 2)) throw new SngError("INVALID_CONFIG", swiss ? "3 places payées au plus" : "KO sans petite finale : 2 places payées au plus");
+    if (swiss && cfg.swissRounds && (!Number.isInteger(cfg.swissRounds) || cfg.swissRounds < 1 || cfg.swissRounds > SWISS_MAX_ROUNDS)) throw new SngError("INVALID_CONFIG", "rondes");
     this.id = cfg.id;
-    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, ...cfg };
+    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, ...cfg };
     this.ports = ports;
     this.now = ports.now ?? (() => Date.now());
     this.random = ports.random ?? Math.random;
@@ -205,7 +226,7 @@ export class SitAndGo {
     // ne peuvent pas prendre la dernière place toutes les deux.
     const entry: Entry = {
       userId, rating, status: "locking", attempt: (prev?.attempt ?? 0) + 1, registeredSeq: ++this.seq,
-      seed: null, eliminatedRound: null, finalRank: null, payoutCents: 0,
+      seed: null, eliminatedRound: null, finalRank: null, payoutCents: 0, opponents: [], colors: [], hadBye: false,
     };
     this.entries.set(userId, entry);
 
@@ -312,6 +333,7 @@ export class SitAndGo {
     players.forEach((e, i) => { e.seed = i + 1; e.status = "playing"; });
 
     this.entrants = players.length;
+    if (this.cfg.system === "swiss") return this.startSwiss(players);
     const bracketSize = bracketSizeFor(players.length);
     const order = bracketOrder(bracketSize);
     const bySeed = new Map(players.map((p) => [p.seed!, p.userId]));
@@ -344,6 +366,7 @@ export class SitAndGo {
 
   /** Remonte les vainqueurs, démarre les matchs prêts, clôture si la finale est jouée. */
   private async advance(): Promise<void> {
+    if (this.cfg.system === "swiss") return this.advanceSwiss();
     for (let r = 0; r < this.rounds.length; r++) {
       const round = this.rounds[r]!;
       if (r > 0) {
@@ -373,7 +396,8 @@ export class SitAndGo {
     const p1 = m.p1!;
     const p2 = m.p2!;
     let white: string;
-    if (kind === "main") white = this.random() < 0.5 ? p1 : p2;
+    if (this.cfg.system === "swiss") white = p1; // couleurs fixées par l'appariement
+    else if (kind === "main") white = this.random() < 0.5 ? p1 : p2;
     else if (kind === "rematch") white = m.games.at(-1)!.black;
     else white = this.seedOf(p1) > this.seedOf(p2) ? p1 : p2; // Armageddon : la moins bonne tête de série a les Blancs
     const black = white === p1 ? p2 : p1;
@@ -385,7 +409,7 @@ export class SitAndGo {
     await this.ports.startGame({
       gameId: rec.gameId!, white: seat(white), black: seat(black), timeControl: this.cfg.timeControl, currency: this.cfg.currency,
       rated: kind !== "armageddon",
-      tournament: { tournamentId: this.id, round: m.round, slot: m.slot, kind },
+      tournament: { tournamentId: this.id, round: m.round, slot: m.slot, kind, ...(this.cfg.system === "swiss" ? { swiss: true } : {}) },
     });
     this.changed();
   }
@@ -400,6 +424,19 @@ export class SitAndGo {
     rec.termination = g.termination;
 
     const colorPlayer = (c: Color) => (c === "w" ? rec.white : rec.black);
+    if (this.cfg.system === "swiss") {
+      let result: GameResult;
+      if (g.aborted) {
+        if (!g.abortedBy) { this.changed(); return this.startGame(m, rec.kind); } // personne en cause : on rejoue
+        result = g.abortedBy === "w" ? "0-1" : "1-0"; // forfait du responsable
+      } else result = g.result;
+      m.result = result;
+      m.winner = result === "1-0" ? rec.white : result === "0-1" ? rec.black : null;
+      m.status = "done";
+      this.audit("board_done", { round: m.round, slot: m.slot, result, game: rec.gameId });
+      this.changed();
+      return this.advance();
+    }
     let winner: string | null = null;
     if (g.aborted) {
       if (g.abortedBy) winner = colorPlayer(g.abortedBy === "w" ? "b" : "w");
@@ -422,6 +459,121 @@ export class SitAndGo {
     this.audit("match_done", { round: m.round, slot: m.slot, winner, loser, games: m.games.map((x) => x.gameId) });
     this.changed();
     await this.advance();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Système suisse
+  // ═══════════════════════════════════════════════════════════════════════════
+  private totalRounds = 0;
+
+  /** Rondes jouées pour n joueurs : le choix du créateur, borné à n − 1 (sinon des rencontres se répéteraient). */
+  private plannedRounds(n: number): number {
+    return Math.min(this.cfg.swissRounds || defaultSwissRounds(n), Math.max(1, n - 1));
+  }
+
+  private async startSwiss(players: Entry[]): Promise<void> {
+    this.totalRounds = this.plannedRounds(players.length);
+    this.rounds = [];
+    this.audit("start", { system: "swiss", rounds: this.totalRounds, seeds: players.map((p) => ({ userId: p.userId, seed: p.seed, rating: p.rating })) });
+    try {
+      await this.persistNow();
+    } catch (e) {
+      console.error(`[sng ${this.id}] persistance impossible au démarrage, annulation`, e);
+      return this.cancel("persistence_error");
+    }
+    this.emit();
+    await this.advanceSwiss();
+  }
+
+  private swissResults(): { results: SwissResult[]; byes: string[] } {
+    const results: SwissResult[] = [];
+    const byes: string[] = [];
+    for (const m of this.rounds.flat()) {
+      if (m.result === "bye") byes.push(m.p1!);
+      else if (m.status === "done" && m.result) results.push({ white: m.p1!, black: m.p2!, w2: m.result === "1-0" ? 2 : m.result === "0-1" ? 0 : 1 });
+    }
+    return { results, byes };
+  }
+
+  private swissTable(): SwissStanding[] {
+    const { results, byes } = this.swissResults();
+    const players = [...this.entries.values()].filter((e) => e.seed !== null).map((e) => ({ id: e.userId, seed: e.seed! }));
+    return swissStandings(players, results, byes);
+  }
+
+  /** échéance de la ronde suivante (pause entre les rondes), pour l'affichage */
+  private nextRoundAt: number | null = null;
+
+  /** Ronde terminée : on apparie la suivante (après la pause), ou on clôture après la dernière. */
+  private async advanceSwiss(paused = false): Promise<void> {
+    if (this.status !== "running") return;
+    const last = this.rounds.at(-1);
+    if (last && !last.every((m) => m.status === "done")) return;
+    if (this.rounds.length >= this.totalRounds) {
+      if (!this.finishing) { this.finishing = true; await this.finishSwiss(); }
+      return;
+    }
+    const pause = this.ports.swissPauseMs ?? 0;
+    if (last && pause > 0 && !paused) {
+      if (this.nextRoundAt !== null) return; // déjà programmée
+      this.nextRoundAt = this.now() + pause;
+      this.changed();
+      setTimeout(() => { void this.advanceSwiss(true).catch((e) => console.error(`[sng ${this.id}] ronde suivante`, e)); }, pause).unref?.();
+      return;
+    }
+    this.nextRoundAt = null;
+    const table = new Map(this.swissTable().map((r) => [r.id, r]));
+    const live = [...this.entries.values()].filter((e) => e.seed !== null);
+    const pr = pairRound(live.map((e) => ({
+      id: e.userId, seed: e.seed!, pts2: table.get(e.userId)?.pts2 ?? 0, opponents: e.opponents, colors: e.colors, hadBye: e.hadBye,
+    })), this.random);
+    const round = this.rounds.length + 1;
+    const matches: Match[] = pr.boards.map(([w, b], slot) => ({ round, slot, p1: w, p2: b, winner: null, status: "pending", games: [], result: null }));
+    for (const [w, b] of pr.boards) {
+      const ew = this.entries.get(w)!, eb = this.entries.get(b)!;
+      ew.opponents.push(b); eb.opponents.push(w); ew.colors.push("w"); eb.colors.push("b");
+    }
+    if (pr.bye) {
+      const e = this.entries.get(pr.bye)!;
+      e.hadBye = true; e.colors.push("-");
+      matches.push({ round, slot: matches.length, p1: pr.bye, p2: null, winner: pr.bye, status: "done", games: [], result: "bye" });
+    }
+    this.rounds.push(matches);
+    this.audit("pairing", { round, boards: pr.boards, bye: pr.bye });
+    for (const m of matches) if (m.p2) await this.startGame(m, "main");
+    this.changed();
+    // ronde composée d'un seul exempt (impossible au-delà de 2 joueurs) : on enchaîne
+    if (matches.every((m) => m.status === "done")) await this.advanceSwiss();
+  }
+
+  private async finishSwiss(): Promise<void> {
+    const table = this.swissTable();
+    const ranking = table.map((r) => r.id);
+    this.entries.get(ranking[0]!)!.status = "winner";
+    const plan = settleTournament(this.cfg.buyInCents, this.entrants, ranking, this.cfg.payoutBps, this.cfg.rakeBps, this.cfg.sponsorAddedCents);
+    if (plan.potCents > 0) {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await applySettlement(this.ports.ledger, `t-${this.id}`, this.cfg.currency, plan, { tournamentId: this.id, ranking });
+          break;
+        } catch (e) {
+          if (attempt >= 5) throw e;
+          console.error(`[sng ${this.id}] règlement échoué (essai ${attempt})`, e);
+          await new Promise((r) => setTimeout(r, 200 * 2 ** attempt));
+        }
+      }
+    }
+    this.rakeCents = plan.rakeCents;
+    for (const r of table) {
+      const e = this.entries.get(r.id)!;
+      e.finalRank = r.rank;
+      e.payoutCents = plan.payouts[r.id] ?? 0;
+      e.status = r.rank === 1 ? "winner" : "eliminated";
+    }
+    this.status = "finished";
+    this.finishedAt = new Date(this.now()).toISOString();
+    this.audit("finish", { ranking, payouts: plan.payouts, rakeCents: plan.rakeCents });
+    this.changed();
   }
 
   private async finish(final: Match): Promise<void> {
@@ -478,25 +630,35 @@ export class SitAndGo {
   snapshot(): SngSnapshot {
     const field = this.entrants || this.cfg.size; // après le départ : les joueurs réellement engagés
     const rake = this.status === "finished" ? this.rakeCents : computeRake(this.cfg.buyInCents * field, this.cfg.rakeBps);
+    const swiss = this.cfg.system === "swiss";
+    const table = swiss && this.rounds.length ? new Map(this.swissTable().map((r) => [r.id, r])) : null;
     return {
       id: this.id, formatId: this.cfg.formatId, createdBy: this.cfg.createdBy, name: this.cfg.name,
       size: this.cfg.size, timeControl: this.cfg.timeControl,
       currency: this.cfg.currency, buyInCents: this.cfg.buyInCents, sponsorAddedCents: this.cfg.sponsorAddedCents,
       rakeBps: this.cfg.rakeBps, payoutBps: [...this.cfg.payoutBps], status: this.status,
+      ...(swiss && this.nextRoundAt ? { nextRoundAt: new Date(this.nextRoundAt).toISOString() } : {}),
+      ...(swiss ? { system: "swiss" as const, totalRounds: this.totalRounds || this.plannedRounds(this.cfg.size) } : {}),
       players: [...this.entries.values()]
         .filter((e) => e.status !== "unregistered")
         .sort((a, b) => (a.seed ?? 999) - (b.seed ?? 999) || a.registeredSeq - b.registeredSeq)
         .map((e) => ({
           userId: e.userId, rating: e.rating, seed: e.seed, status: e.status,
           eliminatedRound: e.eliminatedRound, finalRank: e.finalRank, payoutCents: e.payoutCents,
+          ...(swiss && e.seed !== null ? {
+            points: (table?.get(e.userId)?.pts2 ?? 0) / 2,
+            buchholz: (table?.get(e.userId)?.buchholz2 ?? 0) / 2,
+            sonnebornBerger: (table?.get(e.userId)?.sb4 ?? 0) / 4,
+          } : {}),
         })),
       rounds: this.rounds.map((r) => r.map((m): SngMatchView => ({
         round: m.round, slot: m.slot, p1: m.p1, p2: m.p2, winner: m.winner, status: m.status,
+        ...(swiss ? { result: m.result ?? null } : {}),
         games: m.games.filter((g) => g.gameId).map((g): SngGameView => ({
           gameId: g.gameId!, white: g.white, black: g.black, kind: g.kind, result: g.result, termination: g.termination,
         })),
       }))),
-      currentRound: this.rounds.findIndex((r) => r.some((m) => m.status !== "done")) + 1,
+      currentRound: swiss ? this.rounds.length : this.rounds.findIndex((r) => r.some((m) => m.status !== "done")) + 1,
       prizePoolCents: this.cfg.buyInCents * field - rake + this.cfg.sponsorAddedCents,
       rakeCents: this.status === "finished" ? this.rakeCents : 0,
       cancelReason: this.cancelReason,

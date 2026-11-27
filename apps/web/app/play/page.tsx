@@ -199,7 +199,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
   const plyLabel = (p: number) => (p === 0 ? "position de départ" : `${Math.ceil(p / 2)}${p % 2 === 1 ? "." : "…"} ${steps[p]?.san ?? ""}`);
   const status = !playing ? null
     : browsing ? `Vous regardez ${plyLabel(browse!)} — la partie continue. ⏭, → ou un clic sur l'échiquier pour revenir.`
-    : view.server && view.server.ply < 2 ? `${tournamentIntro(view.start?.tournament?.kind, view.start?.tournament?.round)}Jouez votre premier coup dans les ${Math.round((view.start?.firstMoveMs ?? 20_000) / 1000)} s, sinon ${tournamentGame ? "vous perdez ce match du tournoi" : "la partie est annulée"}.`
+    : view.server && view.server.ply < 2 ? `${tournamentIntro(view.start?.tournament?.kind, view.start?.tournament?.round, !!view.start?.tournament?.swiss)}Jouez votre premier coup dans les ${Math.round((view.start?.firstMoveMs ?? 20_000) / 1000)} s, sinon ${tournamentGame ? (view.start?.tournament?.swiss ? "vous perdez cette partie du tournoi" : "vous perdez ce match du tournoi") : "la partie est annulée"}.`
     : isMyTurn(view) ? "À vous de jouer."
     : view.premoves.length ? `${view.premoves.length} pré-move${view.premoves.length > 1 ? "s" : ""} en file · clic droit ou Échap pour annuler`
     : "L'adversaire réfléchit…";

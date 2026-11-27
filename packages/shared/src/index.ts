@@ -80,7 +80,7 @@ export interface GameStartEvent {
   stake: Stake;
   fen: string;
   /** partie de tournoi : pas de revanche, le tableau décide de la suite */
-  tournament?: { tournamentId: string; round: number; kind: "main" | "rematch" | "armageddon" } | null;
+  tournament?: { tournamentId: string; round: number; kind: "main" | "rematch" | "armageddon"; swiss?: boolean } | null;
   /** délai pour jouer son premier coup (ms) */
   firstMoveMs?: number;
 }
@@ -155,6 +155,10 @@ export const SNG_MIN_SIZE = 3;
 export const SNG_MAX_SIZE = 128;
 export type SngStatus = "registering" | "running" | "finished" | "cancelled";
 export type SngGameKind = "main" | "rematch" | "armageddon";
+/** élimination directe (KO) ou système suisse (tout le monde joue toutes les rondes) */
+export type SngSystem = "ko" | "swiss";
+/** rondes d'un suisse : de 1 à 15 */
+export const SWISS_MAX_ROUNDS = 15;
 
 /** Format de table proposé dans le lobby (une table ouverte par format, recréée dès qu'elle démarre). */
 export interface SngFormat {
@@ -183,6 +187,8 @@ export interface SngMatchView {
   winner: string | null;
   status: "pending" | "playing" | "done";
   games: SngGameView[];
+  /** suisse : p1 a les Blancs ; résultat de l'échiquier (« bye » = exempt, 1 point) */
+  result?: GameResult | "bye" | null;
 }
 
 export interface SngPlayerView {
@@ -193,6 +199,10 @@ export interface SngPlayerView {
   eliminatedRound: number | null;
   finalRank: number | null;
   payoutCents: Cents;
+  /** suisse : points (1 par victoire, ½ par nulle, 1 pour un exempt) et départages */
+  points?: number;
+  buchholz?: number;
+  sonnebornBerger?: number;
 }
 
 export interface SngSnapshot {
@@ -209,6 +219,12 @@ export interface SngSnapshot {
   sponsorAddedCents: Cents;
   rakeBps: number;
   payoutBps: number[];
+  /** absent = « ko » */
+  system?: SngSystem;
+  /** suisse : nombre de rondes prévues (fixé au départ selon les inscrits) */
+  totalRounds?: number;
+  /** suisse : départ de la prochaine ronde (pause entre les rondes) */
+  nextRoundAt?: string;
   status: SngStatus;
   players: SngPlayerView[];
   rounds: SngMatchView[][];
@@ -228,6 +244,10 @@ export interface SngCreatePayload {
   timeControl: TimeControlId;
   buyInCents: Cents;
   name?: string;
+  /** « ko » par défaut */
+  system?: SngSystem;
+  /** suisse : nombre de rondes souhaité (sinon calculé selon le nombre d'inscrits) */
+  rounds?: number;
 }
 
 /** Partie terminée, telle qu'affichée dans l'historique d'un joueur. */
