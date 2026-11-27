@@ -186,6 +186,24 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect(await store.load("pas-un-uuid")).toBeNull();
   });
 
+  it("sans la migration 016 (colonne snapshot absente) : les tournois s'enregistrent comme avant", async () => {
+    const { PgTournamentStore } = await import("../../src/tournaments/TournamentStore.js");
+    await db.pool.query("ALTER TABLE tournaments RENAME COLUMN snapshot TO snapshot_off");
+    try {
+      const store = new PgTournamentStore(db.pool);
+      const s = { id: "00000000-0000-4000-8000-0000000000cc", formatId: "x", size: 4, timeControl: "blitz_3_0", currency: "PLAY", buyInCents: 0, sponsorAddedCents: 0,
+        rakeBps: 1000, payoutBps: [6500, 3500], status: "registering", players: [], rounds: [], currentRound: 0, createdAt: new Date().toISOString(),
+        startedAt: null, finishedAt: null, cancelReason: null, potCents: 0, rakeCents: 0, prizePoolCents: 0 } as unknown as import("@chessarena/shared").SngSnapshot;
+      await store.save(s);
+      expect((await db.pool.query("SELECT status FROM tournaments WHERE id = $1", [s.id])).rows[0]).toEqual({ status: "registering" });
+      expect(await store.load(s.id)).toBeNull();
+      expect(await store.loadOpenCustom()).toEqual([]);
+      expect(await store.listFor("x", 5)).toEqual([]);
+    } finally {
+      await db.pool.query("ALTER TABLE tournaments RENAME COLUMN snapshot_off TO snapshot");
+    }
+  });
+
   it("profil (casse indifférente) et classement : rangs, exclusion des comptes suspendus, place du joueur", async () => {
     for (const u of ["Lb_Top", "lb_mid", "lb_low", "lb_ban"]) await repo.ensureUser(u);
     await db.pool.query("UPDATE users SET display_flag = 'FR' WHERE id = 'Lb_Top'");

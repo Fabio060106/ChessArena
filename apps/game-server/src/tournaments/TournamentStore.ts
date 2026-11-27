@@ -33,7 +33,25 @@ export function historyItem(s: SngSnapshot, userId: string): TournamentHistoryIt
 export class PgTournamentStore implements TournamentStore {
   constructor(private readonly pool: pg.Pool) {}
 
+  /**
+   * La colonne `snapshot` (migration 016) existe-t-elle ? Si le serveur démarre sans avoir appliqué la migration
+   * (MIGRATE_ON_START absent), les tournois fonctionnent comme avant : enregistrement sans instantané,
+   * pas de page de tournoi terminé, pas de reprise après redémarrage.
+   */
+  private snapshotColumn: Promise<boolean> | null = null;
+  private hasSnapshot(): Promise<boolean> {
+    this.snapshotColumn ??= this.pool
+      .query("SELECT 1 FROM information_schema.columns WHERE table_name = 'tournaments' AND column_name = 'snapshot'")
+      .then((r) => {
+        if (!r.rowCount) console.warn("[tournois] colonne snapshot absente (migration 016 non appliquée) : pages de tournoi terminé et reprise désactivées");
+        return (r.rowCount ?? 0) > 0;
+      })
+      .catch((e) => { this.snapshotColumn = null; throw e; });
+    return this.snapshotColumn;
+  }
+
   async save(s: SngSnapshot): Promise<void> {
+    const snap = await this.hasSnapshot();
     await withTx(this.pool, async (c) => {
       const users = s.players.map((p) => p.userId);
       if (users.length) {
@@ -44,13 +62,13 @@ export class PgTournamentStore implements TournamentStore {
         : null;
       await c.query(
         `INSERT INTO tournaments (id, format, size, time_control, currency, buy_in_cents, sponsor_added_cents, rake_bps,
-                                  payout_structure_bps, status, cancel_reason, ranking, created_at, started_at, finished_at, snapshot)
-         VALUES ($1,$15,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$16)
-         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, cancel_reason = EXCLUDED.cancel_reason, snapshot = EXCLUDED.snapshot,
+                                  payout_structure_bps, status, cancel_reason, ranking, created_at, started_at, finished_at${snap ? ", snapshot" : ""})
+         VALUES ($1,$15,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14${snap ? ",$16" : ""})
+         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, cancel_reason = EXCLUDED.cancel_reason,${snap ? " snapshot = EXCLUDED.snapshot," : ""}
            ranking = EXCLUDED.ranking, sponsor_added_cents = EXCLUDED.sponsor_added_cents,
            started_at = EXCLUDED.started_at, finished_at = EXCLUDED.finished_at`,
         [s.id, s.size, s.timeControl, s.currency, s.buyInCents, s.sponsorAddedCents, s.rakeBps, s.payoutBps,
-          s.status, s.cancelReason, ranking, s.createdAt, s.startedAt, s.finishedAt, s.system === "swiss" ? "swiss" : "sit_and_go", JSON.stringify(s)],
+          s.status, s.cancelReason, ranking, s.createdAt, s.startedAt, s.finishedAt, s.system === "swiss" ? "swiss" : "sit_and_go", ...(snap ? [JSON.stringify(s)] : [])],
       );
       for (const p of s.players) {
         await c.query(
@@ -98,6 +116,7 @@ export class PgTournamentStore implements TournamentStore {
   }
 
   async loadOpenCustom(): Promise<SngSnapshot[]> {
+    if (!(await this.hasSnapshot())) return [];
     const r = await this.pool.query<{ snapshot: SngSnapshot }>(
       `SELECT snapshot FROM tournaments WHERE status = 'registering' AND snapshot IS NOT NULL
           AND snapshot->>'createdBy' IS NOT NULL AND snapshot->>'status' = 'registering'`);
@@ -105,7 +124,7 @@ export class PgTournamentStore implements TournamentStore {
   }
 
   async load(id: string): Promise<SngSnapshot | null> {
-    if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+    if (!/^[0-9a-f-]{36}$/i.test(id) || !(await this.hasSnapshot())) return null;
     const r = await this.pool.query<{ snapshot: SngSnapshot | null; status: SngSnapshot["status"]; cancel_reason: string | null }>(
       "SELECT snapshot, status, cancel_reason FROM tournaments WHERE id = $1", [id]);
     const row = r.rows[0];
@@ -115,6 +134,7 @@ export class PgTournamentStore implements TournamentStore {
   }
 
   async listFor(userId: string, limit: number): Promise<TournamentHistoryItem[]> {
+    if (!(await this.hasSnapshot())) return [];
     const r = await this.pool.query<{ snapshot: SngSnapshot; status: SngSnapshot["status"]; cancel_reason: string | null }>(
       `SELECT t.snapshot, t.status, t.cancel_reason FROM tournaments t
          JOIN tournament_entries e ON e.tournament_id = t.id
