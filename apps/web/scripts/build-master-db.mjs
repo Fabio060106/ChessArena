@@ -1,8 +1,10 @@
 // Prépare la base de parties de maîtres à partir d'un ou plusieurs fichiers PGN (export ChessBase, TWIC, Lichess Elite…).
-// Usage : npx tsx scripts/build-master-db.mjs fichier.pgn [autre.pgn…] [--min-elo 2200] [--max-ply 24] [--min-games 5] [--models 6] [--out public/master] [--source "texte"]
+// Usage : npm run master-db -- fichier.pgn|.zip|.gz|.xz [autres…] [--min-elo 2200] [--max-ply 24] [--min-games 5] [--models 6] [--out public/master] [--source "texte"]
 // Produit public/master/meta.json, s/<00..ff>.json (statistiques par position) et models/<répertoire>.json (parties modèles).
 // Seuls les coups, joueurs, Elo, année, tournoi et résultat sont lus : les commentaires et variantes des fichiers sont ignorés.
-import { createReadStream, mkdirSync, openSync, readSync, closeSync, rmSync, writeFileSync, statSync } from "node:fs";
+import { createReadStream, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, closeSync, rmSync, writeFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 import { dirname, join } from "node:path";
 import { Chess } from "chess.js";
@@ -19,8 +21,23 @@ const minGames = Number(opt("--min-games", "5"));
 const models = Number(opt("--models", "6"));
 const out = opt("--out", new URL("../public/master", import.meta.url).pathname);
 const source = opt("--source", "Base de parties de maîtres");
-const files = args.filter((a) => !a.startsWith("--"));
-if (!files.length) { console.error("Usage : npx tsx scripts/build-master-db.mjs fichier.pgn [--min-elo 2200] [--max-ply 24] [--min-games 5]"); process.exit(1); }
+const inputs = args.filter((a) => !a.startsWith("--"));
+// archives : .zip (tous les .pgn qu'elle contient), .gz, .xz → fichiers PGN temporaires
+const tmp = mkdtempSync(join(tmpdir(), "master-"));
+const files = [];
+for (const f of inputs) {
+  if (/\.zip$/i.test(f)) {
+    execFileSync("unzip", ["-qq", "-o", f, "-d", tmp]);
+    const walk = (d) => { for (const e of readdirSync(d, { withFileTypes: true })) { const p = join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.pgn$/i.test(e.name)) files.push(p); } };
+    walk(tmp);
+  } else if (/\.(gz|xz)$/i.test(f)) {
+    const out = join(tmp, `${files.length}.pgn`);
+    execFileSync("sh", ["-c", `${/\.gz$/i.test(f) ? "gzip" : "xz"} -dc "$1" > "$2"`, "sh", f, out]);
+    files.push(out);
+  } else files.push(f);
+}
+if (inputs.length && !files.length) { console.error("Aucun fichier .pgn trouvé (export ChessBase : Fichier → Exporter → PGN)."); process.exit(1); }
+if (!inputs.length) { console.error("Usage : npx tsx scripts/build-master-db.mjs fichier.pgn [--min-elo 2200] [--max-ply 24] [--min-games 5]"); process.exit(1); }
 
 // cibles des parties modèles : la fin de chaque ligne de répertoire, et quelques coups avant (si la fin exacte est rare)
 const targets = [];
@@ -66,6 +83,7 @@ for (const f of files) {
 }
 process.stdout.write("\n");
 
+rmSync(tmp, { recursive: true, force: true });
 const result = b.finish(source);
 rmSync(out, { recursive: true, force: true });
 let total = 0;
