@@ -161,6 +161,31 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     await expect(db.pool.query("UPDATE tournaments SET size = 2 WHERE id = $1", [t.id])).rejects.toThrow();
   });
 
+  it("suisse en base : instantané complet relu (page du tournoi), format « swiss », historique des joueurs", async () => {
+    const { PgTournamentStore } = await import("../../src/tournaments/TournamentStore.js");
+    const { SitAndGo } = await import("../../src/tournaments/SitAndGo.js");
+    const { InMemoryLedger } = await import("../../src/settlement/ledger.js");
+    const store = new PgTournamentStore(db.pool);
+    const started: string[] = [];
+    const t = new SitAndGo(
+      { id: "00000000-0000-4000-8000-0000000000bb", formatId: "custom:y", size: 8, timeControl: "blitz_3_0", currency: "PLAY", buyInCents: 0, rakeBps: 1000, payoutBps: [6500, 3500], createdBy: "sw-a", name: "Club", system: "swiss", swissRounds: 3 },
+      { ledger: new InMemoryLedger(), startGame: async (r) => { started.push(r.gameId); return r.gameId; }, persist: (s) => store.save(s), emit: () => {} },
+    );
+    for (const u of ["sw-a", "sw-b", "sw-c"]) { await repo.ensureUser(u); await t.register(u, 1500); }
+    await t.startNow();
+    await t.flush();
+    expect((await db.pool.query("SELECT format FROM tournaments WHERE id = $1", [t.id])).rows[0]).toEqual({ format: "swiss" });
+    const back = (await store.load(t.id))!;
+    expect(back).toMatchObject({ id: t.id, system: "swiss", totalRounds: 2, status: "running", name: "Club" });
+    expect(back.rounds[0]!.some((m) => m.result === "bye")).toBe(true);
+    const hist = await store.listFor("sw-b", 10);
+    expect(hist[0]).toMatchObject({ id: t.id, system: "swiss", status: "running", players: 3, name: "Club" });
+    // arrêt du serveur : le tournoi est annulé en base, la page le dit
+    await store.cancelInterrupted("redémarrage");
+    expect(await store.load(t.id)).toMatchObject({ status: "cancelled", cancelReason: "redémarrage" });
+    expect(await store.load("pas-un-uuid")).toBeNull();
+  });
+
   it("profil (casse indifférente) et classement : rangs, exclusion des comptes suspendus, place du joueur", async () => {
     for (const u of ["Lb_Top", "lb_mid", "lb_low", "lb_ban"]) await repo.ensureUser(u);
     await db.pool.query("UPDATE users SET display_flag = 'FR' WHERE id = 'Lb_Top'");

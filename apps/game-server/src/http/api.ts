@@ -18,6 +18,8 @@ import type { GeoFilter, KillSwitch } from "../net/geoFilter.js";
 import { ExportError, type RegulatoryExporter } from "../audit/regulatoryExport.js";
 import { TokenBucket } from "../net/rateLimiter.js";
 import { AccountError, type AccountService } from "../auth/accounts.js";
+import type { TournamentStore } from "../tournaments/TournamentStore.js";
+import type { SngSnapshot } from "@chessarena/shared";
 
 /** Audience du jeton de service émis par le serveur web pour les routes /auth/* (jamais par un navigateur). */
 export const AUTH_SERVICE_AUDIENCE = "chessarena-auth-service";
@@ -67,6 +69,8 @@ export interface ApiDeps {
   repo?: GameRepository | null;
   /** comptes joueurs (pseudo + mot de passe) */
   accounts?: AccountService | null;
+  /** tournois : instantané en direct (en mémoire) ou enregistré, historique d'un joueur */
+  tournaments?: { live(id: string): SngSnapshot | null; store: TournamentStore };
   /** partie en cours d'un joueur (profil : bouton « Regarder ») */
   liveGameOf?: (userId: string) => string | null;
   /** modération du chat : privés de chat (mis à jour à chaud) */
@@ -458,6 +462,25 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       const g = await need(d.repo).getGame(claims.sub, gm[1]!);
       if (!g) throw new HttpError(404, "NOT_FOUND");
       send(200, g);
+      return true;
+    }
+
+    // ─── Tournois : page d'un tournoi (direct ou terminé), historique d'un joueur ──────
+    const tm = url.pathname.match(/^\/account\/tournaments\/([0-9a-f-]{36})$/i);
+    if (tm && req.method === "GET") {
+      const t = need(d.tournaments);
+      const snap = t.live(tm[1]!) ?? await t.store.load(tm[1]!);
+      if (!snap) throw new HttpError(404, "NOT_FOUND");
+      send(200, snap);
+      return true;
+    }
+    const ptm = url.pathname.match(/^\/account\/players\/([^/]{1,200})\/tournaments$/);
+    if (ptm && req.method === "GET") {
+      let pseudo: string;
+      try { pseudo = decodeURIComponent(ptm[1]!); } catch { throw new HttpError(400, "BAD_PSEUDO"); }
+      const p = await need(d.repo).getProfile(pseudo);
+      if (!p) throw new HttpError(404, "NOT_FOUND");
+      send(200, { tournaments: await need(d.tournaments).store.listFor(p.userId, 30) });
       return true;
     }
 

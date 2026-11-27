@@ -182,7 +182,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
-      void handleApi(req, res, { imports, relays, reviews, parseRelaySource, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted, memoryReports,
+      void handleApi(req, res, { imports, relays, reviews, parseRelaySource, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted,
+        tournaments: { live: (id) => tournaments.get(id)?.snapshot() ?? null, store }, memoryReports,
       fairplayMem, isOnline: (u) => (io.of("/").adapter.rooms.get(userRoom(u))?.size ?? 0) > 0, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
       return;
     }
@@ -684,6 +685,21 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       } catch (e) {
         reply(customError(e));
       }
+    }));
+
+    // suivre un tournoi sans y jouer (page du tournoi : club, spectateurs)
+    socket.on("sng:watch", guard(socket, (raw: unknown, ack: unknown) => {
+      const reply = sngReply(ack);
+      const tid = (raw as { tournamentId?: unknown } | null)?.tournamentId;
+      const t = typeof tid === "string" ? tournaments.get(tid) : undefined;
+      if (!t) return reply({ ok: false, code: "UNKNOWN_TOURNAMENT" });
+      void socket.join(tournamentRoom(t.id));
+      reply({ ok: true, snapshot: t.snapshot() });
+    }));
+    socket.on("sng:unwatch", guard(socket, (raw: unknown) => {
+      const tid = (raw as { tournamentId?: unknown } | null)?.tournamentId;
+      // un joueur du tournoi garde ses mises à jour
+      if (typeof tid === "string" && !tournaments.get(tid)?.hasPlayer(user.userId)) void socket.leave(tournamentRoom(tid));
     }));
 
     socket.on("sng:get", guard(socket, (raw: unknown, ack: unknown) => {

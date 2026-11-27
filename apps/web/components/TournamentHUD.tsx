@@ -47,6 +47,8 @@ interface Props {
   onStart: (tournamentId: string) => void;
   /** tournoi reçu par lien d'invitation, pas encore rejoint */
   invite: SngSnapshot | null;
+  /** lien vers la page du tournoi (absent sur la page du tournoi elle-même) */
+  pageLink?: boolean;
 }
 
 /** Lien d'invitation d'un tournoi (page de jeu avec ?t=<id>). */
@@ -82,6 +84,9 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
         </div>
         <StatusChip t={t} registered={registered} />
       </header>
+      {p.pageLink !== false && t.status !== "cancelled" && (
+        <a href={`/tournoi/${t.id}`} className="-mt-1 text-xs text-neon hover:underline">Page du tournoi : classement en direct, à partager à ton club →</a>
+      )}
 
       {waiting && (
         <p role="status" className="rounded-lg border border-win/40 bg-win/10 px-3 py-2 text-sm text-win">

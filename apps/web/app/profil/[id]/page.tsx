@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { GameHistoryItem } from "@chessarena/shared";
+import type { GameHistoryItem, TournamentHistoryItem } from "@chessarena/shared";
 import { useParams } from "next/navigation";
 import type { PlayerProfile } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
@@ -135,6 +135,8 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
         ) : <p className="text-sm text-muted">Pas encore de partie terminée.</p>}
       </section>
 
+      <Tournaments userId={p.userId} />
+
       <section className="panel p-4">
         <div className="mb-2 flex items-baseline justify-between gap-2">
           <h2 className="text-sm font-semibold">Parties <span className="font-normal text-muted">({games.length} affichée{games.length > 1 ? "s" : ""} sur {t.games})</span></h2>
@@ -172,5 +174,42 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
         )}
       </section>
     </>
+  );
+}
+
+const fmtPts = (p: number) => (p % 1 ? `${Math.floor(p) || ""}½` : String(p));
+const STATUS: Record<TournamentHistoryItem["status"], string> = { registering: "inscriptions", running: "en cours", finished: "terminé", cancelled: "annulé" };
+
+/** Tournois du joueur : place, points (suisse), gain ; lien vers la page du tournoi. */
+function Tournaments({ userId }: { userId: string }) {
+  const [list, setList] = useState<TournamentHistoryItem[] | null>(null);
+  useEffect(() => {
+    fetch(`/api/players/${encodeURIComponent(userId)}/tournaments`, { cache: "no-store" })
+      .then(async (r) => setList(r.ok ? ((await r.json()) as { tournaments: TournamentHistoryItem[] }).tournaments : []))
+      .catch(() => setList([]));
+  }, [userId]);
+  if (!list?.length) return null;
+  return (
+    <section className="panel p-4" aria-label="Tournois">
+      <h2 className="mb-2 text-sm font-semibold">Tournois <span className="font-normal text-muted">({list.length})</span></h2>
+      <ul className="flex flex-col divide-y divide-line">
+        {list.map((x) => (
+          <li key={x.id}>
+            <a href={`/tournoi/${x.id}`} className="flex items-center gap-3 py-2 text-sm hover:bg-surface-2/50">
+              <span className={`tabular w-12 shrink-0 rounded-md px-1.5 py-1 text-center text-xs font-semibold ${x.rank === 1 ? "bg-gold/15 text-gold" : "bg-surface-2"}`}>
+                {x.rank === 1 ? "🏆 1er" : x.rank ? `${x.rank}e` : "—"}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold">{x.name ?? (x.createdBy ? `Tournoi de ${x.createdBy}` : "Sit & Go")}</span>
+                <span className="block text-xs text-muted">
+                  {x.system === "swiss" ? "Suisse" : "Élimination directe"} · {x.players} joueurs · {TC_LABEL[x.timeControl]} · {STATUS[x.status]} · {relativeDate(x.finishedAt ?? x.createdAt)}
+                </span>
+              </span>
+              {x.points !== null && x.status !== "cancelled" && <span className="tabular shrink-0 text-xs font-semibold">{fmtPts(x.points)} pt{x.points > 1 ? "s" : ""}</span>}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

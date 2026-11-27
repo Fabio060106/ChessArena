@@ -256,7 +256,7 @@ describe("partie complète", () => {
 });
 
 describe("tournois créés par les joueurs, historique, HUD", () => {
-  const sng = <E extends "sng:create" | "sng:join" | "sng:get" | "sng:start">(c: Client, ev: E, p: Parameters<ClientToServerEvents[E]>[0]) =>
+  const sng = <E extends "sng:create" | "sng:join" | "sng:get" | "sng:start" | "sng:watch">(c: Client, ev: E, p: Parameters<ClientToServerEvents[E]>[0]) =>
     new Promise<SngAck>((res) => (c.emit as (e: string, p: unknown, cb: (r: SngAck) => void) => void)(ev, p, res));
 
   it("créer un tournoi gratuit à 4, le rejoindre par son id ; il démarre quand il est complet", async () => {
@@ -292,6 +292,33 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     const after = await new Promise<SngSnapshot[]>((res) => cs[0]!.emit("sng:list", res));
     expect(after.some((x) => x.id === t.id)).toBe(false);
     for (const [i, c] of cs.entries()) c.emit("game:resign", { gameId: games[i]!.gameId });
+  });
+
+  it("suisse : création, spectateur qui suit en direct, page du tournoi (REST) et historique du joueur", async () => {
+    const names = ["sw-ana", "sw-ben", "sw-cleo"];
+    const cs = names.map((n) => client({ token: token({ sub: n }) }));
+    const fan = client({ token: token({ sub: "sw-fan" }) });
+    await Promise.all([...cs, fan].map(connected));
+    const created = await sng(cs[0]!, "sng:create", { size: 8, timeControl: "blitz_3_0", buyInCents: 0, name: "Club", system: "swiss", rounds: 5 });
+    if (!created.ok) throw new Error("création");
+    const t = created.snapshot;
+    expect(t).toMatchObject({ system: "swiss", totalRounds: 5 });
+    expect(await sng(cs[1]!, "sng:create", { size: 8, timeControl: "blitz_3_0", buyInCents: 0, system: "suisse" as "swiss" })).toMatchObject({ ok: false, code: "BAD_PAYLOAD" });
+    // le spectateur suit le tournoi sans y être inscrit
+    const watched = await new Promise<SngAck>((res) => fan.emit("sng:watch", { tournamentId: t.id }, res));
+    expect(watched).toMatchObject({ ok: true, snapshot: { id: t.id } });
+    const update = once(fan, "sng:update", 5000);
+    for (const c of cs.slice(1)) expect((await sng(c, "sng:join", { tournamentId: t.id })).ok).toBe(true);
+    expect(await update).toMatchObject({ id: t.id });
+    const started = await sng(cs[0]!, "sng:start", { tournamentId: t.id });
+    expect(started).toMatchObject({ ok: true, snapshot: { status: "running", totalRounds: 2 } }); // 3 joueurs : 2 rondes au plus
+    // page du tournoi et historique (REST)
+    const get = (path: string) => fetch(`${url}${path}`, { headers: { authorization: `Bearer ${token({ sub: "sw-fan" })}` } });
+    const page = (await (await get(`/account/tournaments/${t.id}`)).json()) as SngSnapshot;
+    expect(page).toMatchObject({ id: t.id, system: "swiss", status: "running", name: "Club" });
+    expect(page.rounds[0]!.some((m) => m.result === "bye")).toBe(true);
+    expect((await get("/account/tournaments/00000000-0000-0000-0000-000000000000")).status).toBe(404);
+    for (const c of cs) c.emit("sng:unregister", { tournamentId: t.id }, () => {});
   });
 
   it("le créateur qui quitte son tournoi vide l'annule", async () => {

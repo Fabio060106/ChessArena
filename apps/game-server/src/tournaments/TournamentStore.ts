@@ -1,5 +1,5 @@
 import type pg from "pg";
-import type { SngSnapshot } from "@chessarena/shared";
+import type { SngSnapshot, TournamentHistoryItem } from "@chessarena/shared";
 import { withTx } from "../db/tx.js";
 
 /**
@@ -11,6 +11,21 @@ export interface TournamentStore {
   save(s: SngSnapshot): Promise<void>;
   /** Démarrage serveur : tournois interrompus par un arrêt → `cancelled`. Retourne leurs ids. */
   cancelInterrupted(reason: string): Promise<string[]>;
+  /** Dernier instantané enregistré (null si inconnu). */
+  load(id: string): Promise<SngSnapshot | null>;
+  /** Tournois d'un joueur, les plus récents d'abord (inscrits, joués, annulés ; pas les désinscriptions). */
+  listFor(userId: string, limit: number): Promise<TournamentHistoryItem[]>;
+}
+
+/** Ligne d'historique tirée d'un instantané. */
+export function historyItem(s: SngSnapshot, userId: string): TournamentHistoryItem {
+  const me = s.players.find((p) => p.userId === userId);
+  return {
+    id: s.id, name: s.name ?? null, createdBy: s.createdBy ?? null, system: s.system ?? "ko", timeControl: s.timeControl, status: s.status,
+    players: s.players.filter((p) => p.seed !== null).length || s.players.filter((p) => p.status !== "unregistered" && p.status !== "refunded").length,
+    rank: me?.finalRank ?? null, points: me?.points ?? null, payoutCents: me?.payoutCents ?? 0, currency: s.currency,
+    createdAt: s.createdAt, finishedAt: s.finishedAt,
+  };
 }
 
 export class PgTournamentStore implements TournamentStore {
@@ -27,13 +42,13 @@ export class PgTournamentStore implements TournamentStore {
         : null;
       await c.query(
         `INSERT INTO tournaments (id, format, size, time_control, currency, buy_in_cents, sponsor_added_cents, rake_bps,
-                                  payout_structure_bps, status, cancel_reason, ranking, created_at, started_at, finished_at)
-         VALUES ($1,$15,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, cancel_reason = EXCLUDED.cancel_reason,
+                                  payout_structure_bps, status, cancel_reason, ranking, created_at, started_at, finished_at, snapshot)
+         VALUES ($1,$15,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$16)
+         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, cancel_reason = EXCLUDED.cancel_reason, snapshot = EXCLUDED.snapshot,
            ranking = EXCLUDED.ranking, sponsor_added_cents = EXCLUDED.sponsor_added_cents,
            started_at = EXCLUDED.started_at, finished_at = EXCLUDED.finished_at`,
         [s.id, s.size, s.timeControl, s.currency, s.buyInCents, s.sponsorAddedCents, s.rakeBps, s.payoutBps,
-          s.status, s.cancelReason, ranking, s.createdAt, s.startedAt, s.finishedAt, s.system === "swiss" ? "swiss" : "sit_and_go"],
+          s.status, s.cancelReason, ranking, s.createdAt, s.startedAt, s.finishedAt, s.system === "swiss" ? "swiss" : "sit_and_go", JSON.stringify(s)],
       );
       for (const p of s.players) {
         await c.query(
@@ -79,6 +94,25 @@ export class PgTournamentStore implements TournamentStore {
     }
     return r.rows.map((x) => x.id);
   }
+
+  async load(id: string): Promise<SngSnapshot | null> {
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+    const r = await this.pool.query<{ snapshot: SngSnapshot | null; status: SngSnapshot["status"]; cancel_reason: string | null }>(
+      "SELECT snapshot, status, cancel_reason FROM tournaments WHERE id = $1", [id]);
+    const row = r.rows[0];
+    if (!row?.snapshot) return null;
+    // un arrêt du serveur a pu annuler le tournoi après le dernier instantané
+    return row.status === row.snapshot.status ? row.snapshot : { ...row.snapshot, status: row.status, cancelReason: row.cancel_reason };
+  }
+
+  async listFor(userId: string, limit: number): Promise<TournamentHistoryItem[]> {
+    const r = await this.pool.query<{ snapshot: SngSnapshot; status: SngSnapshot["status"]; cancel_reason: string | null }>(
+      `SELECT t.snapshot, t.status, t.cancel_reason FROM tournaments t
+         JOIN tournament_entries e ON e.tournament_id = t.id
+        WHERE e.user_id = $1 AND e.status <> 'unregistered' AND t.snapshot IS NOT NULL
+        ORDER BY t.created_at DESC LIMIT $2`, [userId, Math.max(1, Math.min(100, limit))]);
+    return r.rows.map((x) => historyItem(x.status === x.snapshot.status ? x.snapshot : { ...x.snapshot, status: x.status, cancelReason: x.cancel_reason }, userId));
+  }
 }
 
 export class InMemoryTournamentStore implements TournamentStore {
@@ -88,5 +122,13 @@ export class InMemoryTournamentStore implements TournamentStore {
   }
   async cancelInterrupted(): Promise<string[]> {
     return [];
+  }
+  async load(id: string): Promise<SngSnapshot | null> {
+    return this.saved.get(id) ?? null;
+  }
+  async listFor(userId: string, limit: number): Promise<TournamentHistoryItem[]> {
+    return [...this.saved.values()]
+      .filter((s) => s.players.some((p) => p.userId === userId && p.status !== "unregistered"))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit).map((s) => historyItem(s, userId));
   }
 }

@@ -238,6 +238,24 @@ export interface SngSnapshot {
   finishedAt: string | null;
 }
 
+/** Un tournoi dans l'historique d'un joueur (profil). */
+export interface TournamentHistoryItem {
+  id: string;
+  name: string | null;
+  createdBy: string | null;
+  system: SngSystem;
+  timeControl: TimeControlId;
+  status: SngStatus;
+  players: number;
+  /** rang final du joueur (null si annulé ou en cours) */
+  rank: number | null;
+  points: number | null;
+  payoutCents: Cents;
+  currency: Currency;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
 /** Création d'un tournoi par un joueur (bêta : jetons PLAY uniquement). */
 export interface SngCreatePayload {
   size: SngSize;
@@ -583,6 +601,9 @@ export interface ClientToServerEvents {
   "sng:join": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
   /** état d'un tournoi (page d'invitation, avant inscription) */
   "sng:get": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
+  /** suivre un tournoi en direct sans y jouer (page du tournoi) */
+  "sng:watch": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
+  "sng:unwatch": (p: { tournamentId: string }) => void;
   /** le créateur lance son tournoi sans attendre qu'il soit complet (≥ 3 inscrits ; exempts au 1er tour) */
   "sng:start": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
   "chat:send": (p: { gameId: string; text: string }, ack?: (r: ChatAck) => void) => void;
