@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Chess } from "chess.js";
 import { PageHeader } from "../../components/PageHeader";
 import { useRouter } from "next/navigation";
 import type { Color, RepertoireResponse } from "@chessarena/shared";
@@ -11,7 +12,10 @@ import { Engine, ENGINE_NAME, pvToSan, scoreToCp, terminalScore, winPct } from "
 import {
   ACCEPT_LOSS, asDoc, buildTree, emptyDoc, exportPgn, fenKey, isDue, judge, lineLabel, pathsTo, playUci, positionsToAnalyse,
   repertoireMove, review, START, syncCards, turnOf, type Card, type RepertoireDoc, type Tree,
+  drillKey, drillOrder, reviewLine,
 } from "../../lib/repertoire";
+import { coachAt, rankRepertoires, refRepertoire, type RefRepertoire } from "../../lib/coach";
+import { loadOpeningBook, type OpeningBook } from "../../lib/openingBook";
 
 const ANALYSIS_DEPTH = 14;
 const MARK_CLS: Record<string, string> = { "??": "text-danger", "?": "text-[#fb923c]", "?!": "text-gold" };
@@ -29,7 +33,9 @@ export default function RepertoirePage() {
   const [reload, setReload] = useState(0);
   const [doc, setDoc] = useState<RepertoireDoc>(emptyDoc);
   const [color, setColor] = useState<Color>("w");
-  const [mode, setMode] = useState<"tree" | "train">("tree");
+  const [mode, setMode] = useState<"tree" | "train" | "drill">("tree");
+  const [book, setBook] = useState<OpeningBook | null>(null);
+  useEffect(() => { void loadOpeningBook().then(setBook); }, []);
   const [trainKey, setTrainKey] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -72,6 +78,11 @@ export default function RepertoirePage() {
   }), [resp]);
   const tree = trees[color];
   const paths = useMemo(() => ({ w: pathsTo(trees.w), b: pathsTo(trees.b) }), [trees]);
+  // répertoire de référence (théorie) : choisi par le joueur, sinon le plus proche de ses parties
+  const ranked = useMemo(() => ({
+    w: rankRepertoires("w", new Set(trees.w.nodes.keys())),
+    b: rankRepertoires("b", new Set(trees.b.nodes.keys())),
+  }), [trees]);
 
   // ─── Enregistrement (différé) ───────────────────────────────────────────────
   const update = useCallback((f: (d: RepertoireDoc) => RepertoireDoc) => { dirty.current = true; setDoc(f); }, []);
@@ -127,6 +138,10 @@ export default function RepertoirePage() {
     else update((d) => syncCards(trees.b, syncCards(trees.w, d)));
   }, [resp, pending.length, analyse, trees, update]);
 
+  const refId = doc.refs?.[color] ?? ranked[color][0]?.id ?? null;
+  const ref = useMemo(() => (refId ? refRepertoire(refId) : null), [refId]);
+  const drillLines = useMemo(() => (ref ? ref.sections.flatMap((r) => r.lines.map((l) => ({ key: drillKey(r.id, l.name), rep: r.id, name: l.name, moves: l.moves, note: l.note }))) : []), [ref]);
+  const drillsDue = useMemo(() => drillOrder(drillLines, doc).filter((l) => l.status !== "later").length, [drillLines, doc]);
   const cards = useMemo(() => Object.values(doc.cards), [doc.cards]);
   const due = useMemo(() => cards.filter((c) => isDue(c)).sort((a, b) => b.times - a.times), [cards]);
 
@@ -171,7 +186,19 @@ export default function RepertoirePage() {
                   : `Répertoire analysé par ${ENGINE_NAME}`}
                 {saveState === "saving" ? " · enregistrement…" : saveState === "saved" ? " · enregistré" : saveState === "error" ? " · échec de l'enregistrement" : ""}
               </p>
+              <label className="flex w-full items-center gap-2 text-xs text-muted sm:w-auto">
+                Théorie de référence
+                <select value={refId ?? ""} onChange={(e) => update((d) => ({ ...d, refs: { ...(d.refs ?? {}), [color]: e.target.value } }))}
+                  className="min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-sm text-text sm:flex-none">
+                  {ranked[color].map((r) => <option key={r.id} value={r.id}>{r.title}{r.overlap ? ` · ${r.overlap} positions de tes parties` : ""}</option>)}
+                </select>
+              </label>
               <div className="ml-auto flex flex-wrap gap-2">
+                {ref && (
+                  <button type="button" onClick={() => setMode(mode === "drill" ? "tree" : "drill")} className="rounded-lg border border-neon/50 px-3 py-2 text-sm font-semibold text-neon">
+                    {mode === "drill" ? "Retour au répertoire" : `Réviser la théorie${drillsDue ? ` · ${drillsDue}` : ""}`}
+                  </button>
+                )}
                 {!progress && pending.length > 0 && (
                   <button type="button" onClick={() => void analyse()} className="rounded-lg border border-line px-3 py-2 text-sm text-muted hover:text-text">Analyser</button>
                 )}
@@ -191,12 +218,14 @@ export default function RepertoirePage() {
               )}
             </div>
 
-            {mode === "train"
+            {mode === "drill" && ref
+              ? <LineDrill key={ref.id + color} lines={drillLines} color={color} doc={doc} update={update} onDone={() => setMode("tree")} />
+              : mode === "train"
               ? <Training key={trainKey ?? "none"} cardKey={trainKey} doc={doc} due={due} paths={paths} engine={engine} update={update}
                   onNext={(k) => setTrainKey(k)} onDone={() => setMode("tree")} />
-              : tree.games === 0
+              : tree.games === 0 && !ref
                 ? <div className="panel p-4 text-sm text-muted">Pas encore de partie avec les {COLOR_NAME[color]}. <a href="/play" className="text-neon underline">Joue une partie</a> : ton répertoire se construit tout seul.</div>
-                : <TreeView key={color} tree={tree} doc={doc} cards={cards.filter((c) => c.color === color)} paths={paths[color]} onTrain={startTraining} busy={!!progress} />}
+                : <TreeView key={color} tree={tree} doc={doc} cards={cards.filter((c) => c.color === color)} paths={paths[color]} onTrain={startTraining} busy={!!progress} book={book} refRep={ref} />}
           </>
         )}
       </div>
@@ -205,8 +234,9 @@ export default function RepertoirePage() {
 }
 
 // ═══ Navigation dans l'arbre ═════════════════════════════════════════════════
-function TreeView({ tree, doc, cards, paths, onTrain, busy }: {
+function TreeView({ tree, doc, cards, paths, onTrain, busy, book, refRep }: {
   tree: Tree; doc: RepertoireDoc; cards: Card[]; paths: Map<string, string[]>; onTrain: (key: string) => void; busy: boolean;
+  book: OpeningBook | null; refRep: RefRepertoire | null;
 }) {
   const [settings] = useSettings();
   const [line, setLine] = useState<Array<{ uci: string; san: string; fen: string }>>([]);
@@ -234,10 +264,13 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy }: {
   if (rep && !repIsError) arrows.push({ from: rep.uci.slice(0, 2), to: rep.uci.slice(2, 4), color: "#22c55e" });
   if (card && (repIsError || card.played !== rep?.uci)) arrows.push({ from: card.played.slice(0, 2), to: card.played.slice(2, 4), color: "#ef4444" });
   const errors = [...cards].sort((a, b) => Number(isDue(b)) - Number(isDue(a)) || b.times - a.times);
+  const coach = coachAt({ line, color: tree.color, book, ref: refRep, userMoves: node?.moves ?? [] });
+  const [showNotes, setShowNotes] = useState(false);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
-      <section className="mx-auto flex w-full flex-col gap-2" style={{ maxWidth: "min(100%, max(320px, calc(100dvh - 230px)))" }}>
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_440px] lg:items-start">
+      <div className="min-w-0 max-lg:sticky max-lg:top-0 max-lg:z-30 max-lg:-mx-2 max-lg:border-b max-lg:border-line max-lg:bg-ink max-lg:px-2 max-lg:pb-1.5 max-lg:pt-1">
+      <section data-board className="mx-auto flex w-full flex-col gap-1.5 max-w-[min(100%,42dvh)] sm:max-w-[min(100%,50dvh)] lg:max-w-[min(100%,max(320px,calc(100dvh_-_230px)))]">
         <div className="flex flex-wrap items-center gap-1 text-sm">
           <button type="button" onClick={() => setLine([])} className={`rounded px-1.5 py-0.5 ${line.length === 0 ? "bg-neon/15 text-neon" : "text-muted hover:text-text"}`}>Début</button>
           {line.map((s, i) => (
@@ -253,8 +286,11 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy }: {
         <div className="flex gap-1.5">
           <button type="button" className="flex-1 rounded-lg bg-surface-2 px-3 py-2 text-lg text-muted hover:text-text disabled:opacity-30" onClick={() => setLine([])} disabled={!line.length} aria-label="Début">⏮</button>
           <button type="button" className="flex-1 rounded-lg bg-surface-2 px-3 py-2 text-lg text-muted hover:text-text disabled:opacity-30" onClick={() => setLine((l) => l.slice(0, -1))} disabled={!line.length} aria-label="Coup précédent">◀</button>
+          <button type="button" className="flex-1 rounded-lg bg-surface-2 px-3 py-2 text-lg text-muted hover:text-text disabled:opacity-30" disabled={!coach.moves[0]} onClick={() => coach.moves[0] && go((coach.moves.find((m) => m.rep.length) ?? coach.moves[0]).uci)} aria-label="Coup suivant (répertoire)">▶</button>
         </div>
+        {coach.name && <p className="truncate text-center text-xs text-muted">{coach.name}{coach.eco ? ` · ${coach.eco}` : ""}</p>}
       </section>
+      </div>
 
       <aside className="flex flex-col gap-3">
         {card && (
@@ -272,39 +308,64 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy }: {
           </div>
         )}
 
-        <div className="panel p-3">
-          <p className="mb-2 text-[11px] uppercase tracking-wider text-muted">
-            {mine ? "Ton coup ici" : "Les réponses de tes adversaires"} {node ? `· ${node.total} partie${node.total > 1 ? "s" : ""}` : ""}
-          </p>
-          {!node && !rep && <p className="text-sm text-muted">Fin de ton répertoire dans cette ligne.</p>}
-          <ul className="flex flex-col gap-1">
-            {rep?.learned && !node?.moves.some((m) => m.uci === rep.uci) && (
-              <li><button type="button" onClick={() => go(rep.uci)} className="flex w-full items-center gap-2 rounded-lg border border-win/40 bg-win/10 px-2.5 py-2 text-left text-sm">
-                <span className="font-semibold text-win">{rep.san}</span><span className="text-xs text-win">★ appris à l'entraînement</span>
-              </button></li>
-            )}
-            {node?.moves.map((m) => {
-              const j = mine ? judge(fen, m.uci, doc, tree.color) : null;
-              const isRep = rep?.uci === m.uci && !repIsError;
-              const isErr = repIsError && rep?.uci === m.uci;
-              const pct = Math.round((100 * m.points) / m.count);
-              return (
-                <li key={m.uci}>
-                  <button type="button" onClick={() => go(m.uci)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surface-2 ${isRep ? "border border-win/40 bg-win/5" : isErr ? "border border-danger/40 bg-danger/5" : "border border-transparent"}`}>
-                    <span className="w-16 font-semibold">{m.san}{j?.mark && <span className={`ml-0.5 ${MARK_CLS[j.mark]}`}>{j.mark}</span>}</span>
-                    <span className="flex-1 text-xs text-muted">{m.count}× · score {pct} %</span>
-                    <span className="h-1.5 w-16 overflow-hidden rounded bg-danger/40"><span className="block h-full bg-win" style={{ width: `${pct}%` }} /></span>
-                    {isRep && <span className="text-xs text-win">{rep!.learned ? "★" : "répertoire"}</span>}
-                    {isErr && <span className="text-xs text-danger">ton erreur</span>}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          {mine && doc.evals[key]?.bestSan && (
-            <p className="mt-2 text-xs text-muted">{ENGINE_NAME} : {doc.evals[key]!.bestSan} · {(() => { const w = winPct(doc.evals[key]!.cp); return `${Math.round(tree.color === "w" ? w : 100 - w)} % de chances pour toi`; })()}</p>
+        {/* ─── Le coach : ce qu'un GM dirait à côté de l'échiquier ─── */}
+        <div role="region" className="panel flex flex-col gap-2.5 p-3" aria-label="Le coach">
+          {coach.comment.length > 0 && (
+            <div className="border-l-2 border-gold/60 pl-2.5 font-serif text-[14.5px] leading-relaxed">
+              {coach.comment.map((c) => <p key={c}>{c}</p>)}
+            </div>
           )}
+          {line.length === 0 && <p className="text-[13px] text-muted">Parcours l'arbre coup par coup : à chaque position, le coach explique le dernier coup, montre ton répertoire, toutes les sous-lignes de la théorie et ce que tu as joué dans tes parties.</p>}
+          {coach.notes.length > 0 && (
+            <div className="rounded-lg bg-surface-2 p-2.5">
+              <button type="button" onClick={() => setShowNotes((x) => !x)} className="flex w-full items-center justify-between text-left text-xs font-semibold text-neon" aria-expanded={showNotes}>
+                <span>Ton répertoire passe ici : {coach.notes.length} ligne{coach.notes.length > 1 ? "s" : ""}</span><span>{showNotes ? "▲" : "▼"}</span>
+              </button>
+              {(showNotes || coach.notes.length === 1) && (
+                <ul className="mt-1.5 flex flex-col gap-1.5">
+                  {coach.notes.map((n) => <li key={n.line} className="text-[13px]"><b>{n.line}</b>{n.end ? " (fin de la ligne)" : ""} — <span className="text-muted">{n.note}</span></li>)}
+                </ul>
+              )}
+            </div>
+          )}
+          <div>
+            <p className="mb-1.5 text-[11px] uppercase tracking-wider text-muted">{mine ? "Ton coup ici" : "Les réponses possibles de l'adversaire"}{node ? ` · ${node.total} partie${node.total > 1 ? "s" : ""}` : ""}</p>
+            {coach.moves.length === 0 && <p className="text-sm text-muted">Plus de théorie ni de partie ici : place au jeu ! Utilise l'échiquier d'analyse pour explorer.</p>}
+            <ul className="flex flex-col gap-1">
+              {coach.moves.map((m) => {
+                const j = mine && m.games ? judge(fen, m.uci, doc, tree.color) : null;
+                const isErr = repIsError && rep?.uci === m.uci;
+                return (
+                  <li key={m.uci}>
+                    <button type="button" onClick={() => go(m.uci)}
+                      className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surface-2 ${m.rep.length ? "border border-win/50 bg-win/5" : isErr ? "border border-danger/40 bg-danger/5" : "border border-line/60"}`}>
+                      <span className="w-14 shrink-0 font-semibold">{m.san}{j?.mark && <span className={`ml-0.5 ${MARK_CLS[j.mark]}`}>{j.mark}</span>}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap gap-1">
+                          {m.rep.length > 0 && <span className="rounded bg-win/15 px-1.5 text-[11px] font-semibold text-win">★ répertoire</span>}
+                          {m.theory && <span className="rounded bg-gold/10 px-1.5 text-[11px] text-gold">théorie</span>}
+                          {m.games && <span className="rounded bg-surface-2 px-1.5 text-[11px] text-muted">tes parties : {m.games.count}× · {m.games.score} %</span>}
+                          {isErr && <span className="rounded bg-danger/15 px-1.5 text-[11px] text-danger">ton erreur</span>}
+                        </span>
+                        {m.theory && <span className="mt-0.5 block truncate text-xs text-muted" title={m.theory.name}>{m.theory.name.includes(":") ? m.theory.name.split(":").slice(1).join(":").trim() : m.theory.name}</span>}
+                        {m.theory?.idea && <span className="mt-0.5 block text-xs leading-snug text-muted">{m.theory.idea}</span>}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {mine && doc.evals[key]?.bestSan && (
+              <p className="mt-2 text-xs text-muted">{ENGINE_NAME} : {doc.evals[key]!.bestSan} · {(() => { const w = winPct(doc.evals[key]!.cp); return `${Math.round(tree.color === "w" ? w : 100 - w)} % de chances pour toi`; })()}</p>
+            )}
+          </div>
+          {coach.leads.length > 0 && (
+            <div className="rounded-lg border border-neon/30 p-2.5">
+              <p className="mb-1 text-xs font-semibold text-neon">Pistes à creuser</p>
+              <ul className="flex flex-col gap-1 text-[13px]">{coach.leads.map((l) => <li key={l}>→ {l}</li>)}</ul>
+            </div>
+          )}
+          {refRep && <a href={`/repertoire/livre/${refRep.id}`} className="text-xs font-semibold text-neon hover:underline">Le cours complet de ce répertoire (structures, plans, pièges) →</a>}
         </div>
 
         <div className="panel p-3">
@@ -409,14 +470,16 @@ function Training({ cardKey, doc, due, paths, engine, update, onNext, onDone }: 
   const pieceAt = card.best.slice(0, 2);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
-      <section className="mx-auto flex w-full flex-col gap-2" style={{ maxWidth: "min(100%, max(320px, calc(100dvh - 230px)))" }}>
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_440px] lg:items-start">
+      <div className="min-w-0 max-lg:sticky max-lg:top-0 max-lg:z-30 max-lg:-mx-2 max-lg:border-b max-lg:border-line max-lg:bg-ink max-lg:px-2 max-lg:pb-1.5 max-lg:pt-1">
+      <section data-board className="mx-auto flex w-full flex-col gap-1.5 max-w-[min(100%,42dvh)] sm:max-w-[min(100%,50dvh)] lg:max-w-[min(100%,max(320px,calc(100dvh_-_230px)))]">
         <p className="text-sm text-muted">{lineLabel(p)} <span className="font-semibold text-text">{moveNo} ?</span></p>
         <GameBoard fen={fen} serverFen={fen} orientation={card.color} myColor={card.color}
           interactive={state === "ask" || state === "wrong"} myTurn lastMove={last} premoves={[]}
           theme={settings.boardTheme} pieceSet={settings.pieceSet} palette={settings.palette} coordinates={settings.coordinates}
           onMove={(f, t, pr) => onMove(f, t, pr)} onCancelPremoves={() => {}} />
       </section>
+      </div>
 
       <aside className="flex flex-col gap-3">
         <div className="panel p-4">
@@ -452,4 +515,135 @@ function Training({ cardKey, doc, due, paths, engine, update, onNext, onDone }: 
       </aside>
     </div>
   );
+}
+
+// ═══ Révision des lignes de théorie (mémoire, répétition espacée) ═════════════
+type DrillLine = { key: string; rep: string; name: string; moves: string; note: string };
+function LineDrill({ lines, color, doc, update, onDone }: {
+  lines: DrillLine[]; color: Color; doc: RepertoireDoc; update: (f: (d: RepertoireDoc) => RepertoireDoc) => void; onDone: () => void;
+}) {
+  const [settings] = useSettings();
+  const order = useMemo(() => drillOrder(lines, doc), [lines]); // l'ordre est figé pour la séance
+  const [idx, setIdx] = useState(0);
+  const cur = order[idx];
+  const sans = useMemo(() => (cur ? cur.moves.split(" ") : []), [cur]);
+  const steps = useMemo(() => {
+    const out: Array<{ fen: string; uci: string | null; san: string | null }> = [{ fen: START, uci: null, san: null }];
+    let fen = START;
+    for (const s of sans) { const r = playSan(fen, s); if (!r) break; out.push({ fen: r.fen, uci: r.uci, san: s }); fen = r.fen; }
+    return out;
+  }, [sans]);
+  const [phase, setPhase] = useState<"read" | "play" | "end">("read");
+  const [ply, setPly] = useState(0);
+  const [errors, setErrors] = useState(0);
+  const [wrong, setWrong] = useState<string | null>(null);
+  const status = cur ? (doc.drills?.[cur.key] ? "révision" : "nouvelle ligne") : "";
+  // première fois : on lit la ligne ; ensuite on la joue de mémoire
+  useEffect(() => { setPhase(cur && !doc.drills?.[cur.key] ? "read" : "play"); setPly(0); setErrors(0); setWrong(null); }, [idx]); // eslint-disable-line react-hooks/exhaustive-deps
+  // les coups de l'adversaire se jouent tout seuls
+  useEffect(() => {
+    if (phase !== "play" || wrong) return;
+    if (ply >= sans.length) {
+      setPhase("end");
+      update((d) => reviewLine(d, cur!.key, errors === 0));
+      return;
+    }
+    if (ply >= steps.length) return;
+    if (turnOf(steps[ply]!.fen) !== color) { const t = setTimeout(() => setPly((p) => p + 1), 450); return () => clearTimeout(t); }
+  }, [phase, ply, sans.length, steps, color, wrong, errors, update, cur]);
+
+  if (!cur) return <div className="panel p-5 text-center text-sm text-muted">Pas de ligne à réviser. <button type="button" onClick={onDone} className="text-neon underline">Retour</button></div>;
+  // (au changement de ligne, l'ancien numéro de coup peut dépasser la nouvelle ligne pendant un rendu)
+  const at = Math.min(ply, steps.length - 1);
+  const fen = steps[at]!.fen;
+  const expected = at === ply ? steps[ply + 1] : undefined;
+  const onMove = (from: string, to: string) => {
+    if (phase !== "play" || wrong || !expected) return false;
+    if (expected.uci!.slice(0, 4) === from + to) { setPly((p) => p + 1); return false; }
+    setErrors((e) => e + 1);
+    setWrong(expected.san);
+    return false;
+  };
+  const numbered = sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.${s}` : s));
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_440px] lg:items-start">
+      <div className="min-w-0 max-lg:sticky max-lg:top-0 max-lg:z-30 max-lg:-mx-2 max-lg:border-b max-lg:border-line max-lg:bg-ink max-lg:px-2 max-lg:pb-1.5 max-lg:pt-1">
+        <section data-board className="mx-auto flex w-full flex-col gap-1.5 max-w-[min(100%,42dvh)] sm:max-w-[min(100%,50dvh)] lg:max-w-[min(100%,max(320px,calc(100dvh_-_230px)))]">
+          <GameBoard fen={fen} serverFen={fen} orientation={color} myColor={color} interactive={phase === "play" && !wrong && !!expected && turnOf(fen) === color} myTurn
+            lastMove={steps[at]!.uci} premoves={[]} theme={settings.boardTheme} pieceSet={settings.pieceSet} palette={settings.palette} coordinates={settings.coordinates}
+            autoQueen onMove={onMove} onCancelPremoves={() => {}}
+            arrows={wrong && expected ? [{ from: expected.uci!.slice(0, 2), to: expected.uci!.slice(2, 4), color: "#22c55e" }] : []} />
+          {phase === "read" && (
+            <div className="flex gap-1.5">
+              <button type="button" className="flex-1 rounded-lg bg-surface-2 py-1.5 text-muted disabled:opacity-30" disabled={ply === 0} onClick={() => setPly((p) => p - 1)} aria-label="Coup précédent">◀</button>
+              <button type="button" className="flex-1 rounded-lg bg-surface-2 py-1.5 text-muted disabled:opacity-30" disabled={ply >= sans.length} onClick={() => setPly((p) => p + 1)} aria-label="Coup suivant">▶</button>
+            </div>
+          )}
+        </section>
+      </div>
+      <aside className="flex min-w-0 flex-col gap-3" aria-label="Révision de la théorie">
+        <div className="panel p-3">
+          <p className="text-xs text-muted">Ligne {idx + 1} / {order.length} · {status}{cur.status === "due" ? " · à revoir aujourd'hui" : ""}</p>
+          <h2 className="font-display text-base font-bold">{cur.name}</h2>
+          {phase === "read" && (
+            <>
+              <p className="mt-1 text-sm">Lis la ligne et rejoue-la sur l'échiquier (◀ ▶) ; ensuite, tu la joueras de mémoire.</p>
+              <p className="mt-2 flex flex-wrap gap-x-1 text-[13px]">{numbered.map((m, i) => (
+                <button key={i} type="button" onClick={() => setPly(i + 1)} className={`rounded px-0.5 ${ply === i + 1 ? "bg-neon/20 text-neon" : "hover:bg-surface-2"}`}>{m}</button>
+              ))}</p>
+              <p className="mt-2 border-l-2 border-gold/50 pl-2 font-serif text-[14px] leading-relaxed">{cur.note}</p>
+              <button type="button" onClick={() => { setPly(0); setPhase("play"); }} className="neon-btn mt-3 w-full rounded-lg px-3 py-2 text-sm font-semibold">Je l'ai lue : à moi de la jouer</button>
+            </>
+          )}
+          {phase === "play" && (
+            <>
+              <p className="mt-1 text-sm">Joue les coups {color === "w" ? "blancs" : "noirs"} de la ligne ; l'adversaire répond tout seul.</p>
+              <p className="mt-1 text-xs text-muted">Coup {Math.ceil((ply + 1) / 2)} · {errors} erreur{errors > 1 ? "s" : ""}</p>
+              <p className="mt-1 flex flex-wrap gap-x-1 text-[13px]">{numbered.slice(0, ply).map((m, i) => <span key={i}>{m}</span>)}<span className="text-neon">…</span></p>
+              {!wrong && expected && turnOf(fen) === color && (
+                <button type="button" onClick={() => { setErrors((e) => e + 1); setWrong(expected.san); }} className="mt-2 rounded-lg bg-surface-2 px-3 py-1 text-xs">Je ne sais plus</button>
+              )}
+              {wrong && (
+                <div role="status" className="mt-2 rounded-lg border border-danger/40 bg-danger/10 p-2 text-sm">
+                  Le répertoire joue <b className="text-win">{wrong}</b> ici (flèche verte).
+                  <button type="button" onClick={() => { setWrong(null); setPly((p) => p + 1); }} className="mt-1.5 block rounded-lg bg-surface-2 px-3 py-1 text-xs font-semibold">Continuer la ligne</button>
+                </div>
+              )}
+            </>
+          )}
+          {phase === "end" && (
+            <>
+              <p className={`mt-2 text-sm font-semibold ${errors === 0 ? "text-win" : "text-gold"}`}>{errors === 0 ? "Ligne jouée sans faute ✓ : prochaine révision plus tard." : `${errors} erreur${errors > 1 ? "s" : ""} : la ligne reviendra demain.`}</p>
+              <p className="mt-2 border-l-2 border-gold/50 pl-2 font-serif text-[14px] leading-relaxed">{cur.note}</p>
+              <div className="mt-3 flex gap-2">
+                {idx + 1 < order.length && <button type="button" onClick={() => setIdx(idx + 1)} className="neon-btn flex-1 rounded-lg px-3 py-2 text-sm font-semibold">Ligne suivante</button>}
+                <button type="button" onClick={onDone} className="rounded-lg border border-line px-3 py-2 text-sm text-muted">Terminer</button>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="panel p-3">
+          <p className="mb-1.5 text-[11px] uppercase tracking-wider text-muted">Les lignes de la séance</p>
+          <ul className="flex flex-col gap-0.5 text-[13px]">
+            {order.map((l, i) => (
+              <li key={l.key}>
+                <button type="button" onClick={() => setIdx(i)} className={`flex w-full justify-between gap-2 rounded px-1.5 py-1 text-left ${i === idx ? "bg-neon/10 text-neon" : "hover:bg-surface-2"}`}>
+                  <span className="truncate">{l.name}</span>
+                  <span className="shrink-0 text-xs text-muted">{l.status === "new" ? "nouvelle" : l.status === "due" ? "à revoir" : `dans ${l.dueIn} j`}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function playSan(fen: string, san: string): { fen: string; uci: string } | null {
+  try {
+    const c = new Chess(fen);
+    const m = c.move(san);
+    return { fen: c.fen(), uci: m.from + m.to + (m.promotion ?? "") };
+  } catch { return null; }
 }

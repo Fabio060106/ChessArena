@@ -68,18 +68,24 @@ export interface Card {
   lastReview: string | null;
 }
 /** Document enregistré côté serveur (un par joueur). */
+/** Révision d'une ligne de théorie (répétition espacée). */
+export interface LineDrill { streak: number; due: string; ok: number; fail: number; last: string | null }
 export interface RepertoireDoc {
   v: 1;
   evals: Record<string, EvalEntry>;
   choices: Record<string, Choice>;
   cards: Record<string, Card>;
+  /** lignes de théorie révisées (clé : id du répertoire + nom de la ligne) */
+  drills?: Record<string, LineDrill>;
+  /** répertoire de référence choisi pour chaque couleur */
+  refs?: Partial<Record<Color, string>>;
 }
-export const emptyDoc = (): RepertoireDoc => ({ v: 1, evals: {}, choices: {}, cards: {} });
+export const emptyDoc = (): RepertoireDoc => ({ v: 1, evals: {}, choices: {}, cards: {}, drills: {}, refs: {} });
 
 export function asDoc(x: unknown): RepertoireDoc {
   const d = x as Partial<RepertoireDoc> | null;
   if (!d || d.v !== 1) return emptyDoc();
-  return { v: 1, evals: d.evals ?? {}, choices: d.choices ?? {}, cards: d.cards ?? {} };
+  return { v: 1, evals: d.evals ?? {}, choices: d.choices ?? {}, cards: d.cards ?? {}, drills: d.drills ?? {}, refs: d.refs ?? {} };
 }
 
 const POINTS = { win: 1, draw: 0.5, loss: 0 } as const;
@@ -304,4 +310,24 @@ function wrap(text: string, width = 80): string {
   }
   if (line) out.push(line);
   return out.join("\n");
+}
+
+export const drillKey = (repId: string, line: string) => `${repId}|${line}`;
+
+/** Résultat de la révision d'une ligne : réussie sans faute → prochaine révision plus lointaine ; sinon demain. */
+export function reviewLine(doc: RepertoireDoc, key: string, ok: boolean, now = new Date()): RepertoireDoc {
+  const cur = doc.drills?.[key] ?? { streak: 0, due: now.toISOString(), ok: 0, fail: 0, last: null };
+  const streak = ok ? cur.streak + 1 : 0;
+  const days = ok ? INTERVALS_DAYS[Math.min(streak - 1, INTERVALS_DAYS.length - 1)]! : 1;
+  const next: LineDrill = { streak, ok: cur.ok + (ok ? 1 : 0), fail: cur.fail + (ok ? 0 : 1), last: now.toISOString(), due: new Date(now.getTime() + days * 86_400_000).toISOString() };
+  return { ...doc, drills: { ...(doc.drills ?? {}), [key]: next } };
+}
+
+/** Ordre de révision : d'abord les lignes jamais vues ou à revoir, la plus en retard en premier. */
+export function drillOrder<T extends { key: string }>(lines: readonly T[], doc: RepertoireDoc, now = new Date()): Array<T & { status: "new" | "due" | "later"; dueIn: number }> {
+  return lines.map((l) => {
+    const d = doc.drills?.[l.key];
+    const dueIn = d ? Math.ceil((new Date(d.due).getTime() - now.getTime()) / 86_400_000) : 0;
+    return { ...l, status: !d ? "new" as const : dueIn <= 0 ? "due" as const : "later" as const, dueIn };
+  }).sort((a, b) => ({ due: 0, new: 1, later: 2 }[a.status] - { due: 0, new: 1, later: 2 }[b.status]) || a.dueIn - b.dueIn);
 }
