@@ -11,10 +11,11 @@ import { repertoireById, type RepertoireDef } from "../../../../lib/repertoireBo
 import { courseOf } from "../../../../lib/openingCourses";
 import { buildExercises, buildTree, compareGames, learningPlan, type StudyReport } from "../../../../lib/repertoireStudy";
 import { frenchOpening, loadOpeningBook, type OpeningBook } from "../../../../lib/openingBook";
+import { loadWeapons, numbered as numberedFrom, weaponCoach, weaponExercises, weaponsFor, type Weapon } from "../../../../lib/weapons";
 import { loadMasterMeta, masterModels, type MasterMeta, type MasterModels } from "../../../../lib/masterDb";
 
-type Tab = "cours" | "lignes" | "maitres" | "exercices" | "parties" | "plan";
-const TABS: Array<[Tab, string]> = [["cours", "Cours"], ["lignes", "Lignes"], ["maitres", "Maîtres"], ["exercices", "Exercices"], ["parties", "Mes parties"], ["plan", "Plan"]];
+type Tab = "cours" | "lignes" | "armes" | "maitres" | "exercices" | "parties" | "plan";
+const TABS: Array<[Tab, string]> = [["cours", "Cours"], ["lignes", "Lignes"], ["armes", "Armes secrètes"], ["maitres", "Maîtres"], ["exercices", "Exercices"], ["parties", "Mes parties"], ["plan", "Plan"]];
 
 /** PGN du répertoire : une partie par sous-ligne (ChessBase, Lichess et les autres logiciels les lisent). */
 function toPgn(sections: RepertoireDef[]): string {
@@ -38,8 +39,22 @@ function RepertoireBook() {
   const course = courseOf(id);
   const sections = useMemo(() => (rep ? [rep, ...(rep.with ?? []).map(repertoireById).filter((x): x is RepertoireDef => !!x)] : []), [rep]);
   const tree = useMemo(() => buildTree(sections), [sections]);
-  const exercises = useMemo(() => (rep ? buildExercises(rep, tree) : []), [rep, tree]);
-  const [tab, setTab] = useState<Tab>("cours");
+  // armes secrètes et surprises (préparées hors ligne avec Stockfish)
+  const [weapons, setWeapons] = useState<Weapon[] | null>(null);
+  useEffect(() => { void loadWeapons().then((f) => setWeapons(weaponsFor(f, sections.map((r) => r.id)))); }, [sections]);
+  const exercises = useMemo(() => {
+    const base: Array<{ fen: string; answers: string[]; answerSan: string; prompt: string; before: string; why?: string }> = rep ? buildExercises(rep, tree) : [];
+    // les exercices d'armes secrètes s'intercalent (un sur trois) pour varier
+    const extra = weaponExercises(weapons ?? []);
+    const out: typeof base = [];
+    for (let i = 0, j = 0; i < base.length || j < extra.length;) {
+      if (i < base.length) out.push(base[i++]!);
+      if (i < base.length) out.push(base[i++]!);
+      if (j < extra.length) out.push(extra[j++]!);
+    }
+    return out;
+  }, [rep, tree, weapons]);
+  const [tab, setTab] = useState<Tab>(() => (TABS.some(([k]) => k === params.get("onglet")) ? params.get("onglet") as Tab : "cours"));
   // ce qui est affiché sur l'échiquier : une suite de coups, et le coup courant
   const [shown, setShown] = useState<{ moves: string; label: string } | null>(null);
   const [ply, setPly] = useState(-1);
@@ -140,7 +155,7 @@ function RepertoireBook() {
               <a href={`/analyse?m=${(exo ? [] : steps.slice(1, cur + 1).map((x) => x.uci)).join(",")}`} className="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-muted hover:text-text">Analyser cette position</a>
             </div>
           </section>
-          <div className="flex gap-0.5 rounded-lg bg-surface-2 p-0.5" role="tablist" aria-label="Étude de l'ouverture">
+          <div className="grid grid-cols-4 gap-0.5 rounded-lg bg-surface-2 p-0.5 lg:flex" role="tablist" aria-label="Étude de l'ouverture">
             {TABS.map(([k, label]) => (
               <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => { setTab(k); setAnswer(null); }}
                 className={`flex-1 rounded-md px-1 py-1.5 text-xs font-semibold sm:text-sm ${tab === k ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>{label}</button>
@@ -232,6 +247,29 @@ function RepertoireBook() {
             </section>
           ))}
 
+          {tab === "armes" && (
+            <section className="panel flex flex-col gap-3 p-3" aria-label="Armes secrètes">
+              {weapons === null ? <p className="text-sm text-muted">Chargement…</p> : !weapons.length ? (
+                <p className="text-sm text-muted">Pas encore d'arme secrète repérée pour ce répertoire.</p>
+              ) : (
+                <>
+                  <p className="text-xs text-muted">Des coups rares que Stockfish juge solides, choisis pour les problèmes pratiques qu'ils posent : peu de bonnes réponses, des réponses naturelles qui perdent. Et les surprises que tes adversaires peuvent te faire, avec l'antidote.</p>
+                  {(["arme", "alerte"] as const).map((kind) => {
+                    const list = weapons.filter((w) => w.kind === kind);
+                    if (!list.length) return null;
+                    return (
+                      <div key={kind} className="flex flex-col gap-2">
+                        <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-neon">{kind === "arme" ? "Tes armes secrètes" : "Surprises à connaître"}</h2>
+                        {list.map((w) => <WeaponCard key={w.fen + w.uci} w={w} onShow={show} active={shown?.label === w.line + w.move} />)}
+                      </div>
+                    );
+                  })}
+                  <button type="button" onClick={() => { const i = exercises.findIndex((e) => !!e.why); setTab("exercices"); setAnswer(null); setEx(Math.max(0, i)); }} className="neon-btn self-start rounded-lg px-3 py-1.5 text-sm font-semibold">S'entraîner sur ces armes</button>
+                </>
+              )}
+            </section>
+          )}
+
           {tab === "maitres" && (
             <section className="panel flex flex-col gap-2 p-3" aria-label="Parties modèles">
               {!masters && <p className="text-sm text-muted">Chargement…</p>}
@@ -276,9 +314,12 @@ function RepertoireBook() {
                   <p className="text-xs text-muted">Position après {exo.before}. Joue le coup sur l'échiquier.</p>
                   {answer && (
                     <p role="status" className={`text-sm font-semibold ${answer.good ? "text-win" : "text-danger"}`}>
-                      {answer.good ? `Bravo : ${exo.answerSan} est le coup du répertoire.` : `Le répertoire joue ${exo.answerSan} (flèche verte).`}
+                      {exo.why
+                        ? (answer.good ? `Bravo : ${exo.answerSan} !` : `La réponse : ${exo.answerSan} (flèche verte).`)
+                        : (answer.good ? `Bravo : ${exo.answerSan} est le coup du répertoire.` : `Le répertoire joue ${exo.answerSan} (flèche verte).`)}
                     </p>
                   )}
+                  {answer && exo.why && <p className="text-xs text-muted">{exo.why}</p>}
                   <div className="flex flex-wrap gap-2">
                     {!answer && <button type="button" onClick={() => setAnswer({ good: false })} className="rounded-lg bg-surface-2 px-3 py-1.5 text-xs">Voir la réponse</button>}
                     {answer && ex + 1 < exercises.length && <button type="button" onClick={() => { setAnswer(null); setEx(ex + 1); }} className="neon-btn rounded-lg px-3 py-1.5 text-xs font-semibold">Exercice suivant</button>}
@@ -331,5 +372,40 @@ function RepertoireBook() {
         </aside>
       </div>
     </main>
+  );
+}
+
+/** Une arme secrète (ou une surprise adverse) expliquée comme par un entraîneur. */
+function WeaponCard({ w, onShow, active }: { w: Weapon; onShow: (moves: string, label: string, at?: number) => void; active: boolean }) {
+  const c = weaponCoach(w);
+  const [open, setOpen] = useState(false);
+  const line = [w.prefix, w.move, ...w.bestDefense].filter(Boolean).join(" ");
+  return (
+    <article className={`rounded-lg border p-2.5 ${active ? "border-neon/60" : "border-line"}`}>
+      <div className="flex items-start gap-2">
+        <h3 className="min-w-0 flex-1 text-sm font-semibold">{c.title}</h3>
+        <span className="shrink-0 rounded bg-neon/10 px-1.5 py-0.5 text-[11px] font-semibold text-neon" title="Note pratique : problèmes posés à l'adversaire, pièges, prix théorique">{w.score}/100</span>
+      </div>
+      <p className="mt-1 text-[13px]">{c.verdict}</p>
+      {c.problem && <p className="mt-1 text-[13px]">{c.problem}</p>}
+      {c.traps.length > 0 && (
+        <div className="mt-1.5">
+          <p className="text-xs font-semibold text-danger">{w.kind === "arme" ? "Les pièges" : "Ne tombe pas dans le piège"}</p>
+          <ul className="mt-0.5 list-disc pl-4 text-[13px]">{c.traps.map((t, i) => <li key={i}>{t}</li>)}</ul>
+        </div>
+      )}
+      {open && (
+        <div className="mt-1.5 text-[13px] text-muted">
+          {c.idea && <p>{c.idea}</p>}
+          <p className="mt-1">{c.follow}</p>
+          <p className="mt-1">Ligne complète : {numberedFrom(line.split(" "), 0)}</p>
+        </div>
+      )}
+      <div className="mt-1.5 flex flex-wrap gap-3">
+        <button type="button" onClick={() => onShow(line, w.line + w.move, w.ply + 1)} className="text-xs font-semibold text-neon hover:underline">Voir sur l'échiquier</button>
+        {w.traps[0] && <button type="button" onClick={() => onShow([w.prefix, w.move, w.traps[0]!.reply, ...w.traps[0]!.punish].join(" "), w.line + w.move, w.ply + 2)} className="text-xs font-semibold text-neon hover:underline">Voir le piège</button>}
+        <button type="button" onClick={() => setOpen((o) => !o)} className="text-xs text-muted hover:text-text">{open ? "Moins" : "La suite à connaître"}</button>
+      </div>
+    </article>
   );
 }

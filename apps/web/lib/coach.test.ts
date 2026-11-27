@@ -34,6 +34,16 @@ describe("le coach de l'arbre", () => {
     expect(c.moves.find((m) => m.san === "h6")).toBeUndefined(); // trop rare
     expect(c.leads.join(" ")).toMatch(/Les maîtres préfèrent c5 \(60 %, 45 % de score\) au Bf5 du répertoire/);
   });
+  it("signale une arme secrète par une question, et marque le coup", () => {
+    const line = lineOf("e4 c6 d4 d5 e5");
+    const w = { kind: "arme" as const, side: "b" as const, rep: "caro", line: "Avance", prefix: "e4 c6 d4 d5 e5", ply: 5, fen: line.at(-1)!.fen, move: "c5", uci: "c6c5",
+      mainMove: "Bf5", mainEval: -30, eval: -45, cost: 15, rarity: { kind: "hors-livre" as const }, bestDefense: ["dxc5"], holding: ["dxc5"], traps: [], hard: true, precise: null, score: 60, repMove: "Bf5" };
+    const c = coachAt({ line, color: "b", book, ref, userMoves: [], weapons: [w] });
+    expect(c.moves.find((m) => m.san === "c5")!.weapon).toEqual({ kind: "arme", score: 60, rep: "caro" });
+    expect(c.leads[0]).toMatch(/^Arme secrète possible ici : c5!\? .*quelle réponse naturelle serait une erreur \?$/);
+    // pas pour l'autre couleur
+    expect(coachAt({ line, color: "w", book, ref: null, userMoves: [], weapons: [w] }).moves.some((m) => m.weapon)).toBe(false);
+  });
   it("classe les répertoires selon les parties du joueur", () => {
     const played = new Set(replayFromSans("e4 c6 d4 d5 e5 Bf5".split(" ")).map((x) => x.fen.split(" ").slice(0, 4).join(" ")));
     expect(rankRepertoires("b", played)[0]!.id).toBe("caro");

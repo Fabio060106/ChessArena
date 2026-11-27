@@ -18,6 +18,7 @@ import {
 } from "../../lib/repertoire";
 import { coachAt, rankRepertoires, refRepertoire, type RefRepertoire } from "../../lib/coach";
 import { loadOpeningBook, type OpeningBook } from "../../lib/openingBook";
+import { loadWeapons, weaponCoach, weaponsFor, type Weapon } from "../../lib/weapons";
 import { loadMasterMeta, masterMoves, type MasterMeta, type MasterMove } from "../../lib/masterDb";
 
 const ANALYSIS_DEPTH = 14;
@@ -279,6 +280,8 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy, book, refRep }: {
   const [masterMeta, setMasterMeta] = useState<MasterMeta | null>(null);
   const [master, setMaster] = useState<{ fen: string; moves: MasterMove[] } | null>(null);
   useEffect(() => { void loadMasterMeta().then(setMasterMeta); }, []);
+  const [weapons, setWeapons] = useState<Weapon[]>([]);
+  useEffect(() => { void loadWeapons().then((f) => setWeapons(f ? Object.values(f.reps).flat() : [])); }, []);
   useEffect(() => {
     if (!masterMeta) return;
     let live = true;
@@ -302,7 +305,7 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy, book, refRep }: {
   if (rep && !repIsError) arrows.push({ from: rep.uci.slice(0, 2), to: rep.uci.slice(2, 4), color: "#22c55e" });
   if (card && (repIsError || card.played !== rep?.uci)) arrows.push({ from: card.played.slice(0, 2), to: card.played.slice(2, 4), color: "#ef4444" });
   const errors = [...cards].sort((a, b) => Number(isDue(b)) - Number(isDue(a)) || b.times - a.times);
-  const coach = coachAt({ line, color: tree.color, book, ref: refRep, userMoves: node?.moves ?? [], master: master?.fen === fen ? master.moves : [] });
+  const coach = coachAt({ line, color: tree.color, book, ref: refRep, userMoves: node?.moves ?? [], master: master?.fen === fen ? master.moves : [], weapons });
   const [showNotes, setShowNotes] = useState(false);
 
   return (
@@ -384,6 +387,7 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy, book, refRep }: {
                           {m.rep.length > 0 && <span className="rounded bg-win/15 px-1.5 text-[11px] font-semibold text-win">★ répertoire</span>}
                           {m.theory && <span className="rounded bg-gold/10 px-1.5 text-[11px] text-gold">théorie</span>}
                           {m.games && <span className="rounded bg-surface-2 px-1.5 text-[11px] text-muted">tes parties : {m.games.count}× · {m.games.score} %</span>}
+                          {m.weapon && <span className={`rounded px-1.5 text-[11px] font-semibold ${m.weapon.kind === "arme" ? "bg-win/15 text-win" : "bg-danger/15 text-danger"}`}>{m.weapon.kind === "arme" ? "arme secrète !?" : "surprise adverse !?"}</span>}
                           {m.master && <span className="rounded bg-neon/10 px-1.5 text-[11px] text-neon" title={`${m.master.games} parties de maîtres, Elo moyen ${m.master.elo || "?"}${m.master.year ? `, encore joué en ${m.master.year}` : ""}`}>maîtres : {m.master.share} % · {m.master.score} %</span>}
                           {isErr && <span className="rounded bg-danger/15 px-1.5 text-[11px] text-danger">ton erreur</span>}
                         </span>
@@ -403,6 +407,7 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy, book, refRep }: {
             <div className="rounded-lg border border-neon/30 p-2.5">
               <p className="mb-1 text-xs font-semibold text-neon">Pistes à creuser</p>
               <ul className="flex flex-col gap-1 text-[13px]">{coach.leads.map((l) => <li key={l}>→ {l}</li>)}</ul>
+              {(() => { const w = coach.moves.find((m) => m.weapon)?.weapon; return w ? <a href={`/repertoire/livre/${w.rep}?onglet=armes`} className="mt-1.5 inline-block text-xs font-semibold text-neon hover:underline">La solution et les pièges dans le cours →</a> : null; })()}
             </div>
           )}
           {refRep && <a href={`/repertoire/livre/${refRep.id}`} className="text-xs font-semibold text-neon hover:underline">Le cours complet de ce répertoire (structures, plans, pièges) →</a>}
@@ -712,6 +717,18 @@ function Dashboard({ games, imported, doc, due, drillsDue, lines, mastered, onSe
   ];
   const left = steps.filter((x) => !x.done).length;
   const todo = due + drillsDue;
+  // l'arme secrète du jour : dans la théorie de référence choisie (sinon dans tous les répertoires), une par jour
+  const [weapon, setWeapon] = useState<Weapon | null>(null);
+  const refIds = Object.values(doc.refs ?? {}).join(",");
+  useEffect(() => {
+    void loadWeapons().then((f) => {
+      if (!f) return;
+      const ids = refIds ? refIds.split(",") : Object.keys(f.reps);
+      let list = weaponsFor(f, ids).filter((w) => w.kind === "arme");
+      if (!list.length) list = weaponsFor(f, Object.keys(f.reps)).filter((w) => w.kind === "arme");
+      if (list.length) setWeapon(list[Math.floor(Date.now() / 86_400_000) % list.length]!);
+    });
+  }, [refIds]);
   const tile = "rounded-lg bg-surface-2 p-2 sm:p-2.5";
   return (
     <section className="panel mb-3 flex flex-col gap-3 p-3" aria-label="Ma progression">
@@ -730,6 +747,16 @@ function Dashboard({ games, imported, doc, due, drillsDue, lines, mastered, onSe
           <div className="mt-1 h-1 rounded bg-ink"><div className="h-full rounded bg-neon" style={{ width: `${lines ? (100 * mastered) / lines : 0}%` }} /></div></div>
         <div className={tile}><p className="text-[11px] leading-tight text-muted sm:text-xs">À réviser</p><p className="tabular text-lg font-bold sm:text-xl">{todo}</p><p className="hidden text-[11px] text-muted sm:block">{due} erreur{due > 1 ? "s" : ""} · {drillsDue} ligne{drillsDue > 1 ? "s" : ""}</p></div>
       </div>
+      {weapon && (
+        <a href={`/repertoire/livre/${weapon.rep}?onglet=armes`} className="flex items-center gap-2 rounded-lg border border-win/40 bg-win/5 p-2.5 hover:bg-win/10">
+          <span className="text-lg" aria-hidden>🗡</span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-semibold uppercase tracking-wide text-win">Arme secrète du jour</span>
+            <span className="block truncate text-sm">{weaponCoach(weapon).title}</span>
+          </span>
+          <span className="shrink-0 text-xs font-semibold text-neon">Découvrir →</span>
+        </a>
+      )}
       {left > 0 && !hidden && (
         <div className="rounded-lg border border-neon/30 p-2.5">
           <div className="flex items-center gap-2">

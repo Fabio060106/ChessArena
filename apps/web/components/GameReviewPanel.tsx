@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Engine, ENGINE_NAME, terminalScore, type EngineLine } from "../lib/engine";
+import { loadMasterMeta, masterMoves } from "../lib/masterDb";
 import { loadOpeningBook } from "../lib/openingBook";
 import { buildTeaching, quizPrompt, TEACHING_VERSION, type TeachMove, type TeachingReview } from "../lib/pedagogy";
 import { replayFromSans } from "../lib/replay";
@@ -71,8 +72,10 @@ export function GameReviewPanel({ relayId, round = 0, index = 0, cacheId, sans, 
         setProgress({ done: i + 1, total: fens.length });
       }
       const book = await loadOpeningBook();
+      // base de maîtres (si installée) : nouveautés et fréquence des coups de l'ouverture
+      const master = (await loadMasterMeta()) ? await Promise.all(fens.slice(0, Math.min(sans.length, 40)).map((f) => masterMoves(f))) : undefined;
       if (!live) return;
-      const r = buildTeaching({ sans, ucis, fens, lines, names, result, book });
+      const r = buildTeaching({ sans, ucis, fens, lines, names, result, book, master });
       setReview(r); setProgress(null);
       try { localStorage.setItem(localKey, JSON.stringify(r)); } catch { /* plein */ }
       if (shared && relayId) shared.save({ relayId, round, index, sans: [...sans], review: r });

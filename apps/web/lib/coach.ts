@@ -7,6 +7,7 @@ import { sublineIdea } from "./openingIdeas";
 import { ideaOf, moveFacts } from "./commentary";
 import type { MoveStat } from "./repertoire";
 import type { MasterMove } from "./masterDb";
+import type { Weapon } from "./weapons";
 
 /**
  * Le « coach » de l'arbre de répertoire : dans chaque position, ce qu'un GM dirait à côté de l'échiquier.
@@ -46,6 +47,8 @@ export interface CoachMove {
   games: { count: number; score: number } | null;
   /** dans les parties de maîtres (si la base est installée) : part des parties, score pour le camp au trait, Elo moyen */
   master: { games: number; share: number; score: number; elo: number; year: number } | null;
+  /** arme secrète (pour le joueur) ou surprise (de l'adversaire) repérée par Stockfish */
+  weapon: { kind: "arme" | "alerte"; score: number; rep: string } | null;
 }
 
 export interface CoachView {
@@ -70,6 +73,8 @@ export function coachAt(p: {
   userMoves: readonly MoveStat[];
   /** coups des maîtres dans cette position (base de parties, facultative) */
   master?: readonly MasterMove[];
+  /** armes secrètes et surprises des répertoires (facultatif) */
+  weapons?: readonly Weapon[];
 }): CoachView {
   const fens = [new Chess().fen(), ...p.line.map((x) => x.fen)];
   const fen = fens.at(-1)!;
@@ -103,7 +108,7 @@ export function coachAt(p: {
   }
   // coups possibles : répertoire, théorie, parties du joueur
   const map = new Map<string, CoachMove>();
-  const add = (uci: string, san: string) => { const m = map.get(uci) ?? { san, uci, rep: [], theory: null, games: null, master: null }; map.set(uci, m); return m; };
+  const add = (uci: string, san: string) => { const m = map.get(uci) ?? { san, uci, rep: [], theory: null, games: null, master: null, weapon: null }; map.set(uci, m); return m; };
   const refNode = p.ref?.tree.get(key);
   if (refNode) for (const [san, v] of refNode.moves) add(v.uci, san).rep = v.lines;
   if (p.book) for (const b of p.book.mainBranches(fen)) {
@@ -115,6 +120,8 @@ export function coachAt(p: {
   const turn: Color = fen.split(" ")[1] === "w" ? "w" : "b";
   // coups des maîtres : ceux joués dans au moins 3 % des parties (les autres sont des curiosités)
   for (const m of p.master ?? []) if (m.share >= 3 || map.has(m.uci)) add(m.uci, m.san).master = { games: m.games, share: m.share, score: Math.round((turn === "w" ? m.white : m.black) + m.draw / 2), elo: m.elo, year: m.year };
+  const here = (p.weapons ?? []).filter((w) => epdOf(w.fen) === key && w.side === p.color);
+  for (const w of here) add(w.uci, w.move).weapon = { kind: w.kind, score: w.score, rep: w.rep };
   const moves = [...map.values()].sort((a, b) => (b.rep.length ? 1 : 0) - (a.rep.length ? 1 : 0) || (b.games?.count ?? 0) - (a.games?.count ?? 0) || (b.master?.games ?? 0) - (a.master?.games ?? 0) || (b.theory ? 1 : 0) - (a.theory ? 1 : 0));
 
   // pistes à creuser
@@ -133,6 +140,11 @@ export function coachAt(p: {
     if (often && !often.san.startsWith("O") && !moves.find((x) => x.uci === often.uci)?.rep.length && p.ref) leads.push(`Tes adversaires jouent souvent ${often.san} (${often.count} fois) et ton répertoire ne le couvre pas : quel est le point faible de ce coup ?`);
     if (theoryOnly.length) leads.push(`Tu n'as jamais rencontré ${theoryOnly.slice(0, 2).map((m) => `${m.san}${m.theory?.name.includes(":") ? ` (${m.theory.name.split(":").slice(1).join(":").trim()})` : ""}`).join(", ")} : que ferais-tu contre ?`);
     for (const m of myBad.slice(0, 1)) leads.push(`Contre ${m.san}, ton score est de ${m.games!.score} % : quel plan te manque dans cette position ?`);
+  }
+  // armes secrètes et surprises : une question, la réponse est dans le cours
+  for (const w of here.slice(0, 1)) {
+    if (w.kind === "arme") leads.unshift(`Arme secrète possible ici : ${w.move}!? Un coup rare que Stockfish juge solide. Quel problème pose-t-il à l'adversaire, et quelle réponse naturelle serait une erreur ?`);
+    else leads.unshift(`Surprise possible de l'adversaire : ${w.move}!? Sais-tu quoi répondre ? Cherche avant de regarder la solution dans le cours.`);
   }
   // ce que font les maîtres ici
   const top = [...moves].filter((m) => m.master).sort((a, b) => b.master!.games - a.master!.games)[0];

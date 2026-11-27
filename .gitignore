@@ -7,3 +7,4 @@ node_modules/
 !.env.example
 *.log
 .DS_Store
+apps/web/scripts/.weapons-cache.json

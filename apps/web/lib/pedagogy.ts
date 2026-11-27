@@ -1,3 +1,4 @@
+import type { MasterMove } from "./masterDb";
 import { formatScore, pvToSan, scoreToCp, winPct, type EngineLine, type Score } from "./engine";
 import { buildReview, type GameReview } from "./gameReview";
 import { openingIdea, openingOf } from "./openings";
@@ -6,7 +7,7 @@ import { sublineIdea } from "./openingIdeas";
 import { cap, evalWords, ideaOf, isEndgame, moveFacts, NAME, OF_SIDE, opp, pieceList, shortIdea, SIDE, SIDE_CAP, TO_SIDE, VALUE, type MoveFacts } from "./commentary";
 
 /** Version du format (doit correspondre à REVIEW_VERSION côté serveur). */
-export const TEACHING_VERSION = 5;
+export const TEACHING_VERSION = 6;
 
 export type TeachMark = "!" | "?!" | "?" | "??" | "";
 
@@ -90,6 +91,8 @@ export function buildTeaching(p: {
   result: string | null;
   /** livre d'ouvertures (variantes nommées) ; sans lui, la reconnaissance est plus sommaire */
   book?: OpeningBook | null;
+  /** coups des maîtres avant chaque demi-coup (indice ply − 1), si la base de maîtres est installée */
+  master?: ReadonlyArray<readonly MasterMove[] | null>;
 }): TeachingReview {
   const base = buildReview({
     sans: p.sans, fens: p.fens, names: p.names, result: p.result,
@@ -113,6 +116,9 @@ export function buildTeaching(p: {
   const said = new Set<string>();
   const moral = (k: string, txt: string) => (said.has(k) ? "" : (said.add(k), txt));
   const castled = { w: false, b: false };
+  let novelty = false;
+  let lastPiste = -99;
+  let pistes = 0;
   const endgameAt = p.fens.findIndex((fe, i) => i > 0 && isEndgame(fe));
   for (let ply = 1; ply <= p.sans.length && ply < p.lines.length; ply++) {
     const mover: "w" | "b" = ply % 2 === 1 ? "w" : "b";
@@ -251,6 +257,36 @@ export function buildTeaching(p: {
       note = idea;
     } else if (f && !theory && idea && ply - lastNote >= 10) {
       note = `${idea}${words !== lastWords || ply - lastNote >= 16 ? ` ${cap(words)}.` : ""}`;
+    }
+    // la base de maîtres : fréquence du coup joué, nouveauté (premier coup absent de la base)
+    const mm = p.master?.[ply - 1] ?? null;
+    const mTotal = mm ? mm.reduce((a, m) => a + m.games, 0) : 0;
+    const mPlayed = mm?.find((m) => m.uci === played) ?? null;
+    if (mm && !novelty && mTotal >= 5 && !mPlayed) {
+      novelty = true;
+      const top = mm.slice(0, 2).map((m) => `${m.san} (${m.share} %)`).join(" ou ");
+      const verdict = mark ? "Une nouveauté qui ne réussit pas." : isBest ? "Et Stockfish l'approuve : préparation maison ?" : loss < 4 ? "Un coup sain, qui sort l'adversaire de sa préparation." : "";
+      note = `Nouveauté ! ${num(ply)}${san} n'apparaît dans aucune des ${mTotal} parties de maîtres de la base à cette position, où l'on jouait ${top}. ${verdict} ${note ?? ""}`.replace(/ +/g, " ").trim();
+    } else if (mm && mPlayed && note && theory && mTotal >= 10) {
+      const sc = mover === "w" ? mPlayed.white + mPlayed.draw / 2 : mPlayed.black + mPlayed.draw / 2;
+      note += ` Chez les maîtres : ${mPlayed.games} partie${mPlayed.games > 1 ? "s" : ""} (${mPlayed.share} % des cas), ${Math.round(sc)} % de score pour ${SIDE[mover].replace(/^les /, "les ")}.`;
+    }
+    // piste inexplorée : hors théorie, un autre coup valait autant et n'a (presque) jamais été joué — ce que relève un annotateur GM
+    // (seulement là où l'on sait que la théorie est finie : après la sortie du livre, ou d'après la base de maîtres)
+    const pastBook = (trace?.leftAt != null && ply > trace.leftAt) || (mm != null && mTotal >= 5);
+    if (pastBook && ply >= 8 && !theory && !mark && ply <= 40 && pistes < 2 && ply - lastPiste >= 6 && before[1]?.pv[0] && before[1].pv[0] !== played) {
+      const alt = before.find((l) => l.pv[0] && l.pv[0] !== played && winFor(best.score, mover) - winFor(l.score, mover) < 3);
+      const altMaster = alt && mm ? mm.find((m) => m.uci === alt.pv[0]) : null;
+      const unexplored = alt && (mm ? mTotal >= 5 && (!altMaster || altMaster.share <= 2) : true);
+      const af = alt ? moveFacts(fenBefore, alt.pv[0]!, ply) : null;
+      if (alt && af && unexplored && !af.captured && !(f?.recapture)) {
+        pistes++; lastPiste = ply;
+        const si = shortIdea(af);
+        const known = mm && mTotal >= 5;
+        const t = `${known ? "Piste inexplorée" : "Mérite l'attention"} : ${num(ply)}${af.san}!?${si ? `, ${si},` : ""} valait autant selon Stockfish (${formatScore(alt.score)})${known ? (altMaster ? `, et n'a presque jamais été joué par les maîtres (${altMaster.games} partie${altMaster.games > 1 ? "s" : ""})` : `, et n'a jamais été joué dans la base de maîtres`) : ""}.`;
+        note = note ? `${note} ${t}` : t;
+        variation ??= `${numberedLine(fenBefore, alt.pv, ply, 6)}, ${formatScore(alt.score)}`;
+      }
     }
     if (f?.castle) castled[mover] = true;
     if (note) lastNote = ply;

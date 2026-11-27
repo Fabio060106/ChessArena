@@ -37,7 +37,7 @@ describe("analyse pédagogique", () => {
   const r = buildTeaching({ sans, ucis, fens, lines, names: { w: "Gukesh", b: "Sindarov" }, result: "1-0" });
 
   it("un commentaire pour chaque coup", () => {
-    expect(r.version).toBe(5);
+    expect(r.version).toBe(6);
     expect(r.moves).toHaveLength(7);
     expect(r.moves.map((m) => m.ply)).toEqual([1, 2, 3, 4, 5, 6, 7]);
     expect(r.moves[0]!.comment).toMatch(/Le pion occupe le centre en e4\. (Coup de théorie|C.est la position de référence)/);
@@ -96,5 +96,37 @@ describe("analyse pédagogique", () => {
     expect(r2.moves[2]!.mark).toBe("??");
     expect(r2.moves[2]!.comment).toMatch(/Le fou en a6 n'est plus assez protégé : Nxa6 le gagne/);
     expect(r2.moves[2]!.comment).toMatch(/Il fallait jouer Nf3, qui menaçait le pion e5|Il fallait jouer Nf3/);
+  });
+});
+
+describe("base de maîtres dans les commentaires", () => {
+  // 1.e4 e5 2.Nf3 Nc6 3.a3 Nf6 4.d3 d5
+  const sans = ["e4", "e5", "Nf3", "Nc6", "a3", "Nf6", "d3", "d5"];
+  const steps = replayFromSans(sans);
+  const fens = steps.map((s) => s.fen);
+  const ucis = steps.slice(1).map((s) => s.uci!);
+  const lines: EngineLine[][] = [
+    [L(30, ["e2e4"]), L(25, ["d2d4"])], [L(30, ["e7e5"]), L(35, ["c7c5"])], [L(25, ["g1f3"]), L(20, ["f1c4"])],
+    [L(30, ["b8c6"]), L(28, ["g8f6"])], [L(30, ["f1b5"]), L(28, ["a2a3"])], [L(20, ["g8f6"]), L(22, ["f8c5"])],
+    [L(20, ["d2d3"]), L(18, ["b1c3"])], [L(15, ["d7d5"]), L(14, ["f8c5"])], [L(15, ["e4d5"])],
+  ];
+  const mm = (rows: Array<[string, string, number]>) => {
+    const total = rows.reduce((a, r) => a + r[2], 0);
+    return rows.map(([uci, san, games]) => ({ uci, san, games, share: Math.round((100 * games) / total), white: 40, draw: 30, black: 30, elo: 2600, year: 2024 }));
+  };
+  const master = [
+    mm([["e2e4", "e4", 500], ["d2d4", "d4", 400]]), mm([["e7e5", "e5", 300], ["c7c5", "c5", 200]]), mm([["g1f3", "Nf3", 280]]),
+    mm([["b8c6", "Nc6", 250]]), mm([["f1b5", "Bb5", 120], ["f1c4", "Bc4", 80]]), [], [], [],
+  ];
+  it("signale la nouveauté : le premier coup absent de la base", () => {
+    const r = buildTeaching({ sans, ucis, fens, lines, names: { w: "A", b: "B" }, result: null, master });
+    const n = r.moves.find((m) => m.note?.startsWith("Nouveauté"));
+    expect(n?.ply).toBe(5);
+    expect(n!.note).toMatch(/aucune des 200 parties de maîtres.*Bb5 \(60 %\) ou Bc4 \(40 %\)/);
+    expect(r.moves.filter((m) => m.note?.includes("Nouveauté"))).toHaveLength(1);
+  });
+  it("sans base de maîtres, pas de nouveauté annoncée", () => {
+    const r = buildTeaching({ sans, ucis, fens, lines, names: { w: "A", b: "B" }, result: null });
+    expect(r.moves.some((m) => m.note?.includes("Nouveauté"))).toBe(false);
   });
 });
