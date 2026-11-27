@@ -260,7 +260,7 @@ function RepertoireBook() {
                     return (
                       <div key={kind} className="flex flex-col gap-2">
                         <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-neon">{kind === "arme" ? "Tes armes secrètes" : "Surprises à connaître"}</h2>
-                        {list.map((w) => <WeaponCard key={w.fen + w.uci} w={w} onShow={show} active={shown?.label === w.line + w.move} />)}
+                        {list.map((w) => <WeaponCard key={w.fen + w.uci} w={w} onShow={show} active={shown?.label === weaponLabel(w)} />)}
                       </div>
                     );
                   })}
@@ -375,6 +375,9 @@ function RepertoireBook() {
   );
 }
 
+/** Légende sous l'échiquier : « Ligne — 5.a4!? ». */
+const weaponLabel = (w: Weapon) => `${w.line} — ${numberedFrom([w.move], w.ply)}!?`;
+
 /** Une arme secrète (ou une surprise adverse) expliquée comme par un entraîneur. */
 function WeaponCard({ w, onShow, active }: { w: Weapon; onShow: (moves: string, label: string, at?: number) => void; active: boolean }) {
   const c = weaponCoach(w);
@@ -402,8 +405,8 @@ function WeaponCard({ w, onShow, active }: { w: Weapon; onShow: (moves: string, 
         </div>
       )}
       <div className="mt-1.5 flex flex-wrap gap-3">
-        <button type="button" onClick={() => onShow(line, w.line + w.move, w.ply + 1)} className="text-xs font-semibold text-neon hover:underline">Voir sur l'échiquier</button>
-        {w.traps[0] && <button type="button" onClick={() => onShow([w.prefix, w.move, w.traps[0]!.reply, ...w.traps[0]!.punish].join(" "), w.line + w.move, w.ply + 2)} className="text-xs font-semibold text-neon hover:underline">Voir le piège</button>}
+        <button type="button" onClick={() => onShow(line, weaponLabel(w), w.ply + 1)} className="text-xs font-semibold text-neon hover:underline">Voir sur l'échiquier</button>
+        {w.traps[0] && <button type="button" onClick={() => onShow([w.prefix, w.move, w.traps[0]!.reply, ...w.traps[0]!.punish].join(" "), weaponLabel(w), w.ply + 2)} className="text-xs font-semibold text-neon hover:underline">Voir le piège</button>}
         <button type="button" onClick={() => setOpen((o) => !o)} className="text-xs text-muted hover:text-text">{open ? "Moins" : "La suite à connaître"}</button>
       </div>
     </article>

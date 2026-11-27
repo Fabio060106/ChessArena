@@ -220,18 +220,27 @@ await Promise.all([...positions.values()].map(async (p) => {
     if (cost > (mine ? 45 : 70) || cand.cp < (mine ? -40 : -90)) continue;
     const rare = rarity(p.fen, cand.uci);
     if (!rare) continue;
-    const s = await study(p.fen, cand.uci, turn);
-    if (!s) continue;
-    const score = practical(cost, s);
+    const st = await study(p.fen, cand.uci, turn);
+    if (!st) continue;
+    const s = { ...st }; // copie : le cache garde l'analyse brute
+    // le vrai prix du coup, après la meilleure défense (l'analyse rapide peut le sous-estimer)
+    const realCost = Math.max(cost, best.cp - s.eval);
+    if (realCost > (mine ? 45 : 70)) continue;
+    // une reprise évidente sur la case du coup n'est pas un problème (échange, prise de pion rendue) : jamais « difficile »
+    const to = cand.uci.slice(2, 4);
+    const onlyRecapture = s.holding.length > 0 && s.holding.every((h) => h.includes("x") && h.replace(/[+#]/g, "").endsWith(to));
+    if (onlyRecapture) s.hard = false;
+    const score = practical(realCost, s);
     // une alerte n'est utile que si elle pose un vrai problème au joueur
-    if (!mine && !s.traps.length && s.holding.length > 2) continue;
-    if (mine && score < 35) continue;
+    if (!mine && ((!s.traps.length && (!s.hard || onlyRecapture)) || score < 30)) continue;
+    // une arme sans base de maîtres doit poser un problème concret : défense difficile à trouver ou piège naturel
+    if (mine && (score < 35 || (!hasMaster && !s.traps.length && !s.hard))) continue;
     found.push({
       kind: mine ? "arme" : "alerte",
       side: p.side, ply: p.ply, fen: p.fen,
       contexts: p.contexts.map((x) => ({ rep: x.rep, line: x.line, prefix: x.prefix.join(" ") })),
       move: sanOf(p.fen, cand.uci), uci: cand.uci,
-      mainMove: sanOf(p.fen, best.uci), mainEval: best.cp, eval: cand.cp, cost,
+      mainMove: sanOf(p.fen, best.uci), mainEval: best.cp, eval: cand.cp, cost: realCost,
       rarity: rare, ...s, score,
       repMove: mine ? sanOf(p.fen, [...p.repMoves][0]) : null,
     });
