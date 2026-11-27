@@ -4,6 +4,7 @@
 import { spawn } from "node:child_process";
 import { Chess } from "chess.js";
 import { REPERTOIRES } from "../lib/repertoireBook.ts";
+import { COURSES } from "../lib/openingCourses.ts";
 
 const sf = spawn("node", [new URL("../../../node_modules/stockfish/bin/stockfish-19-lite-single.js", import.meta.url).pathname]);
 let buf = ""; let waiter = null;
@@ -44,6 +45,16 @@ for (const r of REPERTOIRES) for (const l of r.lines) {
   n++;
   process.stderr.write(`\r${n} lignes`);
 }
-console.log(`\n${n} lignes vérifiées, ${problems.length} problème(s)`);
+// pièges : la position finale doit être nettement gagnante (≥ +2) pour le camp qui en profite
+const seen = new Set();
+for (const [id, c] of Object.entries(COURSES)) for (const t of c.traps) {
+  if (seen.has(t.name)) continue; seen.add(t.name);
+  const b = new Chess();
+  for (const s of t.moves.split(" ")) b.move(s);
+  const sign = t.winner === "w" ? 1 : -1;
+  const e = b.isCheckmate() ? { cp: (b.turn() === "w" ? -1 : 1) * 10000 } : await evalFen(b.fen(), 14);
+  if (sign * e.cp < 200) problems.push(`piège « ${t.name} » (${id}) : seulement ${(sign * e.cp / 100).toFixed(1)} pour le camp gagnant`);
+}
+console.log(`\n${n} lignes et ${seen.size} pièges vérifiés, ${problems.length} problème(s)`);
 for (const p of problems) console.log(" -", p);
 sf.kill();

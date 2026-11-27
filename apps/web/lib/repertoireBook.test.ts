@@ -20,3 +20,16 @@ describe("répertoires complets", () => {
     for (const r of REPERTOIRES) for (const l of r.lines) expect(l.moves.split(" ").length).toBeGreaterThanOrEqual(10);
   });
 });
+
+import { COURSES } from "./openingCourses";
+describe("cours d'ouvertures", () => {
+  it("chaque répertoire a son cours, et tous les coups (structures, pièges) sont légaux", () => {
+    const bad: string[] = [];
+    for (const r of REPERTOIRES) if (!COURSES[r.id]) bad.push(`cours manquant : ${r.id}`);
+    for (const [id, c] of Object.entries(COURSES)) for (const x of [...c.structures, ...c.traps]) {
+      const ch = new Chess();
+      for (const s of x.moves.split(" ")) { try { ch.move(s); } catch { bad.push(`${id} / ${"title" in x ? x.title : x.name} : ${s}`); break; } }
+    }
+    expect(bad).toEqual([]);
+  });
+});

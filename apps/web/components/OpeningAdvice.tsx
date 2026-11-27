@@ -121,7 +121,7 @@ export function OpeningAdvice({ games }: { games: readonly RepertoireGame[] }) {
       <div className="grid gap-2 sm:grid-cols-2">
         {cur.list.map((a, i) => (
           <article key={a.option.id} className={`rounded-lg border p-3 ${i === 0 ? "border-neon/50" : "border-line"}`}>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{i === 0 ? "Notre premier choix" : "Autre option"}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{i === 0 ? "Notre premier choix" : "Autre option"} · {a.current && a.current.games >= 4 && a.current.score >= 50 ? <span className="text-win">à garder</span> : <span className="text-neon">nouvelle</span>}</p>
             <h3 className="font-display text-base font-bold">{a.option.name}</h3>
             <p className="tabular mt-0.5 text-xs text-muted">{a.option.moves.split(" ").map((s, j) => (j % 2 === 0 ? `${j / 2 + 1}.${s}` : s)).join(" ")}</p>
             {a.reasons.length > 0 && (
@@ -131,7 +131,7 @@ export function OpeningAdvice({ games }: { games: readonly RepertoireGame[] }) {
             )}
             <p className="mt-2 text-[13px] leading-snug text-muted"><span className="font-semibold text-text">Le plan : </span>{a.option.plan}</p>
             <div className="mt-2 flex flex-wrap gap-2">
-              <a href={`/repertoire/livre/${a.option.id}`} className="rounded-lg bg-neon/15 px-2.5 py-1 text-xs font-semibold text-neon ring-1 ring-neon/50">Répertoire complet →</a>
+              <a href={`/repertoire/livre/${a.option.id}${a.current && a.current.games >= 4 && a.current.score >= 50 ? "?statut=garder" : ""}`} className="rounded-lg bg-neon/15 px-2.5 py-1 text-xs font-semibold text-neon ring-1 ring-neon/50">Cours et répertoire complet →</a>
               <a href={`/analyse?m=${ucisOf(a.option.moves).join(",")}`} className="rounded-lg border border-line px-2.5 py-1 text-xs font-semibold text-muted hover:text-text">Voir la ligne sur l'échiquier</a>
             </div>
           </article>
