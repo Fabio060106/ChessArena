@@ -15,7 +15,8 @@ export async function POST(req: NextRequest) {
   return proxyToGameServer(req, "/account/imports", { method: "POST", body });
 }
 
-/** Supprime toutes les parties importées. */
+/** Supprime les parties importées (toutes, ou celles d'une origine : ?source=lichess|pgn). */
 export async function DELETE(req: NextRequest) {
-  return proxyToGameServer(req, "/account/imports", { method: "DELETE" });
+  const source = req.nextUrl.searchParams.get("source");
+  return proxyToGameServer(req, `/account/imports${source === "lichess" || source === "pgn" ? `?source=${source}` : ""}`, { method: "DELETE" });
 }

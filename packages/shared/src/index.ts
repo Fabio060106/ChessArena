@@ -262,13 +262,16 @@ export interface RepertoireGame {
   timeControl: TimeControlId;
   pgn: string;
   /** partie importée d'un autre site (absent : jouée sur le site) */
-  source?: "lichess";
+  source?: "lichess" | "pgn";
 }
 
 /** GET /account/imports : parties importées (Lichess) et état du dernier import. */
 export interface ImportsResponse {
   count: number;
+  /** comptes Lichess importés */
   accounts: string[];
+  /** parties par origine (Lichess, fichiers PGN) */
+  sources?: { lichess: number; pgn: number };
   status: { state: "idle" | "running" | "done" | "error"; account: string | null; found: number; added: number; error: string | null };
   /** ouvertures les plus jouées dans les parties importées */
   openings: Array<{ name: string; color: Color; games: number; score: number }>;
@@ -754,4 +757,69 @@ export interface WithdrawalView {
   currency: "EUR";
   status: "processing" | "sent" | "cancelled";
   createdAt: string;
+}
+
+// ─── Fichiers PGN (import de parties, base de maîtres) ───────────────────────
+/** Une partie d'un fichier PGN, avant lecture des coups : ses en-têtes et le texte des coups. */
+export interface PgnGameText { tags: Record<string, string>; movetext: string }
+
+/** Découpe un fichier PGN (plusieurs parties, éventuellement exporté par ChessBase) en parties. */
+export function splitPgnGames(text: string): PgnGameText[] {
+  const out: PgnGameText[] = [];
+  let cur: PgnGameText | null = null;
+  let inMoves = false;
+  for (const raw of text.replace(/^﻿/, "").split(/\r?\n/)) {
+    const line = raw.trim();
+    const tag = /^\[([A-Za-z0-9_]+)\s+"((?:[^"\\]|\\.)*)"\s*\]$/.exec(line);
+    if (tag) {
+      if (!cur || inMoves) { cur = { tags: {}, movetext: "" }; out.push(cur); inMoves = false; }
+      cur.tags[tag[1]!] = tag[2]!.replace(/\\(.)/g, "$1");
+      continue;
+    }
+    if (!line || line.startsWith("%")) continue;
+    if (!cur) { cur = { tags: {}, movetext: "" }; out.push(cur); }
+    inMoves = true;
+    cur.movetext += `${line} `;
+  }
+  return out.filter((g) => g.movetext.trim() || Object.keys(g.tags).length);
+}
+
+/**
+ * Les coups (SAN) de la ligne principale, sans commentaires, variantes, NAG ni numéros de coups.
+ * Les annotations d'auteurs ne sont jamais gardées : seuls les coups et le résultat comptent.
+ */
+export function pgnMainline(movetext: string): string[] {
+  let s = "";
+  let depth = 0;
+  for (let i = 0; i < movetext.length; i++) {
+    const ch = movetext[i]!;
+    if (ch === "{") { const j = movetext.indexOf("}", i); i = j < 0 ? movetext.length : j; s += " "; continue; }
+    if (ch === ";") { const j = movetext.indexOf("\n", i); i = j < 0 ? movetext.length : j; s += " "; continue; }
+    if (ch === "(") { depth++; s += " "; continue; }
+    if (ch === ")") { depth = Math.max(0, depth - 1); s += " "; continue; }
+    if (depth === 0) s += ch;
+  }
+  const out: string[] = [];
+  for (let t of s.split(/\s+/)) {
+    t = t.replace(/^\d+\.+/, "");
+    if (!t || /^\$\d+$/.test(t) || /^\d+\.*$/.test(t)) continue;
+    if (/^(1-0|0-1|1\/2-1\/2|½-½|\*)$/.test(t)) break;
+    if (t === "--" || t === "Z0") break;
+    t = t.replace(/[!?]+$/, "").replace(/^0-0-0/, "O-O-O").replace(/^0-0/, "O-O").replace(/e\.p\.$/, "");
+    if (t) out.push(t);
+  }
+  return out;
+}
+
+/** Nom de joueur comparable entre deux écritures (« Carlsen, Magnus » = « Magnus Carlsen », sans accents ni casse). */
+export function pgnPlayerKey(name: string): string {
+  return name.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean).sort().join(" ");
+}
+
+/** Cadence d'une partie d'après l'en-tête TimeControl (« 5400+30 », « 180+2 »…) ; sans en-tête : partie longue (club, tournoi). */
+export function pgnSpeed(tc: string | undefined): "bullet" | "blitz" | "rapid" | "classical" {
+  const m = /^(\d+)(?:\+(\d+))?$/.exec((tc ?? "").trim());
+  if (!m) return "classical";
+  const est = Number(m[1]) + 40 * Number(m[2] ?? 0);
+  return est < 180 ? "bullet" : est < 480 ? "blitz" : est < 1500 ? "rapid" : "classical";
 }

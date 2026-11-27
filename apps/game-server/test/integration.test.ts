@@ -848,4 +848,17 @@ describe("import de parties Lichess", () => {
     expect(await (await api("DELETE", "/account/imports")).json()).toEqual({ deleted: 2 });
     expect((await (await api("GET", "/account/imports")).json() as { count: number }).count).toBe(0);
   });
+  it("fichier PGN → parties du joueur dans le répertoire, sans doublon, suppression par origine", async () => {
+    const pgn = `[White "Dupont, Jean"]\n[Black "Martin"]\n[Result "1-0"]\n[Date "2024.03.17"]\n\n1. e4 {note} e5 2. Nf3 (2. f4) Nc6 3. Bb5 a6 1-0\n\n[White "X"]\n[Black "Y"]\n[Result "0-1"]\n\n1. d4 d5 2. c4 e6 0-1\n`;
+    expect((await api("POST", "/account/imports/pgn", { pgn, players: [] })).status).toBe(400);
+    expect(await (await api("POST", "/account/imports/pgn", { pgn, players: ["Jean Dupont"] })).json()).toEqual({ found: 1, added: 1, skipped: 1 });
+    expect(await (await api("POST", "/account/imports/pgn", { pgn, players: ["Jean Dupont"] })).json()).toEqual({ found: 1, added: 0, skipped: 1 });
+    const rep = await (await api("GET", "/account/repertoire")).json() as { games: Array<{ gameId: string; source?: string; pgn: string; color: string; outcome: string }> };
+    const g = rep.games.find((x) => x.source === "pgn")!;
+    expect(g).toMatchObject({ color: "w", outcome: "win" });
+    expect(g.pgn).toContain("1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0");
+    expect(g.pgn).not.toContain("note");
+    expect((await (await api("GET", "/account/imports")).json() as { sources: { pgn: number } }).sources.pgn).toBe(1);
+    expect(await (await api("DELETE", "/account/imports?source=pgn")).json()).toEqual({ deleted: 1 });
+  });
 });

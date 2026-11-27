@@ -40,6 +40,7 @@ export function ImportLichess({ onImported, defaultOpen = false }: { onImported:
 
   // pendant l'import : on suit l'avancement, puis on recharge le répertoire
   const running = data?.status.state === "running";
+  const lc = data ? (data.sources?.lichess ?? data.count) : 0;
   useEffect(() => {
     if (!running) {
       if (wasRunning.current) {
@@ -68,7 +69,7 @@ export function ImportLichess({ onImported, defaultOpen = false }: { onImported:
   };
   const remove = async () => {
     if (!window.confirm("Supprimer toutes les parties importées de Lichess ? (ton répertoire enregistré est conservé)")) return;
-    await fetch("/api/imports", { method: "DELETE" }).catch(() => null);
+    await fetch("/api/imports?source=lichess", { method: "DELETE" }).catch(() => null);
     await load();
     onImported();
   };
@@ -79,10 +80,10 @@ export function ImportLichess({ onImported, defaultOpen = false }: { onImported:
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-display text-sm font-bold">Mes parties Lichess</h2>
         <p className="text-xs text-muted">
-          {data?.count ? `${data.count} partie${data.count > 1 ? "s" : ""} importée${data.count > 1 ? "s" : ""} (${data.accounts.join(", ")}) · elles comptent dans ton répertoire` : "Importe tes parties pour construire ton répertoire à partir de ce que tu joues vraiment."}
+          {lc ? `${lc} partie${lc > 1 ? "s" : ""} Lichess importée${lc > 1 ? "s" : ""} (${data!.accounts.join(", ")}) · elles comptent dans ton répertoire` : "Importe tes parties pour construire ton répertoire à partir de ce que tu joues vraiment."}
         </p>
         <button type="button" onClick={() => setOpen((o) => !o)} className="ml-auto rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:text-text" aria-expanded={open}>
-          {data?.count ? "Mettre à jour" : "Importer"}
+          {lc ? "Mettre à jour" : "Importer"}
         </button>
       </div>
       {(open || running) && (
@@ -130,7 +131,7 @@ export function ImportLichess({ onImported, defaultOpen = false }: { onImported:
               </ul>
             </div>
           )}
-          {!!data?.count && !running && <button type="button" onClick={() => void remove()} className="self-start text-xs text-muted underline hover:text-danger">Supprimer les parties importées</button>}
+          {!!lc && !running && <button type="button" onClick={() => void remove()} className="self-start text-xs text-muted underline hover:text-danger">Supprimer les parties Lichess importées</button>}
         </div>
       )}
     </section>

@@ -122,6 +122,8 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect(await repo.saveImportedGames("imp-a", [g("BBBBBBBB", "2026-11-02T10:00:00Z"), g("CCCCCCCC", "2026-10-01T10:00:00Z")])).toBe(1);
     expect((await repo.listImportedGames("imp-a", 10)).map((x) => x.extId)).toEqual(["BBBBBBBB", "AAAAAAAA", "CCCCCCCC"]);
     expect(await repo.listImportedGames("imp-b", 10)).toEqual([]);
+    expect(await repo.saveImportedGames("imp-a", [{ ...g("pgn1", "2024-03-17T12:00:00Z"), source: "pgn" }])).toBe(1);
+    expect(await repo.deleteImportedGames("imp-a", "pgn")).toBe(1);
     expect(await repo.deleteImportedGames("imp-a")).toBe(3);
     expect(await repo.listImportedGames("imp-a", 10)).toEqual([]);
   });

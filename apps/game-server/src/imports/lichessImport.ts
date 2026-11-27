@@ -2,7 +2,7 @@ import type { RepertoireGame } from "@chessarena/shared";
 
 /** Une partie importée d'un autre site, vue par le joueur qui l'a importée. */
 export interface ImportedGame {
-  source: "lichess";
+  source: "lichess" | "pgn";
   extId: string;
   account: string;
   playedAt: string;

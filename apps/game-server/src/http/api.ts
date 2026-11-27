@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import jwt from "jsonwebtoken";
 import type pg from "pg";
 import type { RelayService } from "../relay/RelayService.js";
+import { parsePgnImport, PGN_IMPORT_MAX_BYTES } from "../imports/pgnImport.js";
 import { IMPORT_SPEEDS, importedToRepertoire, validLichessName, type ImportService, type ImportSpeed } from "../imports/lichessImport.js";
 import { REVIEW_MAX_BYTES, reviewStoreKey, validReview, type ReviewStore } from "../relay/ReviewStore.js";
 import { REPERTOIRE_MAX_BYTES, SETTINGS_MAX_BYTES, type GameRepository } from "../persistence/GameRepository.js";
@@ -580,7 +581,8 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       const openings = [...by.values()].sort((a, b) => b.games - a.games).slice(0, 40)
         .map((e) => ({ name: e.name, color: e.color, games: e.games, score: Math.round((100 * e.pts) / e.games) }));
       send(200, {
-        count: imported.length, accounts: [...new Set(imported.map((g) => g.account))],
+        count: imported.length, accounts: [...new Set(imported.filter((g) => g.source === "lichess").map((g) => g.account))],
+        sources: { lichess: imported.filter((g) => g.source === "lichess").length, pgn: imported.filter((g) => g.source === "pgn").length },
         status: { state: st.state, account: st.account, found: st.found, added: st.added, error: st.error }, openings,
       });
       return true;
@@ -600,8 +602,20 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       send(202, { ok: true, status: { state: r.state, account: r.account, found: r.found, added: r.added, error: r.error } });
       return true;
     }
+    if (url.pathname === "/account/imports/pgn" && req.method === "POST") {
+      const repo = need(d.repo);
+      const b = await body(req, PGN_IMPORT_MAX_BYTES + 4096);
+      const players = Array.isArray(b.players) ? b.players.filter((x): x is string => typeof x === "string" && x.trim().length > 0 && x.length <= 80).slice(0, 6) : [];
+      if (!players.length) throw new HttpError(400, "BAD_PLAYERS");
+      if (typeof b.pgn !== "string" || !b.pgn.trim()) throw new HttpError(400, "BAD_PGN");
+      const { games, skipped } = parsePgnImport(b.pgn, players);
+      const added = await repo.saveImportedGames(claims.sub, games);
+      send(200, { found: games.length, added, skipped });
+      return true;
+    }
     if (url.pathname === "/account/imports" && req.method === "DELETE") {
-      send(200, { deleted: await need(d.repo).deleteImportedGames(claims.sub) });
+      const source = url.searchParams.get("source");
+      send(200, { deleted: await need(d.repo).deleteImportedGames(claims.sub, source === "lichess" || source === "pgn" ? source : undefined) });
       return true;
     }
     if (url.pathname === "/account/repertoire" && req.method === "PUT") {

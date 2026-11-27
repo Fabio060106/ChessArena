@@ -43,7 +43,7 @@ export interface GameRepository {
   /** Parties importées d'un autre site (Lichess) : ajoutées sans doublon, renvoie le nombre de nouvelles. */
   saveImportedGames(userId: string, games: ImportedGame[]): Promise<number>;
   listImportedGames(userId: string, limit: number): Promise<ImportedGame[]>;
-  deleteImportedGames(userId: string): Promise<number>;
+  deleteImportedGames(userId: string, source?: "lichess" | "pgn"): Promise<number>;
   saveRepertoire(userId: string, data: unknown): Promise<{ updatedAt: string }>;
   /** Réglages du joueur (apparence, son) : petits, retrouvés sur tous ses appareils. */
   getSettings(userId: string): Promise<unknown | null>;
@@ -366,14 +366,16 @@ export class PgGameRepository implements GameRepository {
   }
 
   async listImportedGames(userId: string, limit: number): Promise<ImportedGame[]> {
-    const r = await this.pool.query<{ source: "lichess"; ext_id: string; account: string; played_at: Date; color: "w" | "b"; opponent: string; outcome: ImportedGame["outcome"]; speed: string; opening: string | null; pgn: string }>(
+    const r = await this.pool.query<{ source: "lichess" | "pgn"; ext_id: string; account: string; played_at: Date; color: "w" | "b"; opponent: string; outcome: ImportedGame["outcome"]; speed: string; opening: string | null; pgn: string }>(
       `SELECT source, ext_id, account, played_at, color, opponent, outcome, speed, opening, pgn FROM imported_games
         WHERE user_id = $1 ORDER BY played_at DESC LIMIT $2`, [userId, Math.min(Math.max(1, Math.floor(limit)), 2000)]);
     return r.rows.map((x) => ({ source: x.source, extId: x.ext_id, account: x.account, playedAt: new Date(x.played_at).toISOString(), color: x.color, opponent: x.opponent, outcome: x.outcome, speed: x.speed, opening: x.opening, pgn: x.pgn }));
   }
 
-  async deleteImportedGames(userId: string): Promise<number> {
-    const r = await this.pool.query("DELETE FROM imported_games WHERE user_id = $1", [userId]);
+  async deleteImportedGames(userId: string, source?: "lichess" | "pgn"): Promise<number> {
+    const r = source
+      ? await this.pool.query("DELETE FROM imported_games WHERE user_id = $1 AND source = $2", [userId, source])
+      : await this.pool.query("DELETE FROM imported_games WHERE user_id = $1", [userId]);
     return r.rowCount ?? 0;
   }
   async listFriends(userId: string): Promise<Array<{ userId: string; flag: string | null; rating: number }>> {
@@ -512,9 +514,11 @@ export class InMemoryGameRepository implements GameRepository {
   async listImportedGames(userId: string, limit: number): Promise<ImportedGame[]> {
     return [...(this.imported.get(userId)?.values() ?? [])].sort((a, b) => b.playedAt.localeCompare(a.playedAt)).slice(0, limit);
   }
-  async deleteImportedGames(userId: string): Promise<number> {
-    const n = this.imported.get(userId)?.size ?? 0;
-    this.imported.delete(userId);
+  async deleteImportedGames(userId: string, source?: "lichess" | "pgn"): Promise<number> {
+    const m = this.imported.get(userId);
+    if (!m) return 0;
+    let n = 0;
+    for (const [k, g] of m) if (!source || g.source === source) { m.delete(k); n++; }
     return n;
   }
 

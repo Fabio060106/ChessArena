@@ -26,13 +26,16 @@ function analyseMulti(engine: Engine, fen: string): Promise<EngineLine[]> {
  * Analyse pédagogique d'une partie terminée : calculée une seule fois par Stockfish (dans le navigateur du premier
  * spectateur), puis partagée avec tous via le serveur. Trois vues : résumé, coup par coup, quiz.
  */
-export function GameReviewPanel({ relayId, round, index, sans, ucis, names, result, onGo, getAuth, ply = -1 }: {
-  relayId: string; round: number; index: number;
+export function GameReviewPanel({ relayId, round = 0, index = 0, cacheId, sans, ucis, names, result, onGo, getAuth, ply = -1 }: {
+  /** retransmission : l'analyse est partagée entre spectateurs ; sans retransmission, elle reste sur l'appareil */
+  relayId?: string; round?: number; index?: number;
+  /** identifiant de la partie hors retransmission (cache local) */
+  cacheId?: string;
   sans: readonly string[]; ucis: readonly string[];
   names: { w: string; b: string };
   result: string | null;
   onGo: (ply: number) => void;
-  getAuth: AuthProvider;
+  getAuth?: AuthProvider;
   /** demi-coup affiché sur l'échiquier (surligné dans la partie commentée) */
   ply?: number;
 }) {
@@ -41,18 +44,18 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [failed, setFailed] = useState(false);
   const [tab, setTab] = useState<"lesson" | "opening" | "summary" | "moves" | "quiz">("lesson");
-  const localKey = `arena.teach${TEACHING_VERSION}.${relayId}.${round}.${index}.${sans.length}`;
+  const localKey = relayId ? `arena.teach${TEACHING_VERSION}.${relayId}.${round}.${index}.${sans.length}` : `arena.teach${TEACHING_VERSION}.own.${cacheId ?? sans.join("").slice(0, 80)}.${sans.length}`;
 
   useEffect(() => {
     setReview(null); setFailed(false); setProgress(null);
     let live = true;
     let engine: Engine | null = null;
-    const shared = sharedReview(getAuth);
+    const shared = relayId && getAuth ? sharedReview(getAuth) : null;
     const ok = (r: unknown): r is TeachingReview => !!r && typeof r === "object" && (r as TeachingReview).version === TEACHING_VERSION && Array.isArray((r as TeachingReview).moves) && (r as TeachingReview).moves.length === sans.length;
     (async () => {
       // 1. déjà sur cet appareil ; 2. déjà calculée par un autre spectateur ; 3. on la calcule (et on la partage)
       try { const c = JSON.parse(localStorage.getItem(localKey) ?? "null") as unknown; if (ok(c)) { setReview(c); return; } } catch { /* ignoré */ }
-      const s = await shared.get({ relayId, round, index, plies: sans.length });
+      const s = shared && relayId ? await shared.get({ relayId, round, index, plies: sans.length }) : null;
       if (!live) return;
       if (ok(s)) { setReview(s); try { localStorage.setItem(localKey, JSON.stringify(s)); } catch { /* plein */ } return; }
       try { engine = new Engine(); } catch { setFailed(true); return; }
@@ -72,7 +75,7 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
       const r = buildTeaching({ sans, ucis, fens, lines, names, result, book });
       setReview(r); setProgress(null);
       try { localStorage.setItem(localKey, JSON.stringify(r)); } catch { /* plein */ }
-      shared.save({ relayId, round, index, sans: [...sans], review: r });
+      if (shared && relayId) shared.save({ relayId, round, index, sans: [...sans], review: r });
     })().catch(() => setFailed(true));
     return () => { live = false; (engine as Engine | null)?.terminate(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,7 +88,7 @@ export function GameReviewPanel({ relayId, round, index, sans, ucis, names, resu
       <section className="panel p-3" aria-label="Analyse Stockfish de la partie">
         <p className="text-sm font-semibold">{ENGINE_NAME} prépare l'analyse commentée de la partie…</p>
         <div className="mt-2 h-1.5 overflow-hidden rounded bg-surface-2"><div className="h-full bg-neon transition-all" style={{ width: `${pct}%` }} /></div>
-        <p className="tabular mt-1 text-xs text-muted">{progress ? `${progress.done} / ${progress.total} positions · elle sera ensuite disponible pour tous les spectateurs` : "Recherche d'une analyse déjà faite…"}</p>
+        <p className="tabular mt-1 text-xs text-muted">{progress ? `${progress.done} / ${progress.total} positions${relayId ? " · elle sera ensuite disponible pour tous les spectateurs" : " · elle sera gardée sur cet appareil"}` : "Recherche d'une analyse déjà faite…"}</p>
       </section>
     );
   }

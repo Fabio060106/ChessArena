@@ -6,6 +6,7 @@ import { epdOf, frenchOpening, type OpeningBook } from "./openingBook";
 import { sublineIdea } from "./openingIdeas";
 import { ideaOf, moveFacts } from "./commentary";
 import type { MoveStat } from "./repertoire";
+import type { MasterMove } from "./masterDb";
 
 /**
  * Le « coach » de l'arbre de répertoire : dans chaque position, ce qu'un GM dirait à côté de l'échiquier.
@@ -43,6 +44,8 @@ export interface CoachMove {
   theory: { name: string; eco: string; idea: string | null } | null;
   /** dans les parties du joueur */
   games: { count: number; score: number } | null;
+  /** dans les parties de maîtres (si la base est installée) : part des parties, score pour le camp au trait, Elo moyen */
+  master: { games: number; share: number; score: number; elo: number; year: number } | null;
 }
 
 export interface CoachView {
@@ -65,6 +68,8 @@ export function coachAt(p: {
   book: OpeningBook | null;
   ref: RefRepertoire | null;
   userMoves: readonly MoveStat[];
+  /** coups des maîtres dans cette position (base de parties, facultative) */
+  master?: readonly MasterMove[];
 }): CoachView {
   const fens = [new Chess().fen(), ...p.line.map((x) => x.fen)];
   const fen = fens.at(-1)!;
@@ -98,7 +103,7 @@ export function coachAt(p: {
   }
   // coups possibles : répertoire, théorie, parties du joueur
   const map = new Map<string, CoachMove>();
-  const add = (uci: string, san: string) => { const m = map.get(uci) ?? { san, uci, rep: [], theory: null, games: null }; map.set(uci, m); return m; };
+  const add = (uci: string, san: string) => { const m = map.get(uci) ?? { san, uci, rep: [], theory: null, games: null, master: null }; map.set(uci, m); return m; };
   const refNode = p.ref?.tree.get(key);
   if (refNode) for (const [san, v] of refNode.moves) add(v.uci, san).rep = v.lines;
   if (p.book) for (const b of p.book.mainBranches(fen)) {
@@ -107,7 +112,10 @@ export function coachAt(p: {
     add(b.uci, b.san).theory = { name: frenchOpening(b.name), eco: b.eco, idea: own && own !== fam ? own.split(/(?<=[.!]) /)[0]! : null };
   }
   for (const m of p.userMoves) add(m.uci, m.san).games = { count: m.count, score: Math.round((100 * m.points) / m.count) };
-  const moves = [...map.values()].sort((a, b) => (b.rep.length ? 1 : 0) - (a.rep.length ? 1 : 0) || (b.games?.count ?? 0) - (a.games?.count ?? 0) || (b.theory ? 1 : 0) - (a.theory ? 1 : 0));
+  const turn: Color = fen.split(" ")[1] === "w" ? "w" : "b";
+  // coups des maîtres : ceux joués dans au moins 3 % des parties (les autres sont des curiosités)
+  for (const m of p.master ?? []) if (m.share >= 3 || map.has(m.uci)) add(m.uci, m.san).master = { games: m.games, share: m.share, score: Math.round((turn === "w" ? m.white : m.black) + m.draw / 2), elo: m.elo, year: m.year };
+  const moves = [...map.values()].sort((a, b) => (b.rep.length ? 1 : 0) - (a.rep.length ? 1 : 0) || (b.games?.count ?? 0) - (a.games?.count ?? 0) || (b.master?.games ?? 0) - (a.master?.games ?? 0) || (b.theory ? 1 : 0) - (a.theory ? 1 : 0));
 
   // pistes à creuser
   const leads: string[] = [];
@@ -117,7 +125,7 @@ export function coachAt(p: {
   const repMove = moves.find((m) => m.rep.length);
   if (mine) {
     const myMain = [...p.userMoves].sort((a, b) => b.count - a.count)[0];
-    if (repMove && myMain && myMain.uci !== repMove.uci) leads.push(`Tu joues surtout ${myMain.san} ici, ton répertoire prévoit ${repMove.san}. Qu'est-ce qui change dans la structure de pions et dans le placement des pièces ?`);
+    if (repMove && myMain && myMain.uci !== repMove.uci) leads.push(`Tu joues surtout ${myMain.san} ici, le répertoire de référence prévoit ${repMove.san}. Qu'est-ce qui change dans la structure de pions et dans le placement des pièces ?`);
     if (theoryOnly.length) leads.push(`La théorie connaît aussi ${theoryOnly.slice(0, 2).map((m) => m.san).join(" et ")} : quelle idée cherche ce coup, et pourquoi ne l'as-tu jamais essayé ?`);
     for (const m of myBad.slice(0, 1)) leads.push(`Avec ${m.san}, tu marques ${m.games!.score} % (${m.games!.count} parties) : rejoue une de ces parties et cherche le moment où le plan s'est perdu.`);
   } else {
@@ -125,6 +133,14 @@ export function coachAt(p: {
     if (often && !often.san.startsWith("O") && !moves.find((x) => x.uci === often.uci)?.rep.length && p.ref) leads.push(`Tes adversaires jouent souvent ${often.san} (${often.count} fois) et ton répertoire ne le couvre pas : quel est le point faible de ce coup ?`);
     if (theoryOnly.length) leads.push(`Tu n'as jamais rencontré ${theoryOnly.slice(0, 2).map((m) => `${m.san}${m.theory?.name.includes(":") ? ` (${m.theory.name.split(":").slice(1).join(":").trim()})` : ""}`).join(", ")} : que ferais-tu contre ?`);
     for (const m of myBad.slice(0, 1)) leads.push(`Contre ${m.san}, ton score est de ${m.games!.score} % : quel plan te manque dans cette position ?`);
+  }
+  // ce que font les maîtres ici
+  const top = [...moves].filter((m) => m.master).sort((a, b) => b.master!.games - a.master!.games)[0];
+  if (top && top.master!.games >= 10) {
+    if (mine && repMove && top.uci !== repMove.uci && !repMove.master) leads.push(`Les maîtres jouent surtout ${top.san} ici (${top.master!.share} % des parties) et presque jamais ${repMove.san}, le coup du répertoire : pourquoi ? Compare les deux structures.`);
+    else if (mine && repMove && top.uci !== repMove.uci) leads.push(`Les maîtres préfèrent ${top.san} (${top.master!.share} %, ${top.master!.score} % de score) au ${repMove.san} du répertoire (${repMove.master!.share} %) : qu'apporte chaque coup ?`);
+    else if (!mine && p.ref && !top.rep.length && !refNode?.moves.size) { /* fin du répertoire : rien à dire de plus */ }
+    else if (!mine && p.ref && !top.rep.length) leads.push(`Chez les maîtres, la réponse la plus jouée est ${top.san} (${top.master!.share} % des parties) et ton répertoire ne la traite pas : prépare un plan contre ce coup.`);
   }
   if (notes.some((n) => n.end)) leads.push("Fin de la ligne du répertoire : quel est le plan de milieu de jeu pour toi ? Cherche une partie de maître avec cette structure.");
   return { name: entry ? frenchOpening(entry.name) : null, eco: entry?.eco ?? null, comment, notes, moves, leads: leads.slice(0, 3) };

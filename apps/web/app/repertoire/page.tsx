@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import type { Color, RepertoireResponse } from "@chessarena/shared";
 import { GameBoard } from "../../components/GameBoard";
 import { ImportLichess } from "../../components/ImportLichess";
+import { ImportPgn } from "../../components/ImportPgn";
+import { OwnGamesList } from "../../components/OwnGamesList";
 import { OpeningAdvice } from "../../components/OpeningAdvice";
 import { useSettings } from "../../lib/settings";
 import { Engine, ENGINE_NAME, pvToSan, scoreToCp, terminalScore, winPct } from "../../lib/engine";
@@ -16,6 +18,7 @@ import {
 } from "../../lib/repertoire";
 import { coachAt, rankRepertoires, refRepertoire, type RefRepertoire } from "../../lib/coach";
 import { loadOpeningBook, type OpeningBook } from "../../lib/openingBook";
+import { loadMasterMeta, masterMoves, type MasterMeta, type MasterMove } from "../../lib/masterDb";
 
 const ANALYSIS_DEPTH = 14;
 const MARK_CLS: Record<string, string> = { "??": "text-danger", "?": "text-[#fb923c]", "?!": "text-gold" };
@@ -171,20 +174,26 @@ export default function RepertoirePage() {
         {loadError && <p role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{loadError}</p>}
         {!resp && !loadError && <p className="px-1 text-sm text-muted">Chargement de tes parties…</p>}
         {resp && (
-          <Dashboard games={resp.games.length} imported={resp.games.filter((g) => g.source === "lichess").length} doc={doc} due={due.length} drillsDue={drillsDue}
+          <Dashboard games={resp.games.length} imported={resp.games.filter((g) => g.source === "lichess" || g.source === "pgn").length} doc={doc} due={due.length} drillsDue={drillsDue}
             lines={drillLines.length} mastered={drillLines.filter((l) => (doc.drills?.[l.key]?.streak ?? 0) >= 2).length}
             onSession={() => { setHub("arbre"); if (due.length) startTraining(); else setMode("drill"); }}
             onGo={(h) => { setHub(h); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
         )}
         {resp && (
           <div className="mb-3 flex gap-1 rounded-xl bg-surface-2 p-1" role="tablist" aria-label="Rubriques du répertoire">
-            {([["arbre", "Mon répertoire"], ["conseils", "Conseils d'ouvertures"], ["parties", "Mes parties Lichess"]] as const).map(([k, label]) => (
+            {([["arbre", "Mon répertoire"], ["conseils", "Conseils d'ouvertures"], ["parties", "Mes parties"]] as const).map(([k, label]) => (
               <button key={k} type="button" role="tab" aria-selected={hub === k} onClick={() => setHub(k)}
                 className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold sm:text-sm ${hub === k ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>{label}</button>
             ))}
           </div>
         )}
-        {resp && hub === "parties" && <ImportLichess onImported={onImported} defaultOpen />}
+        {resp && hub === "parties" && (
+          <div className="flex flex-col gap-3">
+            <ImportLichess onImported={onImported} defaultOpen={resp.games.length < 10} />
+            <ImportPgn onImported={onImported} count={resp.games.filter((g) => g.source === "pgn").length} />
+            <OwnGamesList games={resp.games} />
+          </div>
+        )}
         {resp && hub === "conseils" && <OpeningAdvice games={resp.games} />}
         {resp && hub === "arbre" && (
           <>
@@ -266,6 +275,16 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy, book, refRep }: {
   const rep = mine ? repertoireMove(node, key, doc) : null;
   const card = doc.cards[key];
   const go = (uci: string) => { const r = playUci(fen, uci); if (r) setLine((l) => [...l, { uci, san: r.san, fen: r.fen }]); };
+  // base de parties de maîtres (facultative : rien n'est affiché tant qu'elle n'est pas installée)
+  const [masterMeta, setMasterMeta] = useState<MasterMeta | null>(null);
+  const [master, setMaster] = useState<{ fen: string; moves: MasterMove[] } | null>(null);
+  useEffect(() => { void loadMasterMeta().then(setMasterMeta); }, []);
+  useEffect(() => {
+    if (!masterMeta) return;
+    let live = true;
+    void masterMoves(fen).then((moves) => { if (live) setMaster({ fen, moves }); });
+    return () => { live = false; };
+  }, [fen, masterMeta]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -283,7 +302,7 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy, book, refRep }: {
   if (rep && !repIsError) arrows.push({ from: rep.uci.slice(0, 2), to: rep.uci.slice(2, 4), color: "#22c55e" });
   if (card && (repIsError || card.played !== rep?.uci)) arrows.push({ from: card.played.slice(0, 2), to: card.played.slice(2, 4), color: "#ef4444" });
   const errors = [...cards].sort((a, b) => Number(isDue(b)) - Number(isDue(a)) || b.times - a.times);
-  const coach = coachAt({ line, color: tree.color, book, ref: refRep, userMoves: node?.moves ?? [] });
+  const coach = coachAt({ line, color: tree.color, book, ref: refRep, userMoves: node?.moves ?? [], master: master?.fen === fen ? master.moves : [] });
   const [showNotes, setShowNotes] = useState(false);
 
   return (
@@ -349,6 +368,7 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy, book, refRep }: {
           )}
           <div>
             <p className="mb-1.5 text-[11px] uppercase tracking-wider text-muted">{mine ? "Ton coup ici" : "Les réponses possibles de l'adversaire"}{node ? ` · ${node.total} partie${node.total > 1 ? "s" : ""}` : ""}</p>
+            {masterMeta && <p className="mb-1.5 text-[11px] text-muted">Maîtres : part des parties où le coup est joué · score pour le camp qui le joue ({masterMeta.games.toLocaleString("fr-FR")} parties{masterMeta.minElo ? `, Elo ≥ ${masterMeta.minElo}` : ""}).</p>}
             {coach.moves.length === 0 && <p className="text-sm text-muted">Plus de théorie ni de partie ici : place au jeu ! Utilise l'échiquier d'analyse pour explorer.</p>}
             <ul className="flex flex-col gap-1">
               {coach.moves.map((m) => {
@@ -364,6 +384,7 @@ function TreeView({ tree, doc, cards, paths, onTrain, busy, book, refRep }: {
                           {m.rep.length > 0 && <span className="rounded bg-win/15 px-1.5 text-[11px] font-semibold text-win">★ répertoire</span>}
                           {m.theory && <span className="rounded bg-gold/10 px-1.5 text-[11px] text-gold">théorie</span>}
                           {m.games && <span className="rounded bg-surface-2 px-1.5 text-[11px] text-muted">tes parties : {m.games.count}× · {m.games.score} %</span>}
+                          {m.master && <span className="rounded bg-neon/10 px-1.5 text-[11px] text-neon" title={`${m.master.games} parties de maîtres, Elo moyen ${m.master.elo || "?"}${m.master.year ? `, encore joué en ${m.master.year}` : ""}`}>maîtres : {m.master.share} % · {m.master.score} %</span>}
                           {isErr && <span className="rounded bg-danger/15 px-1.5 text-[11px] text-danger">ton erreur</span>}
                         </span>
                         {m.theory && <span className="mt-0.5 block truncate text-xs text-muted" title={m.theory.name}>{m.theory.name.includes(":") ? m.theory.name.split(":").slice(1).join(":").trim() : m.theory.name}</span>}
@@ -683,7 +704,7 @@ function Dashboard({ games, imported, doc, due, drillsDue, lines, mastered, onSe
     } catch { /* stockage indisponible */ }
   }, []);
   const steps: Array<{ done: boolean; label: string; go: () => void }> = [
-    { done: games >= 10, label: "Importer tes parties Lichess (au moins 10)", go: () => onGo("parties") },
+    { done: games >= 10, label: "Importer tes parties : Lichess ou fichier PGN (au moins 10)", go: () => onGo("parties") },
     { done: styleDone, label: "Lancer l'analyse de ton style (onglet Conseils)", go: () => onGo("conseils") },
     { done: !!(doc.refs && Object.keys(doc.refs).length), label: "Choisir ta théorie de référence (menu au-dessus de l'arbre)", go: () => onGo("arbre") },
     { done: !!(doc.drills && Object.keys(doc.drills).length), label: "Réviser une première ligne de théorie", go: () => onGo("arbre") },
@@ -702,7 +723,7 @@ function Dashboard({ games, imported, doc, due, drillsDue, lines, mastered, onSe
         </button>
       </div>
       <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
-        <div className={tile}><p className="text-[11px] leading-tight text-muted sm:text-xs">Parties</p><p className="tabular text-lg font-bold sm:text-xl">{games}</p><p className="hidden text-[11px] text-muted sm:block">{imported} de Lichess</p></div>
+        <div className={tile}><p className="text-[11px] leading-tight text-muted sm:text-xs">Parties</p><p className="tabular text-lg font-bold sm:text-xl">{games}</p><p className="hidden text-[11px] text-muted sm:block">{imported} importées</p></div>
         <div className={tile}><p className="text-[11px] leading-tight text-muted sm:text-xs">Erreurs corrigées</p><p className="tabular text-lg font-bold sm:text-xl">{fixed}<span className="text-xs font-normal text-muted">/{cards.length}</span></p>
           <div className="mt-1 h-1 rounded bg-ink"><div className="h-full rounded bg-win" style={{ width: `${cards.length ? (100 * fixed) / cards.length : 0}%` }} /></div></div>
         <div className={tile}><p className="text-[11px] leading-tight text-muted sm:text-xs">Lignes maîtrisées</p><p className="tabular text-lg font-bold sm:text-xl">{mastered}<span className="text-xs font-normal text-muted">/{lines}</span></p>

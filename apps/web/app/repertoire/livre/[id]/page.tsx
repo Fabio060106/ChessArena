@@ -11,9 +11,10 @@ import { repertoireById, type RepertoireDef } from "../../../../lib/repertoireBo
 import { courseOf } from "../../../../lib/openingCourses";
 import { buildExercises, buildTree, compareGames, learningPlan, type StudyReport } from "../../../../lib/repertoireStudy";
 import { frenchOpening, loadOpeningBook, type OpeningBook } from "../../../../lib/openingBook";
+import { loadMasterMeta, masterModels, type MasterMeta, type MasterModels } from "../../../../lib/masterDb";
 
-type Tab = "cours" | "lignes" | "exercices" | "parties" | "plan";
-const TABS: Array<[Tab, string]> = [["cours", "Cours"], ["lignes", "Lignes"], ["exercices", "Exercices"], ["parties", "Mes parties"], ["plan", "Plan"]];
+type Tab = "cours" | "lignes" | "maitres" | "exercices" | "parties" | "plan";
+const TABS: Array<[Tab, string]> = [["cours", "Cours"], ["lignes", "Lignes"], ["maitres", "Maîtres"], ["exercices", "Exercices"], ["parties", "Mes parties"], ["plan", "Plan"]];
 
 /** PGN du répertoire : une partie par sous-ligne (ChessBase, Lichess et les autres logiciels les lisent). */
 function toPgn(sections: RepertoireDef[]): string {
@@ -50,6 +51,17 @@ function RepertoireBook() {
   const [answer, setAnswer] = useState<{ good: boolean } | null>(null);
   const [score, setScore] = useState({ ok: 0, done: 0 });
   useEffect(() => { void loadOpeningBook().then(setBook); }, []);
+  // parties modèles (base de maîtres, si elle est installée)
+  const [masters, setMasters] = useState<{ meta: MasterMeta | null; models: Record<string, MasterModels> } | null>(null);
+  useEffect(() => {
+    if (tab !== "maitres" || masters) return;
+    void (async () => {
+      const meta = await loadMasterMeta();
+      const models: Record<string, MasterModels> = {};
+      if (meta) for (const r of sections) { const m = await masterModels(r.id); if (m) models[r.id] = m; }
+      setMasters({ meta, models });
+    })();
+  }, [tab, masters, sections]);
   useEffect(() => {
     if (!rep) return;
     void fetch("/api/repertoire", { cache: "no-store" })
@@ -63,7 +75,7 @@ function RepertoireBook() {
   const steps = useMemo(() => (shown ? replayFromSans(shown.moves.split(" ")) : replayFromSans([])), [shown]);
   const last = steps.length - 1;
   const cur = ply < 0 || ply > last ? last : ply;
-  const show = (moves: string, label: string) => { setShown({ moves, label }); setPly(-1); };
+  const show = (moves: string, label: string, at = -1) => { setShown({ moves, label }); setPly(at); };
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (tab === "exercices") return;
@@ -219,6 +231,41 @@ function RepertoireBook() {
               </ol>
             </section>
           ))}
+
+          {tab === "maitres" && (
+            <section className="panel flex flex-col gap-2 p-3" aria-label="Parties modèles">
+              {!masters && <p className="text-sm text-muted">Chargement…</p>}
+              {masters && !masters.meta && (
+                <p className="text-sm text-muted">Les parties modèles arrivent bientôt : pour chaque ligne de ce répertoire, tu pourras rejouer les meilleures parties de grands maîtres, en partant de la position de fin de ligne pour voir comment ils mènent le milieu de jeu.</p>
+              )}
+              {masters?.meta && (
+                <>
+                  <p className="text-xs text-muted">Pour chaque ligne : des parties de maîtres passées par sa position finale (ou quelques coups avant). L'échiquier s'ouvre en fin de ligne : avance coup par coup et demande-toi quel plan suit chaque camp. {masters.meta.source}.</p>
+                  {sections.flatMap((r) => r.lines.map((l) => ({ r, l, games: masters.models[r.id]?.[l.name] ?? [] }))).filter((x) => x.games.length).map(({ r, l, games }) => (
+                    <div key={r.id + l.name} className={card}>
+                      <h3 className="text-sm font-semibold">{l.name}</h3>
+                      <ul className="mt-1 flex flex-col gap-1">
+                        {games.map((g, i) => {
+                          const label = `${g.w} – ${g.b}${g.y ? `, ${g.y}` : ""}`;
+                          const active = shown?.label === label && shown.moves === g.m.join(" ");
+                          return (
+                            <li key={i}>
+                              <button type="button" onClick={() => show(g.m.join(" "), label, l.moves.split(" ").length)}
+                                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[13px] ${active ? "bg-neon/10 text-neon" : "hover:bg-surface-2"}`}>
+                                <span className="min-w-0 flex-1 truncate">{g.w}{g.we ? ` (${g.we})` : ""} – {g.b}{g.be ? ` (${g.be})` : ""}<span className="text-muted">{g.ev ? ` · ${g.ev}` : ""}{g.y ? ` · ${g.y}` : ""}</span></span>
+                                <span className="tabular shrink-0 text-xs font-semibold">{g.r === "1/2-1/2" ? "½-½" : g.r}</span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ))}
+                  {!sections.some((r) => r.lines.some((l) => masters.models[r.id]?.[l.name]?.length)) && <p className="text-sm text-muted">La base ne contient pas encore de partie pour les lignes de ce répertoire.</p>}
+                </>
+              )}
+            </section>
+          )}
 
           {tab === "exercices" && (
             <section className="panel flex flex-col gap-2 p-3" aria-label="Exercices">
