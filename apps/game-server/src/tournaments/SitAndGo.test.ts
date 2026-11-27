@@ -6,13 +6,14 @@ import type { FinishedGame } from "../game/GameRoom.js";
 
 const BUY_IN = 500;
 
-function setup(size: number, opts: { buyIn?: number; random?: () => number; swiss?: number | true; payoutBps?: number[]; pause?: number } = {}) {
+function setup(size: number, opts: { buyIn?: number; random?: () => number; swiss?: number | true; payoutBps?: number[]; pause?: number; arena?: number; clock?: { t: number } } = {}) {
   const ledger = new InMemoryLedger();
   const started: StartGameRequest[] = [];
   const snapshots: SngSnapshot[] = [];
   const sng = new SitAndGo(
     { id: "T1", formatId: "f", size, timeControl: "blitz_3_0", currency: "PLAY", buyInCents: opts.buyIn ?? BUY_IN, rakeBps: 1000, payoutBps: opts.payoutBps ?? [6500, 3500],
-      ...(opts.swiss ? { system: "swiss" as const, swissRounds: opts.swiss === true ? 0 : opts.swiss } : {}) },
+      ...(opts.swiss ? { system: "swiss" as const, swissRounds: opts.swiss === true ? 0 : opts.swiss } : {}),
+      ...(opts.arena ? { system: "arena" as const, arenaMinutes: opts.arena } : {}) },
     {
       ledger,
       startGame: async (r) => { started.push(r); return r.gameId; },
@@ -20,6 +21,8 @@ function setup(size: number, opts: { buyIn?: number; random?: () => number; swis
       emit: () => {},
       random: opts.random ?? (() => 0.1), // p1 a les Blancs en partie principale
       swissPauseMs: opts.pause,
+      arenaTickMs: 0,
+      ...(opts.clock ? { now: () => opts.clock!.t } : {}),
     },
   );
   const fund = async (u: string, c = 10_000) => ledger.faucet(u, c, `seed-${u}`);
@@ -460,5 +463,114 @@ describe("SitAndGo — système suisse", () => {
   it("refuse plus de 3 places payées, ou un nombre de rondes invalide", () => {
     expect(() => setup(8, { swiss: true, payoutBps: [4000, 3000, 2000, 1000] })).toThrow(SngError);
     expect(() => setup(8, { swiss: 99 })).toThrow(SngError);
+  });
+});
+
+describe("SitAndGo — Arena", () => {
+  const MIN = 60_000;
+  /** parties en cours (pas encore terminées) */
+  const live = (t: ReturnType<typeof setup>) => {
+    const done = new Set(t.sng.snapshot().rounds.flat().flatMap((m) => m.games.filter((g) => g.result).map((g) => g.gameId)));
+    return t.started.filter((r) => !done.has(r.gameId));
+  };
+
+  it("parties enchaînées : appariement des joueurs libres à chaque vague, série en feu, fin à l'heure, gains", async () => {
+    const clock = { t: Date.parse("2026-11-28T20:00:00Z") };
+    const t = setup(8, { arena: 30, clock, payoutBps: [5000, 3000, 2000] });
+    await t.fill(4);
+    expect(t.sng.state).toBe("registering"); // une arena ne part pas toute seule
+    await t.sng.startNow();
+    let s = t.sng.snapshot();
+    expect(s).toMatchObject({ system: "arena", arenaMinutes: 30, status: "running", arenaEndsAt: "2026-11-28T20:30:00.000Z" });
+    expect(live(t)).toHaveLength(2); // 4 joueurs : 2 parties tout de suite
+
+    // u1 gagne trois fois de suite : 2, 2, puis 4 (en feu)
+    for (let i = 0; i < 3; i++) {
+      await t.win("u1");
+      // l'autre partie se termine aussi pour libérer des adversaires
+      for (const r of live(t)) if (r.white.userId !== "u1" && r.black.userId !== "u1") await t.finish(r, "1/2-1/2");
+      clock.t += MIN;
+      await t.sng.arenaTick();
+    }
+    s = t.sng.snapshot();
+    const u1 = s.players.find((p) => p.userId === "u1")!;
+    expect(u1.sheet).toEqual([2, 2, 4]);
+    expect(u1.points).toBe(8);
+    expect(u1.fire).toBe(true);
+    // on ne rejoue pas tout de suite son dernier adversaire (4 joueurs : il y a toujours un autre choix)
+    const games = s.rounds[0]!;
+    for (const p of ["u1", "u2", "u3", "u4"]) {
+      const opp = games.filter((m) => m.p1 === p || m.p2 === p).map((m) => (m.p1 === p ? m.p2 : m.p1));
+      for (let i = 1; i < opp.length; i++) expect(opp[i]).not.toBe(opp[i - 1]);
+    }
+
+    // fin : plus de nouvel appariement après l'heure, les parties en cours comptent encore
+    clock.t = Date.parse("2026-11-28T20:30:01Z");
+    const before = t.started.length;
+    await t.sng.arenaTick();
+    expect(t.started.length).toBe(before);
+    expect(t.sng.state).toBe("running"); // des parties sont encore en cours
+    for (const r of live(t)) await t.finish(r, "1-0");
+    s = t.sng.snapshot();
+    expect(s.status).toBe("finished");
+    expect(s.players.find((p) => p.finalRank === 1)!.userId).toBe("u1");
+    // cagnotte nette : 4 × 500 − 10 % = 1 800 → 900 / 540 / 360 ; escrow vidé
+    expect(s.players.filter((p) => p.payoutCents > 0).map((p) => p.payoutCents).sort((a, b) => b - a)).toEqual([900, 540, 360]);
+    expect(await t.ledger.balance(t.sng.escrowAccount, "PLAY")).toBe(0);
+  });
+
+  it("arrivée en cours de route (payée), pause et reprise, plus d'arrivée dans la dernière minute", async () => {
+    const clock = { t: Date.parse("2026-11-28T20:00:00Z") };
+    const t = setup(8, { arena: 20, clock });
+    await t.fill(3);
+    await t.sng.startNow();
+    expect(live(t)).toHaveLength(1); // 3 joueurs : un attend
+    await t.fund("late");
+    await t.sng.register("late", 1700);
+    expect(await t.bal("late")).toBe(10_000 - 500);
+    await t.sng.arenaTick();
+    expect(live(t)).toHaveLength(2); // le retardataire est apparié avec celui qui attendait
+    expect(t.sng.snapshot().players.find((p) => p.userId === "late")).toMatchObject({ status: "playing", points: 0 });
+
+    // pause : plus d'adversaire pour u1 après sa partie
+    await t.sng.setPaused("u1", true);
+    for (const r of live(t)) await t.finish(r, "1-0");
+    await t.sng.arenaTick();
+    expect(live(t).some((r) => r.white.userId === "u1" || r.black.userId === "u1")).toBe(false);
+    expect(t.sng.snapshot().players.find((p) => p.userId === "u1")!.paused).toBe(true);
+    await t.sng.setPaused("u1", false);
+    for (const r of live(t)) await t.finish(r, "1/2-1/2");
+    await t.sng.arenaTick();
+    expect(live(t).some((r) => r.white.userId === "u1" || r.black.userId === "u1")).toBe(true);
+
+    clock.t = Date.parse("2026-11-28T20:19:30Z");
+    await t.fund("trop-tard");
+    await expect(t.sng.register("trop-tard", 1500)).rejects.toMatchObject({ code: "NOT_REGISTERING" });
+  });
+
+  it("premier coup non joué : 0 pour le responsable, l'adversaire garde sa série ; annulée sans responsable : rien ne compte", async () => {
+    const clock = { t: Date.parse("2026-11-28T20:00:00Z") };
+    const t = setup(4, { arena: 30, clock, buyIn: 0 });
+    await t.fill(2);
+    await t.fund("u3"); await t.sng.register("u3", 1500);
+    await t.sng.startNow();
+    const [g] = live(t);
+    const culprit = g!.white.userId;
+    await t.finish(g!, "1/2-1/2", { aborted: true, abortedBy: "w", termination: "aborted" });
+    let p = t.sng.snapshot().players.find((x) => x.userId === culprit)!;
+    expect(p.sheet).toEqual([0]);
+    const other = t.sng.snapshot().players.find((x) => x.userId === g!.black.userId)!;
+    expect(other.sheet).toEqual([]);
+    clock.t += MIN;
+    await t.sng.arenaTick();
+    const [g2] = live(t);
+    await t.finish(g2!, "1/2-1/2", { aborted: true, abortedBy: null, termination: "aborted" });
+    p = t.sng.snapshot().players.find((x) => x.userId === g2!.white.userId)!;
+    expect(p.sheet.length).toBeLessThanOrEqual(1);
+    expect(t.sng.snapshot().players.reduce((a, x) => a + (x.points ?? 0), 0)).toBe(0);
+  });
+
+  it("refuse une durée d'arena non proposée", () => {
+    expect(() => setup(8, { arena: 17 })).toThrow(SngError);
   });
 });

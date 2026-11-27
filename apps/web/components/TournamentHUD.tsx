@@ -1,8 +1,8 @@
 "use client";
 import { memo, useEffect, useState } from "react";
 import { SITE_NAME } from "../lib/site";
-import { SNG_MAX_SIZE, SNG_MIN_SIZE, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
-import { defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
+import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
+import { ARENA_RULES, arenaJoinable, arenaRows, isArena, remaining, defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
 
 const TC_LABEL: Record<TimeControlId, string> = {
   bullet_1_0: "Bullet 1+0", blitz_3_0: "Blitz 3+0", blitz_3_2: "Blitz 3+2", rapid_5_0: "Rapide 5+0",
@@ -49,6 +49,8 @@ interface Props {
   invite: SngSnapshot | null;
   /** lien vers la page du tournoi (absent sur la page du tournoi elle-même) */
   pageLink?: boolean;
+  /** arena : pause / reprise */
+  onPause?: (tournamentId: string, paused: boolean) => void;
 }
 
 /** Lien d'invitation d'un tournoi (page de jeu avec ?t=<id>). */
@@ -58,7 +60,7 @@ export function inviteLink(tournamentId: string): string {
 
 const isCustom = (t: SngSnapshot) => t.formatId.startsWith("custom:");
 /** « Suisse · 5 rondes » ou « Élimination directe » */
-const formatOf = (t: SngSnapshot) => isSwiss(t) ? `Suisse · ${t.totalRounds ?? swissRoundsFor(t.size)} rondes` : "Élimination directe";
+const formatOf = (t: SngSnapshot) => isArena(t) ? `Arena · ${t.arenaMinutes} min` : isSwiss(t) ? `Suisse · ${t.totalRounds ?? swissRoundsFor(t.size)} rondes` : "Élimination directe";
 const titleOf = (t: SngSnapshot) => t.name ?? (t.createdBy ? `Tournoi de ${t.createdBy}` : `Sit & Go ${t.size} joueurs`);
 
 /**
@@ -79,7 +81,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
     <section className="flex flex-col gap-3" aria-label="Tournoi en cours">
       <header className="flex items-start justify-between gap-2">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-neon">{isCustom(t) ? titleOf(t) : "Sit & Go"} · {fieldSize(t)} joueurs{isSwiss(t) ? ` · ${formatOf(t)}` : ""}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-neon">{isCustom(t) ? titleOf(t) : "Sit & Go"} · {fieldSize(t)} joueurs{isSwiss(t) || isArena(t) ? ` · ${formatOf(t)}` : ""}</p>
           <h2 className="font-display text-lg font-bold">{TC_LABEL[t.timeControl]} · entrée {formatMoney(t.buyInCents, t.currency)}</h2>
         </div>
         <StatusChip t={t} registered={registered} />
@@ -90,7 +92,9 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
 
       {t.status === "registering" && t.startsAt && <StartsBanner iso={t.startsAt} />}
 
-      {waiting && (
+      {isArena(t) && t.status === "running" && me?.status === "playing" && <ArenaMe t={t} userId={p.userId} busy={p.busy === `pause:${t.id}`} onPause={(x) => p.onPause?.(t.id, x)} />}
+
+      {waiting && !isArena(t) && (
         <p role="status" className="rounded-lg border border-win/40 bg-win/10 px-3 py-2 text-sm text-win">
           {isSwiss(t)
             ? (waiting === "bye" ? "Tu es exempt à cette ronde : 1 point d'office." : "Partie terminée ✓") + (t.currentRound < (t.totalRounds ?? 0) ? (t.nextRoundAt ? " La ronde suivante démarre dans quelques secondes." : " La ronde suivante démarre dès que toutes les parties sont finies.") : " Classement final dès que la dernière partie est finie.")
@@ -104,7 +108,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
           <div className="pointer-events-none absolute -right-10 -top-10 size-40 rounded-full bg-neon/10 blur-2xl" />
           <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Tournoi gratuit</p>
           <p className="font-display text-2xl font-bold text-gold">🏆 Pour le titre</p>
-          <p className="mt-1 text-sm text-muted">{isSwiss(t) ? `Système suisse en ${t.totalRounds ?? swissRoundsFor(t.size)} rondes · tout le monde joue chaque ronde · parties classées Elo.` : "Élimination directe · revanche puis Armageddon en cas de nulle · parties classées Elo."}</p>
+          <p className="mt-1 text-sm text-muted">{isArena(t) ? `Arena de ${t.arenaMinutes} minutes · parties enchaînées, séries 🔥 · parties classées Elo.` : isSwiss(t) ? `Système suisse en ${t.totalRounds ?? swissRoundsFor(t.size)} rondes · tout le monde joue chaque ronde · parties classées Elo.` : "Élimination directe · revanche puis Armageddon en cas de nulle · parties classées Elo."}</p>
         </div>
       ) : (
       <div className="panel relative overflow-hidden p-4">
@@ -134,11 +138,11 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
 
       <details className="panel p-3 text-xs text-muted">
         <summary className="cursor-pointer font-semibold text-text">Comment se joue le tournoi ?</summary>
-        <ul className="mt-2 list-disc space-y-1 pl-4">{(isSwiss(t) ? SWISS_RULES : KNOCKOUT_RULES).map((r) => <li key={r}>{r}</li>)}</ul>
+        <ul className="mt-2 list-disc space-y-1 pl-4">{(isArena(t) ? ARENA_RULES : isSwiss(t) ? SWISS_RULES : KNOCKOUT_RULES).map((r) => <li key={r}>{r}</li>)}</ul>
       </details>
 
       {/* Classement live */}
-      {isSwiss(t) && t.status !== "registering" ? <SwissTable t={t} userId={p.userId} /> : (
+      {isArena(t) && t.status !== "registering" ? <ArenaTable t={t} userId={p.userId} /> : isSwiss(t) && t.status !== "registering" ? <SwissTable t={t} userId={p.userId} /> : (
       <div className="panel p-3">
         <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Classement live</h3>
         <ol className="flex flex-col gap-0.5">
@@ -154,8 +158,9 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
 
       {/* Appariements */}
       {/* tour en cours puis tours précédents : on garde la trace de chaque match (nulles, revanches, Armageddon) */}
+      {isArena(t) && t.rounds[0]?.length ? <ArenaGames t={t} userId={p.userId} /> : null}
       {pairings && isSwiss(t) && <SwissRounds t={t} userId={p.userId} />}
-      {pairings && !isSwiss(t) && Array.from({ length: pairings.round + 1 }, (_, i) => pairings.round - i).map((r) => (
+      {pairings && !isSwiss(t) && !isArena(t) && Array.from({ length: pairings.round + 1 }, (_, i) => pairings.round - i).map((r) => (
         <div key={r} className="panel p-3">
           <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">{roundLabel(r, t.rounds.length - 1)}</h3>
           <ul className="flex max-h-[50vh] flex-col gap-1.5 overflow-y-auto">
@@ -204,7 +209,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
 
 function StatusChip({ t, registered }: { t: SngSnapshot; registered: number }) {
   const label = t.status === "registering" ? `Inscriptions ${registered}/${t.size}`
-    : t.status === "running" ? (isSwiss(t) ? `Ronde ${t.currentRound}/${t.totalRounds}` : "En cours") : t.status === "finished" ? "Terminé" : "Annulé";
+    : t.status === "running" ? (isArena(t) && t.arenaEndsAt ? <ArenaClock iso={t.arenaEndsAt} /> : isSwiss(t) ? `Ronde ${t.currentRound}/${t.totalRounds}` : "En cours") : t.status === "finished" ? "Terminé" : "Annulé";
   const tone = t.status === "running" ? "border-neon/50 text-neon" : t.status === "finished" ? "border-gold/50 text-gold" : "border-line text-muted";
   return <span className={`shrink-0 rounded-full border px-2.5 py-1 text-xs font-semibold ${tone}`}>{label}</span>;
 }
@@ -280,7 +285,8 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   const [tc, setTc] = useState<TimeControlId>("blitz_3_0");
   const [entry, setEntry] = useState(0);
   const [name, setName] = useState("");
-  const [system, setSystem] = useState<"swiss" | "ko">("swiss");
+  const [system, setSystem] = useState<"swiss" | "arena" | "ko">("swiss");
+  const [minutes, setMinutes] = useState(45);
   const [rounds, setRounds] = useState(0);
   const [when, setWhen] = useState<"full" | "time">("full");
   const [startAt, setStartAt] = useState(defaultStart);
@@ -297,7 +303,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   }
   const pool = Math.floor(entry * size * 0.9);
   return (
-    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString() } : {}) }); }}>
+    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(system === "arena" ? { arenaMinutes: minutes } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString() } : {}) }); }}>
       <div className="flex items-center justify-between">
         <h3 className="font-display text-base font-bold">Nouveau tournoi</h3>
         <button type="button" onClick={() => setOpen(false)} className="text-xs text-muted hover:text-text">Fermer</button>
@@ -309,9 +315,10 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
       </label>
       <div className="flex flex-col gap-1 text-xs text-muted">
         Format
-        <div className="grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1">
+        <div className="grid grid-cols-3 gap-1 rounded-xl bg-surface-2 p-1">
           <button type="button" aria-pressed={system === "swiss"} onClick={() => setSystem("swiss")} className={`${pick} ${system === "swiss" ? on : off}`}>Suisse</button>
-          <button type="button" aria-pressed={system === "ko"} onClick={() => setSystem("ko")} className={`${pick} ${system === "ko" ? on : off}`}>Élimination directe</button>
+          <button type="button" aria-pressed={system === "arena"} onClick={() => setSystem("arena")} className={`${pick} ${system === "arena" ? on : off}`}>Arena</button>
+          <button type="button" aria-pressed={system === "ko"} onClick={() => setSystem("ko")} className={`${pick} px-1 ${system === "ko" ? on : off}`}>Élimination</button>
         </div>
       </div>
       <div className="flex flex-col gap-1 text-xs text-muted">
@@ -327,6 +334,14 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
           </div>
         </div>
       </div>
+      {system === "arena" && (
+        <div className="flex flex-col gap-1 text-xs text-muted">
+          Durée
+          <div className="grid grid-cols-6 gap-1 rounded-xl bg-surface-2 p-1">
+            {ARENA_MINUTES.map((x) => <button key={x} type="button" aria-pressed={minutes === x} onClick={() => setMinutes(x)} className={`tabular ${pick} px-1 ${minutes === x ? on : off}`}>{x < 60 ? `${x}′` : `${x / 60} h`}</button>)}
+          </div>
+        </div>
+      )}
       {system === "swiss" && (
         <div className="flex flex-col gap-1 text-xs text-muted">
           Rondes
@@ -359,11 +374,13 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
         </div>
       </div>
       <p className="text-xs leading-relaxed text-muted">
-        {system === "swiss"
+        {system === "arena"
+          ? `Jusqu'à ${size} joueurs pendant ${minutes} minutes : un nouvel adversaire dès que ta partie est finie, victoire 2 points, série 🔥 après deux victoires (victoires à 4). On peut arriver en cours de route.${entry > 0 ? ` Cagnotte ≈ ${formatMoney(pool, "PLAY")}.` : ""}`
+          : system === "swiss"
           ? `${size} joueurs : ${swissRoundsFor(size, rounds)} rondes, tout le monde joue chaque ronde (victoire 1, nulle ½). Les rondes s'adaptent au nombre d'inscrits.${entry > 0 ? ` Cagnotte ≈ ${formatMoney(pool, "PLAY")} (${size >= 8 ? "50 % / 30 % / 20 %" : "65 % / 35 %"}).` : ""}`
           : <>{(() => { const b = bracketInfo(size); return `${size} joueurs : ${b.rounds} tour${b.rounds > 1 ? "s" : ""}${b.byes > 0 ? `, ${b.byes} exempt${b.byes > 1 ? "s" : ""} au 1er tour (les mieux classés)` : ""}. `; })()}
         En cas de nulle : revanche, puis Armageddon.{entry > 0 ? ` Cagnotte ≈ ${formatMoney(pool, "PLAY")} (65 % / 35 %).` : ""}</>}
-        {" "}{when === "time" && startAt ? `Départ automatique ${startsLabel(new Date(startAt).toISOString())} (au moins 3 inscrits) ; les inscrits restent libres de jouer d'autres parties jusqu'à 5 min avant.` : "Il démarre dès qu'il est complet, ou quand tu le lances."}
+        {" "}{system === "arena" && when !== "time" ? "Elle démarre quand tu la lances (au moins 3 inscrits)." : when === "time" && startAt ? `Départ automatique ${startsLabel(new Date(startAt).toISOString())} (au moins 3 inscrits) ; les inscrits restent libres de jouer d'autres parties jusqu'à 5 min avant.` : "Il démarre dès qu'il est complet, ou quand tu le lances."}
       </p>
       <button type="submit" disabled={busy} className="neon-btn rounded-lg px-3 py-2.5 font-semibold">{busy ? "Création…" : "Créer et m'inscrire"}</button>
     </form>
@@ -398,14 +415,14 @@ function StartNow({ t, busy, onStart }: { t: SngSnapshot; busy: boolean; onStart
   const [confirm, setConfirm] = useState(false);
   const n = t.players.filter((x) => x.status === "registered").length;
   if (n < SNG_MIN_SIZE) return <p className="text-xs text-muted">Tu pourras lancer le tournoi dès qu'il y aura au moins {SNG_MIN_SIZE} inscrits.</p>;
-  if (n === t.size && !t.startsAt) return null; // complet : il démarre tout seul
+  if (n === t.size && !t.startsAt && !isArena(t)) return null; // complet : il démarre tout seul
   const b = bracketInfo(n);
-  const plan = isSwiss(t)
+  const plan = isArena(t) ? `${t.arenaMinutes} minutes de parties enchaînées (on pourra encore arriver en cours de route)` : isSwiss(t)
     ? `${swissRoundsFor(n, t.totalRounds && t.totalRounds !== swissRoundsFor(t.size) ? t.totalRounds : 0)} rondes, tout le monde joue chaque ronde`
     : `${b.rounds} tour${b.rounds > 1 ? "s" : ""}${b.byes > 0 ? `, ${b.byes} exempt${b.byes > 1 ? "s" : ""} au 1er tour` : ""}`;
   return confirm ? (
     <div className="panel flex flex-col gap-2 border-gold/40 p-3">
-      <p className="text-sm">Lancer maintenant avec <b>{n} joueurs</b> ? {plan}. Plus personne ne pourra s'inscrire.</p>
+      <p className="text-sm">Lancer maintenant avec <b>{n} joueurs</b> ? {plan}. {isArena(t) ? "" : "Plus personne ne pourra s'inscrire."}</p>
       <div className="flex gap-2">
         <button type="button" disabled={busy} onClick={onStart} className="neon-btn flex-1 rounded-lg px-3 py-2 text-sm font-semibold">{busy ? "Lancement…" : "Oui, lancer"}</button>
         <button type="button" onClick={() => setConfirm(false)} className="flex-1 rounded-lg border border-line px-3 py-2 text-sm text-muted hover:text-text">Attendre</button>
@@ -432,12 +449,12 @@ function InviteCard({ t, userId, busy, onJoin }: { t: SngSnapshot; userId: strin
       </p>
       {t.startsAt && t.status === "registering" && <p className="mt-1 text-sm font-semibold text-gold">Départ {startsLabel(t.startsAt)} ({startsIn(t.startsAt)})</p>}
       <p className="mt-1 text-sm">{n}/{t.size} inscrits</p>
-      {t.status === "registering" && !already && (
+      {(t.status === "registering" || arenaJoinable(t)) && !already && (
         <button type="button" disabled={busy !== null} onClick={() => onJoin(t.id)} className="neon-btn mt-3 w-full rounded-lg px-3 py-2.5 font-semibold">
-          {busy === t.id ? "Inscription…" : "Rejoindre le tournoi"}
+          {busy === t.id ? "Inscription…" : arenaJoinable(t) ? "Rejoindre l'arena en cours" : "Rejoindre le tournoi"}
         </button>
       )}
-      {t.status !== "registering" && <p className="mt-2 text-sm text-gold">Ce tournoi a déjà {t.status === "running" ? "commencé" : "pris fin"}.</p>}
+      {t.status !== "registering" && !arenaJoinable(t) && <p className="mt-2 text-sm text-gold">Ce tournoi a déjà {t.status === "running" ? "commencé" : "pris fin"}.</p>}
     </div>
   );
 }
@@ -542,5 +559,94 @@ function StartsBanner({ iso }: { iso: string }) {
       <p className="font-display text-lg font-bold">Départ {startsLabel(iso)}</p>
       <p className="tabular text-sm text-muted">{startsIn(iso, now)} · départ automatique avec au moins 3 inscrits. Sois sur la page Jouer à l'heure : ta première partie démarre toute seule.</p>
     </div>
+  );
+}
+
+/** Arena : temps restant (rafraîchi chaque seconde). */
+function ArenaClock({ iso }: { iso: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1_000); return () => clearInterval(id); }, []);
+  return <span className="tabular">⏱ {remaining(iso, now)}</span>;
+}
+
+/** Arena : mon état (en partie, en attente d'un adversaire, en pause) et le bouton pause. */
+function ArenaMe({ t, userId, busy, onPause }: { t: SngSnapshot; userId: string; busy: boolean; onPause: (paused: boolean) => void }) {
+  const me = t.players.find((x) => x.userId === userId)!;
+  const inGame = t.rounds.flat().some((m) => m.status === "playing" && (m.p1 === userId || m.p2 === userId));
+  const over = !!t.arenaEndsAt && Date.parse(t.arenaEndsAt) <= Date.now();
+  return (
+    <div role="status" className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${me.paused ? "border-gold/40 bg-gold/10 text-gold" : "border-neon/40 bg-neon/10"}`}>
+      <span className="min-w-0 flex-1">
+        {over ? "Temps écoulé : plus de nouvelle partie, classement final dès la fin des parties en cours."
+          : inGame ? (me.fire ? "🔥 En série : ta prochaine victoire vaut 4 points !" : "Partie en cours.")
+          : me.paused ? "En pause : tu ne reçois plus d'adversaire."
+          : "En attente d'un adversaire… (quelques secondes)"}
+      </span>
+      {!over && (
+        <button type="button" disabled={busy} onClick={() => onPause(!me.paused)} className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold ${me.paused ? "border-neon/50 text-neon" : "border-line text-muted hover:text-text"}`}>
+          {busy ? "…" : me.paused ? "Reprendre" : "Pause"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Classement d'une arena : points, série 🔥, feuille de points. */
+function ArenaTable({ t, userId }: { t: SngSnapshot; userId: string }) {
+  const rows = arenaRows(t);
+  const paid = rows.some((r) => r.payoutCents > 0);
+  return (
+    <div className="panel p-3">
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">{t.status === "finished" ? "Classement final" : "Classement"}</h3>
+      <ol className="flex flex-col gap-1">
+        {rows.map((r) => (
+          <li key={r.userId} className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${r.userId === userId ? "bg-neon/10" : ""}`}>
+            <span className="tabular w-6 shrink-0 text-muted">{r.rank === 1 && t.status === "finished" ? "🏆" : r.rank}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{r.userId}<span className="tabular ml-1.5 text-xs text-muted">{r.rating}</span>{r.fire && <span className="ml-1" title="En série : victoires à 4 points">🔥</span>}{r.paused && <span className="ml-1.5 text-xs text-gold">pause</span>}{r.playing && <span className="ml-1.5 text-xs text-neon">●</span>}</span>
+              {r.sheet.length > 0 && (
+                <span className="tabular flex gap-1.5 overflow-hidden text-[11px] text-muted" aria-label={`Points partie par partie : ${r.sheet.join(", ")}`}>
+                  {r.sheet.map((x, i) => <span key={i} className={x === 4 ? "font-bold text-gold" : ""}>{x}</span>)}
+                </span>
+              )}
+            </span>
+            {paid && <span className="tabular shrink-0 text-xs text-gold">{r.payoutCents > 0 ? formatMoney(r.payoutCents, t.currency) : ""}</span>}
+            <span className="tabular w-9 shrink-0 text-right font-semibold">{r.points}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** Arena : les parties, les plus récentes d'abord. */
+function ArenaGames({ t, userId }: { t: SngSnapshot; userId: string }) {
+  const games = [...(t.rounds[0] ?? [])].reverse();
+  const shown = games.slice(0, 12);
+  return (
+    <details className="panel p-3" open={t.status === "running"}>
+      <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Parties ({games.length})</summary>
+      <ul className="mt-2 flex flex-col gap-1.5">
+        {shown.map((m) => {
+          const mine = m.p1 === userId || m.p2 === userId;
+          const last = m.games.at(-1);
+          return (
+            <li key={m.slot} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${mine ? "bg-neon/10 ring-1 ring-neon/40" : "bg-surface-2"}`}>
+              <span className="size-2.5 shrink-0 rounded-sm border border-line bg-[#f3f3f3]" aria-hidden />
+              <span className={`min-w-0 max-w-[36%] truncate ${m.result === "1-0" ? "font-semibold text-win" : ""}`}>{m.p1}</span>
+              <span className="text-xs text-muted">–</span>
+              <span className="size-2.5 shrink-0 rounded-sm border border-line bg-[#222]" aria-hidden />
+              <span className={`min-w-0 max-w-[36%] truncate ${m.result === "0-1" ? "font-semibold text-win" : ""}`}>{m.p2}</span>
+              <span className="ml-auto shrink-0 text-xs">
+                {m.status === "playing"
+                  ? <span className="text-neon">● en jeu{!mine && last && !last.result && <a href={`/direct/${last.gameId}`} target="_blank" rel="noreferrer" className="ml-1.5 rounded bg-neon/15 px-1.5 py-0.5 font-semibold hover:bg-neon/25" title="Regarder la partie">👁</a>}</span>
+                  : last ? <a href={`/partie/${last.gameId}`} className="tabular text-muted hover:text-text">{m.result ? swissBoardScore(m) : "annulée"}</a> : null}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {games.length > shown.length && <p className="mt-2 text-xs text-muted">… et {games.length - shown.length} parties plus anciennes.</p>}
+    </details>
   );
 }

@@ -18,12 +18,19 @@ export function overText(over: GameOverEvent, start: GameStartEvent | null, me: 
       };
     }
     if (by === null) return { title: "Partie rejouée", tone: "neutral", line: "Personne n'a joué", note: "Aucun des deux joueurs n'est en cause : le match du tournoi est rejoué." };
+    if (t.arena) return by === me
+      ? { title: "Défaite", tone: "loss", line: "Premier coup non joué à temps", note: "0 point et ta série s'arrête. Un nouvel adversaire arrive dans quelques secondes (bouton Pause dans l'onglet Tournoi)." }
+      : { title: "Partie annulée", tone: "neutral", line: "Ton adversaire n'a pas joué", note: "Tu ne perds rien, ta série continue. Nouvel adversaire dans quelques secondes." };
     if (t.swiss) return by === me
       ? { title: "Défaite", tone: "loss", line: "Premier coup non joué à temps", note: "En tournoi, ne pas jouer son premier coup fait perdre la partie (0 point). Tu restes dans le tournoi pour la ronde suivante." }
       : { title: "Victoire", tone: "win", line: "Ton adversaire n'a pas joué", note: "Ton adversaire n'a pas joué son premier coup à temps : 1 point pour toi." };
     return by === me
       ? { title: "Défaite", tone: "loss", line: "Premier coup non joué à temps", note: "En tournoi, ne pas jouer son premier coup fait perdre le match : ton adversaire passe au tour suivant." }
       : { title: "Victoire", tone: "win", line: "Ton adversaire n'a pas joué", note: "Ton adversaire n'a pas joué son premier coup à temps : tu passes au tour suivant." };
+  }
+  if (t?.arena) {
+    return { title: iWon === null ? "Nulle" : iWon ? "Victoire" : "Défaite", tone: iWon === null ? "neutral" : iWon ? "win" : "loss",
+      note: `${iWon === null ? "1 point (2 si tu étais en série 🔥)" : iWon ? "2 points (4 si tu étais en série 🔥)" : "0 point"}. Nouvel adversaire dans quelques secondes : reste sur la page (Pause dans l'onglet Tournoi).` };
   }
   if (t?.swiss) {
     const pts = iWon === null ? "½ point" : iWon ? "1 point" : "0 point";
@@ -42,7 +49,8 @@ export function overText(over: GameOverEvent, start: GameStartEvent | null, me: 
 /**
  * En tournoi, la partie suivante démarre aussitôt (le résultat précédent disparaît) : on rappelle pourquoi on rejoue.
  */
-export function tournamentIntro(kind: "main" | "rematch" | "armageddon" | undefined, round = 1, swiss = false): string {
+export function tournamentIntro(kind: "main" | "rematch" | "armageddon" | undefined, round = 1, swiss = false, arena = false): string {
+  if (arena) return "Partie d'arena : victoire 2 points, 4 en série 🔥. ";
   if (swiss) return `Ronde ${round} du tournoi suisse. `;
   if (kind === "main" && round > 1) return "Qualifié ! Voici ton match du tour suivant. ";
   if (kind === "rematch") return "Revanche du tournoi après la nulle, couleurs inversées. ";

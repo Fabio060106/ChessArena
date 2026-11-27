@@ -638,7 +638,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
     socket.on("sng:create", guard(socket, async (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);
-      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown } | null;
+      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown; arenaMinutes?: unknown } | null;
       if (!p || typeof p !== "object" || typeof p.timeControl !== "string" || !(p.timeControl in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
       const blocked = canJoinTournament();
       if (blocked) return reply({ ok: false, code: blocked });
@@ -648,7 +648,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         const snapshot = await tournaments.createCustom(
           {
             size: p.size as number, timeControl, buyInCents: p.buyInCents as number, name: typeof p.name === "string" ? p.name : undefined,
-            system: p.system === "swiss" ? "swiss" : p.system === undefined || p.system === "ko" ? "ko" : ("?" as "ko"),
+            system: p.system === "swiss" || p.system === "arena" ? p.system : p.system === undefined || p.system === "ko" ? "ko" : ("?" as "ko"),
+            arenaMinutes: p.arenaMinutes === undefined ? undefined : (p.arenaMinutes as number),
             rounds: p.rounds === undefined ? undefined : (p.rounds as number),
             startsAt: p.startsAt === undefined ? undefined : (p.startsAt as string),
           },
@@ -685,6 +686,20 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       if (typeof tid !== "string") return reply({ ok: false, code: "BAD_PAYLOAD" });
       try {
         reply({ ok: true, snapshot: await tournaments.startCustom(tid, user.userId) });
+      } catch (e) {
+        reply(customError(e));
+      }
+    }));
+
+    // arena : pause / reprise (plus de nouvel adversaire tant qu'on est en pause)
+    socket.on("sng:pause", guard(socket, async (raw: unknown, ack: unknown) => {
+      const reply = sngReply(ack);
+      const p = raw as { tournamentId?: unknown; paused?: unknown } | null;
+      const t = typeof p?.tournamentId === "string" ? tournaments.get(p.tournamentId) : undefined;
+      if (!t || typeof p?.paused !== "boolean") return reply({ ok: false, code: "BAD_PAYLOAD" });
+      try {
+        await t.setPaused(user.userId, p.paused);
+        reply({ ok: true, snapshot: t.snapshot() });
       } catch (e) {
         reply(customError(e));
       }

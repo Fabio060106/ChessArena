@@ -239,3 +239,46 @@ export function defaultStart(now = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+// ─── Arena ──────────────────────────────────────────────────────────────────
+export const isArena = (s: Pick<SngSnapshot, "system">) => s.system === "arena";
+
+/** On peut encore rejoindre une arena en cours jusqu'à 1 minute de la fin. */
+export function arenaJoinable(s: SngSnapshot, now = Date.now()): boolean {
+  return isArena(s) && s.status === "running" && !!s.arenaEndsAt && Date.parse(s.arenaEndsAt) - now > 60_000 && registeredOrPlaying(s) < s.size;
+}
+const registeredOrPlaying = (s: SngSnapshot) => s.players.filter((p) => p.status === "registered" || p.status === "locking" || p.status === "playing").length;
+
+/** « 12:05 » restant (ou « terminé ») */
+export function remaining(iso: string, now = Date.now()): string {
+  const ms = Math.max(0, Date.parse(iso) - now);
+  if (!ms) return "0:00";
+  const m = Math.floor(ms / 60_000), sec = Math.floor((ms % 60_000) / 1000);
+  return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+export interface ArenaRow { userId: string; rating: number; rank: number; points: number; fire: boolean; paused: boolean; sheet: number[]; payoutCents: Cents; playing: boolean }
+
+/** Classement d'une arena : rang final s'il est connu, sinon points, victoires, moins de parties, Elo. */
+export function arenaRows(s: SngSnapshot): ArenaRow[] {
+  const inGame = new Set(s.rounds.flat().filter((m) => m.status === "playing").flatMap((m) => [m.p1, m.p2]));
+  const wins = (p: SngPlayerView) => (p.sheet ?? []).filter((x) => x === 2 || x === 4).length;
+  const players = s.players.filter((p) => ACTIVE.includes(p.status));
+  const sorted = [...players].sort((a, b) =>
+    (a.finalRank ?? 0) - (b.finalRank ?? 0) || (b.points ?? 0) - (a.points ?? 0) || wins(b) - wins(a)
+    || (a.sheet?.length ?? 0) - (b.sheet?.length ?? 0) || b.rating - a.rating);
+  return sorted.map((p, i) => ({
+    userId: p.userId, rating: p.rating, rank: p.finalRank ?? i + 1, points: p.points ?? 0, fire: !!p.fire, paused: !!p.paused,
+    sheet: p.sheet ?? [], payoutCents: p.payoutCents, playing: inGame.has(p.userId),
+  }));
+}
+
+/** Règles de l'arena, en clair. */
+export const ARENA_RULES = [
+  "Arena : pendant toute la durée du tournoi, tu reçois un nouvel adversaire dès que ta partie est finie. Joue autant de parties que tu veux.",
+  "Victoire 2 points, nulle 1, défaite 0.",
+  "Série 🔥 : après deux victoires de suite, tes victoires valent 4 points et tes nulles 2, jusqu'à ce que tu ne gagnes pas.",
+  "Tu peux te mettre en pause à tout moment (plus de nouvel adversaire), puis reprendre. On peut aussi arriver en cours de route.",
+  "À l'heure de fin, plus de nouvelle partie : celles en cours comptent encore. Départage : victoires, puis moins de parties jouées.",
+  "45 s pour jouer son premier coup : sinon 0 point et la série s'arrête (l'adversaire ne perd rien).",
+];

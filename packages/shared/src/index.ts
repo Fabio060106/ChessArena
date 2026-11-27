@@ -80,7 +80,7 @@ export interface GameStartEvent {
   stake: Stake;
   fen: string;
   /** partie de tournoi : pas de revanche, le tableau décide de la suite */
-  tournament?: { tournamentId: string; round: number; kind: "main" | "rematch" | "armageddon"; swiss?: boolean } | null;
+  tournament?: { tournamentId: string; round: number; kind: "main" | "rematch" | "armageddon"; swiss?: boolean; arena?: boolean } | null;
   /** délai pour jouer son premier coup (ms) */
   firstMoveMs?: number;
 }
@@ -156,7 +156,9 @@ export const SNG_MAX_SIZE = 128;
 export type SngStatus = "registering" | "running" | "finished" | "cancelled";
 export type SngGameKind = "main" | "rematch" | "armageddon";
 /** élimination directe (KO) ou système suisse (tout le monde joue toutes les rondes) */
-export type SngSystem = "ko" | "swiss";
+export type SngSystem = "ko" | "swiss" | "arena";
+/** Arena : durées proposées (minutes) */
+export const ARENA_MINUTES = [20, 30, 45, 60, 90, 120] as const;
 /** rondes d'un suisse : de 1 à 15 */
 export const SWISS_MAX_ROUNDS = 15;
 
@@ -203,6 +205,10 @@ export interface SngPlayerView {
   points?: number;
   buchholz?: number;
   sonnebornBerger?: number;
+  /** arena : série en cours (la prochaine victoire vaut double), pause, points marqués partie par partie */
+  fire?: boolean;
+  paused?: boolean;
+  sheet?: number[];
 }
 
 export interface SngSnapshot {
@@ -229,6 +235,9 @@ export interface SngSnapshot {
   swissRounds?: number;
   /** tournoi programmé : départ automatique à cette heure (ISO) */
   startsAt?: string | null;
+  /** arena : durée (minutes) et heure de fin (une fois lancé) */
+  arenaMinutes?: number;
+  arenaEndsAt?: string;
   status: SngStatus;
   players: SngPlayerView[];
   rounds: SngMatchView[][];
@@ -272,6 +281,8 @@ export interface SngCreatePayload {
   rounds?: number;
   /** départ programmé (ISO), de 2 minutes à 14 jours ; sinon départ quand complet ou lancé par le créateur */
   startsAt?: string;
+  /** arena : durée en minutes (ARENA_MINUTES) */
+  arenaMinutes?: number;
 }
 
 /** Partie terminée, telle qu'affichée dans l'historique d'un joueur. */
@@ -612,6 +623,8 @@ export interface ClientToServerEvents {
   "sng:unwatch": (p: { tournamentId: string }) => void;
   /** le créateur lance son tournoi sans attendre qu'il soit complet (≥ 3 inscrits ; exempts au 1er tour) */
   "sng:start": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
+  /** arena : se mettre en pause (plus de nouvel adversaire) ou reprendre */
+  "sng:pause": (p: { tournamentId: string; paused: boolean }, ack: (r: SngAck) => void) => void;
   "chat:send": (p: { gameId: string; text: string }, ack?: (r: ChatAck) => void) => void;
   /** signaler un message à l'organisateur */
   "chat:report": (p: { gameId: string; messageId: number }, ack?: (r: { ok: boolean }) => void) => void;

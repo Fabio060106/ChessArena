@@ -7,6 +7,7 @@ import { TournamentHUD } from "../../../components/TournamentHUD";
 import { useGameAuth, useMe } from "../../../hooks/useMe";
 import { useTournament } from "../../../hooks/useTournament";
 import { getSocket } from "../../../lib/socket";
+import { arenaJoinable } from "../../../lib/tournament";
 
 export default function TournamentPage() {
   return <Suspense><Page /></Suspense>;
@@ -61,8 +62,8 @@ function Live({ initial, userId }: { initial: SngSnapshot; userId: string }) {
   const live = t.status === "running" || t.status === "registering";
   return (
     <>
-      {t.status === "registering" && !mine && (
-        <a href={`/play?t=${t.id}`} className="neon-btn rounded-xl px-4 py-3 text-center font-display text-lg font-bold">Rejoindre le tournoi</a>
+      {(t.status === "registering" || arenaJoinable(t)) && !mine && (
+        <a href={`/play?t=${t.id}`} className="neon-btn rounded-xl px-4 py-3 text-center font-display text-lg font-bold">{arenaJoinable(t) ? "Rejoindre l'arena en cours" : "Rejoindre le tournoi"}</a>
       )}
       {mine && live && (
         <a href={`/play?t=${t.id}`} className="rounded-xl border border-neon/50 px-4 py-2.5 text-center text-sm font-semibold text-neon">
@@ -70,7 +71,7 @@ function Live({ initial, userId }: { initial: SngSnapshot; userId: string }) {
         </a>
       )}
       <TournamentHUD userId={userId} current={t} lobby={[]} busy={sng.busy} error={sng.error}
-        onRegister={() => {}} onUnregister={sng.unregister} onCreate={() => {}} onJoin={sng.join} onStart={sng.start} invite={null} pageLink={false} />
+        onRegister={() => {}} onUnregister={sng.unregister} onCreate={() => {}} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} invite={null} pageLink={false} />
     </>
   );
 }

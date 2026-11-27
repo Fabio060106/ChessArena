@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS, TIME_CONTROLS, type SngCreatePayload, type SngFormat, type SngSnapshot } from "@chessarena/shared";
+import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS, TIME_CONTROLS, type SngCreatePayload, type SngSystem, type SngFormat, type SngSnapshot } from "@chessarena/shared";
 import { SitAndGo, type StartGameRequest } from "./SitAndGo.js";
 import type { TournamentStore } from "./TournamentStore.js";
 import type { Ledger } from "../settlement/ledger.js";
@@ -81,7 +81,9 @@ export class TournamentManager {
       throw new CustomTournamentError("BAD_PAYLOAD");
     }
     const system = p.system ?? "ko";
-    if (system !== "ko" && system !== "swiss") throw new CustomTournamentError("BAD_PAYLOAD");
+    if (system !== "ko" && system !== "swiss" && system !== "arena") throw new CustomTournamentError("BAD_PAYLOAD");
+    const arenaMinutes = system === "arena" ? p.arenaMinutes ?? 30 : 0;
+    if (system === "arena" && !(ARENA_MINUTES as readonly number[]).includes(arenaMinutes)) throw new CustomTournamentError("BAD_PAYLOAD");
     const rounds = p.rounds ?? 0;
     if (!Number.isInteger(rounds) || rounds < 0 || rounds > SWISS_MAX_ROUNDS) throw new CustomTournamentError("BAD_PAYLOAD");
     let startsAt: string | null = null;
@@ -99,7 +101,7 @@ export class TournamentManager {
     const t = this.makeTable(
       { id: `custom:${id}`, size: p.size, timeControl: p.timeControl, currency: "PLAY", buyInCents: p.buyInCents },
       (s) => this.onCustomChanged(id, s),
-      { id, createdBy: creator, name, system, swissRounds: system === "swiss" ? rounds : 0, startsAt },
+      { id, createdBy: creator, name, system, swissRounds: system === "swiss" ? rounds : 0, startsAt, arenaMinutes },
     );
     this.customOpen.set(id, { t, createdBy: creator, expiry: this.scheduleOpen(t, Date.now() + CUSTOM_LIMITS.expireMs) });
     try {
@@ -152,7 +154,7 @@ export class TournamentManager {
     const t = this.makeTable(
       { id: `custom:${id}`, size: s.size, timeControl: s.timeControl, currency: s.currency, buyInCents: s.buyInCents },
       (x) => this.onCustomChanged(id, x),
-      { id, createdBy: s.createdBy, name: s.name ?? null, system: s.system ?? "ko", swissRounds: s.swissRounds ?? 0, startsAt: s.startsAt ?? null, createdAt: s.createdAt },
+      { id, createdBy: s.createdBy, name: s.name ?? null, system: s.system ?? "ko", swissRounds: s.swissRounds ?? 0, startsAt: s.startsAt ?? null, createdAt: s.createdAt, arenaMinutes: s.arenaMinutes ?? 0 },
     );
     t.restoreRegistrations(s.players.filter((p) => p.status === "registered" || p.status === "locking").map((p) => ({ userId: p.userId, rating: p.rating })));
     this.customOpen.set(id, { t, createdBy: s.createdBy, expiry: this.scheduleOpen(t, Date.parse(s.createdAt) + CUSTOM_LIMITS.expireMs) });
@@ -244,16 +246,16 @@ export class TournamentManager {
   private makeTable(
     f: SngFormat,
     onChange: (s: SngSnapshot) => void,
-    extra: { id?: string; createdBy?: string; name?: string | null; system?: "ko" | "swiss"; swissRounds?: number; startsAt?: string | null; createdAt?: string } = {},
+    extra: { id?: string; createdBy?: string; name?: string | null; system?: SngSystem; swissRounds?: number; startsAt?: string | null; createdAt?: string; arenaMinutes?: number } = {},
   ): SitAndGo {
     const t: SitAndGo = new SitAndGo(
       {
         id: extra.id ?? randomUUID(), formatId: f.id, size: f.size, timeControl: f.timeControl, currency: f.currency,
         buyInCents: f.buyInCents, rakeBps: this.deps.rakeBps,
         // suisse : podium payé (50/30/20) à partir de 8 places ; KO : vainqueur et finaliste
-        payoutBps: extra.system === "swiss" && f.size >= 8 ? [5_000, 3_000, 2_000] : SIT_AND_GO_STRUCTURES[f.size as 4 | 6 | 8] ?? [6_500, 3_500],
+        payoutBps: extra.system && extra.system !== "ko" && f.size >= 8 ? [5_000, 3_000, 2_000] : SIT_AND_GO_STRUCTURES[f.size as 4 | 6 | 8] ?? [6_500, 3_500],
         createdBy: extra.createdBy ?? null, name: extra.name ?? null,
-        system: extra.system ?? "ko", swissRounds: extra.swissRounds ?? 0, startsAt: extra.startsAt ?? null, createdAt: extra.createdAt,
+        system: extra.system ?? "ko", swissRounds: extra.swissRounds ?? 0, startsAt: extra.startsAt ?? null, createdAt: extra.createdAt, arenaMinutes: extra.arenaMinutes ?? 0,
       },
       {
         ledger: this.deps.ledger,

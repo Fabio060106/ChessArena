@@ -3,6 +3,8 @@ import { SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS } from "@chessarena/shared
 import type {
   Color, Cents, Currency, GameResult, SngGameKind, SngGameView, SngMatchView, SngPlayerView, SngSize, SngSnapshot, SngSystem, TimeControlId,
 } from "@chessarena/shared";
+import { arenaPairs, arenaRanking, arenaScores, type ArenaGame } from "./arena.js";
+import { ARENA_MINUTES } from "@chessarena/shared";
 import { defaultSwissRounds, pairRound, swissStandings, type SwissResult, type SwissStanding } from "./swiss.js";
 import type { FinishedGame, Seat, TournamentGameRef } from "../game/GameRoom.js";
 import { acct, applySettlement, InsufficientFundsError, type Ledger } from "../settlement/ledger.js";
@@ -68,6 +70,8 @@ export interface SitAndGoConfig {
   startsAt?: string | null;
   /** reprise après redémarrage : date de création d'origine */
   createdAt?: string;
+  /** arena : durée en minutes */
+  arenaMinutes?: number;
 }
 
 export interface StartGameRequest {
@@ -95,6 +99,8 @@ export interface SitAndGoPorts {
   now?: () => number;
   /** suisse : pause entre deux rondes (voir son résultat et le classement), 0 par défaut */
   swissPauseMs?: number;
+  /** arena : intervalle des vagues d'appariement (défaut 3 s ; 0 = seulement via arenaTick(), pour les tests) */
+  arenaTickMs?: number;
 }
 
 export class SngError extends Error {
@@ -119,6 +125,8 @@ interface Entry {
   opponents: string[];
   colors: Array<"w" | "b" | "-">;
   hadBye: boolean;
+  /** arena : en pause (pas de nouvel adversaire) */
+  paused?: boolean;
 }
 
 interface GameRec {
@@ -187,10 +195,12 @@ export class SitAndGo {
     if (!Number.isInteger(cfg.size) || cfg.size < SNG_MIN_SIZE || cfg.size > SNG_MAX_SIZE) throw new SngError("INVALID_CONFIG", "taille de 3 à 128");
     if (cfg.payoutBps.reduce((a, b) => a + b, 0) !== 10_000) throw new SngError("INVALID_CONFIG", "structure de gains ≠ 100 %");
     const swiss = cfg.system === "swiss";
-    if (cfg.payoutBps.length > (swiss ? 3 : 2)) throw new SngError("INVALID_CONFIG", swiss ? "3 places payées au plus" : "KO sans petite finale : 2 places payées au plus");
+    const podium = swiss || cfg.system === "arena";
+    if (cfg.payoutBps.length > (podium ? 3 : 2)) throw new SngError("INVALID_CONFIG", podium ? "3 places payées au plus" : "KO sans petite finale : 2 places payées au plus");
+    if (cfg.system === "arena" && !(ARENA_MINUTES as readonly number[]).includes(cfg.arenaMinutes ?? 0)) throw new SngError("INVALID_CONFIG", "durée d'arena");
     if (swiss && cfg.swissRounds && (!Number.isInteger(cfg.swissRounds) || cfg.swissRounds < 1 || cfg.swissRounds > SWISS_MAX_ROUNDS)) throw new SngError("INVALID_CONFIG", "rondes");
     this.id = cfg.id;
-    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, startsAt: null, createdAt: "", ...cfg };
+    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, startsAt: null, createdAt: "", arenaMinutes: 0, ...cfg };
     this.ports = ports;
     this.now = ports.now ?? (() => Date.now());
     this.random = ports.random ?? Math.random;
@@ -246,10 +256,13 @@ export class SitAndGo {
   // Inscriptions
   // ═══════════════════════════════════════════════════════════════════════════
   async register(userId: string, rating: number): Promise<void> {
-    if (this.status !== "registering") throw new SngError("NOT_REGISTERING");
+    // arena : on peut arriver en cours de route (jusqu'à 1 minute de la fin)
+    const lateArena = this.cfg.system === "arena" && this.status === "running" && this.arenaEndAt !== null && this.now() < this.arenaEndAt - 60_000;
+    if (this.status !== "registering" && !lateArena) throw new SngError("NOT_REGISTERING");
     const prev = this.entries.get(userId);
-    if (prev && (prev.status === "registered" || prev.status === "locking")) throw new SngError("ALREADY_REGISTERED");
-    if (this.registeredCount >= this.cfg.size) throw new SngError("FULL");
+    if (prev && (prev.status === "registered" || prev.status === "locking" || prev.status === "playing")) throw new SngError("ALREADY_REGISTERED");
+    const taken = [...this.entries.values()].filter((e) => e.status === "registered" || e.status === "locking" || e.status === "playing").length;
+    if (taken >= this.cfg.size) throw new SngError("FULL");
 
     // Place réservée SYNCHRONEMENT (avant tout await) : deux inscriptions simultanées
     // ne peuvent pas prendre la dernière place toutes les deux.
@@ -276,11 +289,20 @@ export class SitAndGo {
       this.pendingLocks.delete(userId);
     }
 
+    if (lateArena && this.status === "running") {
+      // arrivée en cours d'arena : directement en jeu, appariée à la prochaine vague
+      entry.status = "playing";
+      entry.seed = ++this.lateSeed;
+      this.entrants++;
+      this.audit("register_late", { userId, attempt: entry.attempt });
+      this.changed();
+      return;
+    }
     entry.status = "registered";
     this.audit("register", { userId, attempt: entry.attempt });
     this.changed();
-    // table complète : départ immédiat, sauf tournoi programmé (il attend son heure)
-    if (this.status === "registering" && !this.cfg.startsAt && this.countStatus("registered") === this.cfg.size) await this.start();
+    // table complète : départ immédiat, sauf tournoi programmé (il attend son heure) et arena (lancée par le créateur ou à l'heure)
+    if (this.status === "registering" && !this.cfg.startsAt && this.cfg.system !== "arena" && this.countStatus("registered") === this.cfg.size) await this.start();
   }
 
   async unregister(userId: string): Promise<void> {
@@ -322,6 +344,7 @@ export class SitAndGo {
    */
   async cancel(reason: string): Promise<void> {
     if (this.status === "finished" || this.status === "cancelled") return;
+    this.stopArenaTimer();
     await Promise.allSettled(this.pendingLocks.values());
     this.status = "cancelled";
     this.cancelReason = reason;
@@ -364,6 +387,7 @@ export class SitAndGo {
 
     this.entrants = players.length;
     if (this.cfg.system === "swiss") return this.startSwiss(players);
+    if (this.cfg.system === "arena") return this.startArena(players);
     const bracketSize = bracketSizeFor(players.length);
     const order = bracketOrder(bracketSize);
     const bySeed = new Map(players.map((p) => [p.seed!, p.userId]));
@@ -426,7 +450,7 @@ export class SitAndGo {
     const p1 = m.p1!;
     const p2 = m.p2!;
     let white: string;
-    if (this.cfg.system === "swiss") white = p1; // couleurs fixées par l'appariement
+    if (this.cfg.system !== "ko") white = p1; // couleurs fixées par l'appariement
     else if (kind === "main") white = this.random() < 0.5 ? p1 : p2;
     else if (kind === "rematch") white = m.games.at(-1)!.black;
     else white = this.seedOf(p1) > this.seedOf(p2) ? p1 : p2; // Armageddon : la moins bonne tête de série a les Blancs
@@ -439,7 +463,7 @@ export class SitAndGo {
     await this.ports.startGame({
       gameId: rec.gameId!, white: seat(white), black: seat(black), timeControl: this.cfg.timeControl, currency: this.cfg.currency,
       rated: kind !== "armageddon",
-      tournament: { tournamentId: this.id, round: m.round, slot: m.slot, kind, ...(this.cfg.system === "swiss" ? { swiss: true } : {}) },
+      tournament: { tournamentId: this.id, round: m.round, slot: m.slot, kind, ...(this.cfg.system === "swiss" ? { swiss: true } : {}), ...(this.cfg.system === "arena" ? { arena: true } : {}) },
     });
     this.changed();
   }
@@ -454,6 +478,16 @@ export class SitAndGo {
     rec.termination = g.termination;
 
     const colorPlayer = (c: Color) => (c === "w" ? rec.white : rec.black);
+    if (this.cfg.system === "arena") {
+      // annulée sans responsable : ni points ni série touchés ; premier coup non joué : forfait du responsable
+      m.result = g.aborted ? (g.abortedBy ? (g.abortedBy === "w" ? "0-1" : "1-0") : null) : g.result;
+      m.winner = m.result === "1-0" ? rec.white : m.result === "0-1" ? rec.black : null;
+      m.status = "done";
+      this.audit("arena_game", { slot: m.slot, result: m.result, aborted: g.aborted, game: rec.gameId });
+      this.changed();
+      if (this.arenaEndAt !== null && this.now() >= this.arenaEndAt) await this.arenaTick();
+      return;
+    }
     if (this.cfg.system === "swiss") {
       let result: GameResult;
       if (g.aborted) {
@@ -489,6 +523,124 @@ export class SitAndGo {
     this.audit("match_done", { round: m.round, slot: m.slot, winner, loser, games: m.games.map((x) => x.gameId) });
     this.changed();
     await this.advance();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Arena
+  // ═══════════════════════════════════════════════════════════════════════════
+  private arenaEndAt: number | null = null;
+  private arenaTimer: ReturnType<typeof setInterval> | null = null;
+  private lateSeed = 0;
+  private ticking = false;
+
+  private stopArenaTimer(): void {
+    if (this.arenaTimer) clearInterval(this.arenaTimer);
+    this.arenaTimer = null;
+  }
+
+  private async startArena(players: Entry[]): Promise<void> {
+    this.arenaEndAt = this.now() + (this.cfg.arenaMinutes ?? 30) * 60_000;
+    this.lateSeed = players.length;
+    this.rounds = [[]];
+    this.audit("start", { system: "arena", minutes: this.cfg.arenaMinutes, endsAt: new Date(this.arenaEndAt).toISOString(), seeds: players.map((p) => ({ userId: p.userId, seed: p.seed, rating: p.rating })) });
+    try {
+      await this.persistNow();
+    } catch (e) {
+      console.error(`[sng ${this.id}] persistance impossible au démarrage, annulation`, e);
+      return this.cancel("persistence_error");
+    }
+    this.emit();
+    const every = this.ports.arenaTickMs ?? 3_000;
+    if (every > 0) {
+      this.arenaTimer = setInterval(() => void this.arenaTick().catch((e) => console.error(`[sng ${this.id}] arena`, e)), every);
+      this.arenaTimer.unref?.();
+    }
+    await this.arenaTick();
+  }
+
+  private arenaGames(): ArenaGame[] {
+    return (this.rounds[0] ?? []).map((m) => {
+      const forfeit = m.result && m.games.at(-1)?.termination === "aborted";
+      return { white: m.p1!, black: m.p2!, result: !m.result || m.result === "bye" ? null : forfeit ? (m.result === "0-1" ? "forfeit-w" : "forfeit-b") : m.result };
+    });
+  }
+
+  /**
+   * Une vague : avant l'heure de fin, apparie les joueurs libres ; après, attend la fin des parties en cours
+   * puis clôture. Appelée par le minuteur (et directement dans les tests).
+   */
+  async arenaTick(): Promise<void> {
+    if (this.status !== "running" || this.cfg.system !== "arena" || this.ticking) return;
+    this.ticking = true;
+    try {
+      const games = this.rounds[0]!;
+      const busy = new Set(games.filter((m) => m.status !== "done").flatMap((m) => [m.p1!, m.p2!]));
+      if (this.now() >= this.arenaEndAt!) {
+        this.stopArenaTimer();
+        if (!busy.size && !this.finishing) { this.finishing = true; await this.finishArena(); }
+        return;
+      }
+      const scores = arenaScores([...this.entries.keys()], this.arenaGames());
+      const lastOpp = new Map<string, string>();
+      for (const m of games) { lastOpp.set(m.p1!, m.p2!); lastOpp.set(m.p2!, m.p1!); }
+      const waiting = [...this.entries.values()]
+        .filter((e) => e.status === "playing" && !e.paused && !busy.has(e.userId))
+        .map((e) => ({
+          id: e.userId, score: scores.get(e.userId)?.score ?? 0, rating: e.rating, lastOpponent: lastOpp.get(e.userId) ?? null,
+          whites: e.colors.filter((c) => c === "w").length, blacks: e.colors.filter((c) => c === "b").length,
+        }));
+      const pairs = arenaPairs(waiting, this.random);
+      for (const [w, b] of pairs) {
+        const m: Match = { round: 1, slot: games.length, p1: w, p2: b, winner: null, status: "pending", games: [], result: null };
+        games.push(m);
+        const ew = this.entries.get(w)!, eb = this.entries.get(b)!;
+        ew.colors.push("w"); eb.colors.push("b"); ew.opponents.push(b); eb.opponents.push(w);
+        await this.startGame(m, "main");
+      }
+      if (pairs.length) { this.audit("arena_pairing", { pairs }); this.changed(); }
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  /** Pause (plus de nouvel adversaire, la partie en cours continue) ou reprise. */
+  async setPaused(userId: string, paused: boolean): Promise<void> {
+    const e = this.entries.get(userId);
+    if (this.cfg.system !== "arena" || !e || e.status !== "playing" || this.status !== "running") throw new SngError("NOT_REGISTERED");
+    e.paused = paused;
+    this.audit(paused ? "arena_pause" : "arena_resume", { userId });
+    this.changed();
+  }
+
+  private async finishArena(): Promise<void> {
+    const ratings = new Map([...this.entries.values()].map((e) => [e.userId, e.rating]));
+    const players = [...this.entries.values()].filter((e) => e.status === "playing").map((e) => e.userId);
+    const scores = arenaScores(players, this.arenaGames());
+    const ranking = arenaRanking(new Map(players.map((u) => [u, scores.get(u)!])), ratings);
+    const plan = settleTournament(this.cfg.buyInCents, this.entrants, ranking, this.cfg.payoutBps.slice(0, Math.min(this.cfg.payoutBps.length, ranking.length)), this.cfg.rakeBps, this.cfg.sponsorAddedCents);
+    if (plan.potCents > 0) {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await applySettlement(this.ports.ledger, `t-${this.id}`, this.cfg.currency, plan, { tournamentId: this.id, ranking });
+          break;
+        } catch (e) {
+          if (attempt >= 5) throw e;
+          console.error(`[sng ${this.id}] règlement échoué (essai ${attempt})`, e);
+          await new Promise((r) => setTimeout(r, 200 * 2 ** attempt));
+        }
+      }
+    }
+    this.rakeCents = plan.rakeCents;
+    ranking.forEach((u, i) => {
+      const e = this.entries.get(u)!;
+      e.finalRank = i + 1;
+      e.payoutCents = plan.payouts[u] ?? 0;
+      e.status = i === 0 ? "winner" : "eliminated";
+    });
+    this.status = "finished";
+    this.finishedAt = new Date(this.now()).toISOString();
+    this.audit("finish", { ranking, payouts: plan.payouts, rakeCents: plan.rakeCents });
+    this.changed();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -661,7 +813,9 @@ export class SitAndGo {
     const field = this.entrants || this.cfg.size; // après le départ : les joueurs réellement engagés
     const rake = this.status === "finished" ? this.rakeCents : computeRake(this.cfg.buyInCents * field, this.cfg.rakeBps);
     const swiss = this.cfg.system === "swiss";
+    const arena = this.cfg.system === "arena";
     const table = swiss && this.rounds.length ? new Map(this.swissTable().map((r) => [r.id, r])) : null;
+    const aScores = arena ? arenaScores([...this.entries.keys()], this.arenaGames()) : null;
     return {
       id: this.id, formatId: this.cfg.formatId, createdBy: this.cfg.createdBy, name: this.cfg.name,
       size: this.cfg.size, timeControl: this.cfg.timeControl,
@@ -669,6 +823,7 @@ export class SitAndGo {
       rakeBps: this.cfg.rakeBps, payoutBps: [...this.cfg.payoutBps], status: this.status,
       ...(swiss && this.nextRoundAt ? { nextRoundAt: new Date(this.nextRoundAt).toISOString() } : {}),
       ...(this.cfg.startsAt ? { startsAt: this.cfg.startsAt } : {}),
+      ...(arena ? { system: "arena" as const, arenaMinutes: this.cfg.arenaMinutes, ...(this.arenaEndAt ? { arenaEndsAt: new Date(this.arenaEndAt).toISOString() } : {}) } : {}),
       ...(swiss ? { system: "swiss" as const, swissRounds: this.cfg.swissRounds, totalRounds: this.totalRounds || this.plannedRounds(this.cfg.size) } : {}),
       players: [...this.entries.values()]
         .filter((e) => e.status !== "unregistered")
@@ -676,6 +831,10 @@ export class SitAndGo {
         .map((e) => ({
           userId: e.userId, rating: e.rating, seed: e.seed, status: e.status,
           eliminatedRound: e.eliminatedRound, finalRank: e.finalRank, payoutCents: e.payoutCents,
+          ...(arena && e.seed !== null ? (() => {
+            const sc = aScores!.get(e.userId);
+            return { points: sc?.score ?? 0, fire: sc?.fire ?? false, sheet: sc?.sheet ?? [], ...(e.paused ? { paused: true } : {}) };
+          })() : {}),
           ...(swiss && e.seed !== null ? {
             points: (table?.get(e.userId)?.pts2 ?? 0) / 2,
             buchholz: (table?.get(e.userId)?.buchholz2 ?? 0) / 2,
@@ -684,12 +843,12 @@ export class SitAndGo {
         })),
       rounds: this.rounds.map((r) => r.map((m): SngMatchView => ({
         round: m.round, slot: m.slot, p1: m.p1, p2: m.p2, winner: m.winner, status: m.status,
-        ...(swiss ? { result: m.result ?? null } : {}),
+        ...(swiss || arena ? { result: m.result ?? null } : {}),
         games: m.games.filter((g) => g.gameId).map((g): SngGameView => ({
           gameId: g.gameId!, white: g.white, black: g.black, kind: g.kind, result: g.result, termination: g.termination,
         })),
       }))),
-      currentRound: swiss ? this.rounds.length : this.rounds.findIndex((r) => r.some((m) => m.status !== "done")) + 1,
+      currentRound: swiss ? this.rounds.length : arena ? (this.rounds.length ? 1 : 0) : this.rounds.findIndex((r) => r.some((m) => m.status !== "done")) + 1,
       prizePoolCents: this.cfg.buyInCents * field - rake + this.cfg.sponsorAddedCents,
       rakeCents: this.status === "finished" ? this.rakeCents : 0,
       cancelReason: this.cancelReason,

@@ -199,7 +199,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
   const plyLabel = (p: number) => (p === 0 ? "position de départ" : `${Math.ceil(p / 2)}${p % 2 === 1 ? "." : "…"} ${steps[p]?.san ?? ""}`);
   const status = !playing ? null
     : browsing ? `Vous regardez ${plyLabel(browse!)} — la partie continue. ⏭, → ou un clic sur l'échiquier pour revenir.`
-    : view.server && view.server.ply < 2 ? `${tournamentIntro(view.start?.tournament?.kind, view.start?.tournament?.round, !!view.start?.tournament?.swiss)}Jouez votre premier coup dans les ${Math.round((view.start?.firstMoveMs ?? 20_000) / 1000)} s, sinon ${tournamentGame ? (view.start?.tournament?.swiss ? "vous perdez cette partie du tournoi" : "vous perdez ce match du tournoi") : "la partie est annulée"}.`
+    : view.server && view.server.ply < 2 ? `${tournamentIntro(view.start?.tournament?.kind, view.start?.tournament?.round, !!view.start?.tournament?.swiss, !!view.start?.tournament?.arena)}Jouez votre premier coup dans les ${Math.round((view.start?.firstMoveMs ?? 20_000) / 1000)} s, sinon ${tournamentGame ? (view.start?.tournament?.arena ? "0 point et votre série s'arrête" : view.start?.tournament?.swiss ? "vous perdez cette partie du tournoi" : "vous perdez ce match du tournoi") : "la partie est annulée"}.`
     : isMyTurn(view) ? "À vous de jouer."
     : view.premoves.length ? `${view.premoves.length} pré-move${view.premoves.length > 1 ? "s" : ""} en file · clic droit ou Échap pour annuler`
     : "L'adversaire réfléchit…";
@@ -402,7 +402,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
               ) : <p className="px-1 text-sm text-muted">Le chat s'ouvre pendant une partie.</p>
             ) : (
               <TournamentHUD userId={userId} current={sng.current} lobby={sng.lobby} busy={sng.busy} error={sng.error}
-                onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} onStart={sng.start} invite={sng.invite} />
+                onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} invite={sng.invite} />
             )}
           </div>
 
