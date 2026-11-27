@@ -38,7 +38,8 @@ for (const r of REPERTOIRES) for (const l of r.lines) {
     if (mover !== r.side) continue;
     const a = await evalFen(before), b = await evalFen(c.fen());
     const loss = sign * (a.cp - b.cp);
-    if (loss > 90) problems.push(`${r.id} / ${l.name} : ${c.history().length}. ${s} perd ${(loss / 100).toFixed(1)} (Stockfish : ${a.best})`);
+    // un gambit assume une petite perte théorique (Gambit du roi, Evans)
+    if (loss > (r.id === "kgambit" || r.id === "evans" ? 130 : 90)) problems.push(`${r.id} / ${l.name} : ${c.history().length}. ${s} perd ${(loss / 100).toFixed(1)} (Stockfish : ${a.best})`);
   }
   const end = await evalFen(c.fen(), 14);
   if (sign * end.cp < -120) problems.push(`${r.id} / ${l.name} : fin de ligne à ${(sign * end.cp / 100).toFixed(1)} pour le joueur`);

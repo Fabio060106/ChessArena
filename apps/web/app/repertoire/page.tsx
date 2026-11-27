@@ -34,6 +34,7 @@ export default function RepertoirePage() {
   const [doc, setDoc] = useState<RepertoireDoc>(emptyDoc);
   const [color, setColor] = useState<Color>("w");
   const [mode, setMode] = useState<"tree" | "train" | "drill">("tree");
+  const [hub, setHub] = useState<"arbre" | "conseils" | "parties">("arbre");
   const [book, setBook] = useState<OpeningBook | null>(null);
   useEffect(() => { void loadOpeningBook().then(setBook); }, []);
   const [trainKey, setTrainKey] = useState<string | null>(null);
@@ -56,7 +57,7 @@ export default function RepertoirePage() {
         if (!r.ok) throw new Error(r.status === 503 ? "db" : "net");
         const d = (await r.json()) as RepertoireResponse;
         setResp(d);
-        if (reload === 0) setDoc(asDoc(d.data));
+        if (reload === 0) { setDoc(asDoc(d.data)); if (d.games.length < 10) setHub("parties"); }
         started.current = false;
         // couleur par défaut : celle avec le plus de parties
         const w = d.games.filter((g) => g.color === "w").length;
@@ -141,7 +142,11 @@ export default function RepertoirePage() {
   const refId = doc.refs?.[color] ?? ranked[color][0]?.id ?? null;
   const ref = useMemo(() => (refId ? refRepertoire(refId) : null), [refId]);
   const drillLines = useMemo(() => (ref ? ref.sections.flatMap((r) => r.lines.map((l) => ({ key: drillKey(r.id, l.name), rep: r.id, name: l.name, moves: l.moves, note: l.note }))) : []), [ref]);
-  const drillsDue = useMemo(() => drillOrder(drillLines, doc).filter((l) => l.status !== "later").length, [drillLines, doc]);
+  // à réviser aujourd'hui : les lignes à revoir, et au plus 3 nouvelles lignes par jour
+  const drillsDue = useMemo(() => {
+    const o = drillOrder(drillLines, doc);
+    return o.filter((l) => l.status === "due").length + Math.min(3, o.filter((l) => l.status === "new").length);
+  }, [drillLines, doc]);
   const cards = useMemo(() => Object.values(doc.cards), [doc.cards]);
   const due = useMemo(() => cards.filter((c) => isDue(c)).sort((a, b) => b.times - a.times), [cards]);
 
@@ -165,9 +170,23 @@ export default function RepertoirePage() {
       <div className="mx-auto max-w-[1400px] px-2 pb-8 sm:px-3 lg:px-6">
         {loadError && <p role="alert" className="mb-3 rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{loadError}</p>}
         {!resp && !loadError && <p className="px-1 text-sm text-muted">Chargement de tes parties…</p>}
-        {resp && <ImportLichess onImported={onImported} />}
-        {resp && <OpeningAdvice games={resp.games} />}
         {resp && (
+          <Dashboard games={resp.games.length} imported={resp.games.filter((g) => g.source === "lichess").length} doc={doc} due={due.length} drillsDue={drillsDue}
+            lines={drillLines.length} mastered={drillLines.filter((l) => (doc.drills?.[l.key]?.streak ?? 0) >= 2).length}
+            onSession={() => { setHub("arbre"); if (due.length) startTraining(); else setMode("drill"); }}
+            onGo={(h) => { setHub(h); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
+        )}
+        {resp && (
+          <div className="mb-3 flex gap-1 rounded-xl bg-surface-2 p-1" role="tablist" aria-label="Rubriques du répertoire">
+            {([["arbre", "Mon répertoire"], ["conseils", "Conseils d'ouvertures"], ["parties", "Mes parties Lichess"]] as const).map(([k, label]) => (
+              <button key={k} type="button" role="tab" aria-selected={hub === k} onClick={() => setHub(k)}
+                className={`flex-1 rounded-lg px-2 py-2 text-xs font-semibold sm:text-sm ${hub === k ? "bg-ink text-text ring-1 ring-neon/40" : "text-muted hover:text-text"}`}>{label}</button>
+            ))}
+          </div>
+        )}
+        {resp && hub === "parties" && <ImportLichess onImported={onImported} defaultOpen />}
+        {resp && hub === "conseils" && <OpeningAdvice games={resp.games} />}
+        {resp && hub === "arbre" && (
           <>
             {/* ─── Bandeau : couleur, analyse, entraînement, export ─── */}
             <div className="panel mb-3 flex flex-wrap items-center gap-2 p-3">
@@ -646,4 +665,68 @@ function playSan(fen: string, san: string): { fen: string; uci: string } | null 
     const m = c.move(san);
     return { fen: c.fen(), uci: m.from + m.to + (m.promotion ?? "") };
   } catch { return null; }
+}
+
+// ═══ Tableau de bord : progression, séance du jour, premiers pas ═══════════════
+function Dashboard({ games, imported, doc, due, drillsDue, lines, mastered, onSession, onGo }: {
+  games: number; imported: number; doc: RepertoireDoc; due: number; drillsDue: number; lines: number; mastered: number;
+  onSession: () => void; onGo: (h: "arbre" | "conseils" | "parties") => void;
+}) {
+  const cards = Object.values(doc.cards);
+  const fixed = cards.filter((c) => c.streak >= 1).length;
+  const [styleDone, setStyleDone] = useState(false);
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    try {
+      setStyleDone(Object.keys(localStorage).some((k) => k.startsWith("arena.style1.")));
+      setHidden(localStorage.getItem("arena.onboarding.hidden") === "1");
+    } catch { /* stockage indisponible */ }
+  }, []);
+  const steps: Array<{ done: boolean; label: string; go: () => void }> = [
+    { done: games >= 10, label: "Importer tes parties Lichess (au moins 10)", go: () => onGo("parties") },
+    { done: styleDone, label: "Lancer l'analyse de ton style (onglet Conseils)", go: () => onGo("conseils") },
+    { done: !!(doc.refs && Object.keys(doc.refs).length), label: "Choisir ta théorie de référence (menu au-dessus de l'arbre)", go: () => onGo("arbre") },
+    { done: !!(doc.drills && Object.keys(doc.drills).length), label: "Réviser une première ligne de théorie", go: () => onGo("arbre") },
+    { done: cards.some((c) => c.solved > 0), label: "Corriger une première erreur d'ouverture", go: () => onGo("arbre") },
+  ];
+  const left = steps.filter((x) => !x.done).length;
+  const todo = due + drillsDue;
+  const tile = "rounded-lg bg-surface-2 p-2 sm:p-2.5";
+  return (
+    <section className="panel mb-3 flex flex-col gap-3 p-3" aria-label="Ma progression">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="font-display text-base font-bold">Ma progression</h2>
+        <button type="button" disabled={todo === 0} onClick={onSession}
+          className="neon-btn ml-auto rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-40">
+          {todo ? `Ma séance du jour · ${todo}` : "Séance du jour terminée ✓"}
+        </button>
+      </div>
+      <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+        <div className={tile}><p className="text-[11px] leading-tight text-muted sm:text-xs">Parties</p><p className="tabular text-lg font-bold sm:text-xl">{games}</p><p className="hidden text-[11px] text-muted sm:block">{imported} de Lichess</p></div>
+        <div className={tile}><p className="text-[11px] leading-tight text-muted sm:text-xs">Erreurs corrigées</p><p className="tabular text-lg font-bold sm:text-xl">{fixed}<span className="text-xs font-normal text-muted">/{cards.length}</span></p>
+          <div className="mt-1 h-1 rounded bg-ink"><div className="h-full rounded bg-win" style={{ width: `${cards.length ? (100 * fixed) / cards.length : 0}%` }} /></div></div>
+        <div className={tile}><p className="text-[11px] leading-tight text-muted sm:text-xs">Lignes maîtrisées</p><p className="tabular text-lg font-bold sm:text-xl">{mastered}<span className="text-xs font-normal text-muted">/{lines}</span></p>
+          <div className="mt-1 h-1 rounded bg-ink"><div className="h-full rounded bg-neon" style={{ width: `${lines ? (100 * mastered) / lines : 0}%` }} /></div></div>
+        <div className={tile}><p className="text-[11px] leading-tight text-muted sm:text-xs">À réviser</p><p className="tabular text-lg font-bold sm:text-xl">{todo}</p><p className="hidden text-[11px] text-muted sm:block">{due} erreur{due > 1 ? "s" : ""} · {drillsDue} ligne{drillsDue > 1 ? "s" : ""}</p></div>
+      </div>
+      {left > 0 && !hidden && (
+        <div className="rounded-lg border border-neon/30 p-2.5">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold">Bien démarrer · {steps.length - left}/{steps.length}</p>
+            <button type="button" onClick={() => { setHidden(true); try { localStorage.setItem("arena.onboarding.hidden", "1"); } catch { /* */ } }} className="ml-auto text-xs text-muted hover:text-text">Masquer</button>
+          </div>
+          <ol className="mt-1.5 flex flex-col gap-1">
+            {steps.map((x, i) => (
+              <li key={x.label}>
+                <button type="button" onClick={x.go} disabled={x.done} className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-[13px] hover:bg-surface-2 disabled:hover:bg-transparent">
+                  <span className={`grid size-5 shrink-0 place-items-center rounded-full text-[11px] font-bold ${x.done ? "bg-win/20 text-win" : "bg-surface-2 text-muted"}`}>{x.done ? "✓" : i + 1}</span>
+                  <span className={x.done ? "text-muted line-through" : ""}>{x.label}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </section>
+  );
 }

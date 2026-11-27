@@ -17,13 +17,13 @@ const ERRORS: Record<string, string> = {
  * Import des parties d'un compte Lichess : elles rejoignent le répertoire (arbre d'ouvertures, erreurs récurrentes,
  * exercices) et donnent les statistiques par ouverture.
  */
-export function ImportLichess({ onImported }: { onImported: () => void }) {
+export function ImportLichess({ onImported, defaultOpen = false }: { onImported: () => void; defaultOpen?: boolean }) {
   const [data, setData] = useState<ImportsResponse | null>(null);
   const [name, setName] = useState("");
   const [max, setMax] = useState(300);
   const [speeds, setSpeeds] = useState<string[]>(["blitz", "rapid"]);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const wasRunning = useRef(false);
 
   const load = useCallback(async () => {

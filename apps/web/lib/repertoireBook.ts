@@ -1,3 +1,5 @@
+import { EXTRA_LINES } from "./repertoireExtra";
+
 /**
  * Répertoires complets : pour chaque ouverture conseillée, les sous-lignes à connaître contre toutes les réponses
  * importantes de l'adversaire, avec l'idée de chaque ligne. Chaque ligne part de la position initiale (coups SAN).
@@ -182,8 +184,8 @@ export const REPERTOIRES: RepertoireDef[] = [
         note: "Contre le fianchetto, h4-h5 ouvre la colonne h tout de suite : une attaque très directe (à connaître, mais Stockfish la juge risquée : alternative calme e3, Nf3, Be2)." },
       { name: "Contre l'Est-indienne, version calme", moves: "d4 Nf6 Bf4 g6 e3 Bg7 Nf3 O-O Be2 d6 h3 Nbd7 O-O Qe8 c4 e5 Bh2",
         note: "Si l'on préfère éviter les risques : c4 gagne de l'espace et Bh2 garde le fou." },
-      { name: "Contre …c5 tôt (Benoni)", moves: "d4 Nf6 Bf4 c5 e3 Qb6 Nc3 Qxb2 Nb5 Na6 Rb1 Qa2 Ra1 Qb2 Rb1",
-        note: "Le pion b2 empoisonné : Nb5 et Rb1 répètent la position ou piègent la dame." },
+      { name: "Contre …c5 tôt (Benoni)", moves: "d4 Nf6 Bf4 c5 e3 Qb6 Nc3 Qxb2 Nb5 Na6 a3",
+        note: "Le pion b2 empoisonné : Nb5 menace Nc7+, a3 puis Rb1 ou Ra2 enferment la dame noire, qui manque de cases." },
       { name: "Contre la Hollandaise : …f5", moves: "d4 f5 Bf4 Nf6 e3 e6 Nf3 b6 h3 Bb7 Nbd2 Be7 Bd3 O-O O-O",
         note: "Développement simple ; c4 et Ne5 plus tard pour exploiter la case e5 affaiblie." },
     ],
@@ -386,8 +388,8 @@ export const REPERTOIRES: RepertoireDef[] = [
     lines: [
       { name: "2…Qxd5 3.Nc3 Qa5", moves: "e4 d5 exd5 Qxd5 Nc3 Qa5 d4 Nf6 Nf3 Bf5 Bc4 e6 Bd2 c6 Qe2 Bb4 O-O-O Nbd7 a3 Bxc3 Bxc3 Qc7",
         note: "La ligne principale : structure Caro-Kann idéale ; contre le grand roque blanc, …Qc7, …O-O-O ou …b5 selon la position." },
-      { name: "3…Qd6 (variante moderne)", moves: "e4 d5 exd5 Qxd5 Nc3 Qd6 d4 Nf6 Nf3 a6 g3 b5 Bg2 Bb7 O-O e6",
-        note: "La dame en d6 est moins exposée ; …a6 empêche Nb5, …b5 et …Bb7 neutralisent le fianchetto blanc." },
+      { name: "3…Qd6 (variante moderne)", moves: "e4 d5 exd5 Qxd5 Nc3 Qd6 d4 Nf6 Nf3 a6 g3 Nc6 Bf4 Qd8 Bg2 e6 O-O Bd6",
+        note: "La dame en d6 est moins exposée ; …a6 empêche Nb5 ; contre Bf4, la dame recule en d8 et …e6/…Bd6 échange le fou actif des Blancs." },
       { name: "Contre 3.Nf3", moves: "e4 d5 exd5 Qxd5 Nf3 Bg4 Be2 Nc6 d4 O-O-O c4 Qf5 Be3 e5",
         note: "Contre le développement calme, …Bg4, …Nc6 et le grand roque : pression immédiate sur d4." },
       { name: "Contre 3.d4", moves: "e4 d5 exd5 Qxd5 d4 Nf6 Nf3 Bf5 c4 Qa5+ Nc3 e6 Be2 c6 O-O Bb4",
@@ -497,7 +499,7 @@ export const REPERTOIRES: RepertoireDef[] = [
         note: "La ligne principale : …Qe8 prépare …e5 ; le cavalier a6-c5 trouve une belle case." },
       { name: "Gambit Staunton : 2.e4", moves: "d4 f5 e4 fxe4 Nc3 Nf6 Bg5 Nc6 d5 Ne5 Qd4 Nf7 Bxf6 exf6 Nxe4 f5",
         note: "On garde le pion : …Nc6-e5-f7 et …f5 consolident la position." },
-      { name: "2.Bg5", moves: "d4 f5 Bg5 g6 Nc3 d5 h4 Bg7 h5 c6 e3 Nd7",
+      { name: "2.Bg5", moves: "d4 f5 Bg5 g6 Nc3 d5 h4 Bg7 e3 c6 Nf3 Nf6",
         note: "Contre Bg5, …g6 et …d5 : structure Stonewall/Leningrad mixte, solide." },
       { name: "Avec c4 rapide (sans g3)", moves: "d4 f5 c4 Nf6 Nc3 g6 Nf3 Bg7 e3 O-O Be2 d6 O-O Qe8 b4 e5",
         note: "Le plan …Qe8 et …e5 reste valable ; …e5 tout de suite si les Blancs tardent." },
@@ -538,5 +540,8 @@ export const REPERTOIRES: RepertoireDef[] = [
     ],
   },
 ];
+
+// sous-lignes supplémentaires (repertoireExtra.ts)
+for (const r of REPERTOIRES) r.lines.push(...(EXTRA_LINES[r.id] ?? []));
 
 export const repertoireById = (id: string) => REPERTOIRES.find((r) => r.id === id) ?? null;
