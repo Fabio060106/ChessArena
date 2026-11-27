@@ -1,8 +1,8 @@
 "use client";
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { SITE_NAME } from "../lib/site";
 import { SNG_MAX_SIZE, SNG_MIN_SIZE, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
-import { KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
+import { defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
 
 const TC_LABEL: Record<TimeControlId, string> = {
   bullet_1_0: "Bullet 1+0", blitz_3_0: "Blitz 3+0", blitz_3_2: "Blitz 3+2", rapid_5_0: "Rapide 5+0",
@@ -13,7 +13,7 @@ const SNG_ERRORS: Record<string, string> = {
   INSUFFICIENT_FUNDS: "Solde insuffisant pour cette entrée.",
   ALREADY_REGISTERED: "Vous êtes déjà inscrit à cette table.",
   IN_GAME: "Terminez votre partie en cours.",
-  IN_TOURNAMENT: "Vous êtes déjà inscrit à un tournoi.",
+  IN_TOURNAMENT: "Tu es déjà inscrit à un tournoi (un seul à la fois, même programmé).",
   ALREADY_QUEUED: "Quittez la file d'attente avant de vous inscrire.",
   FULL: "Table complète : une nouvelle table s'ouvre.",
   BUSY: "Table en cours de démarrage, réessayez.",
@@ -87,6 +87,8 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
       {p.pageLink !== false && t.status !== "cancelled" && (
         <a href={`/tournoi/${t.id}`} className="-mt-1 text-xs text-neon hover:underline">Page du tournoi : classement en direct, à partager à ton club →</a>
       )}
+
+      {t.status === "registering" && t.startsAt && <StartsBanner iso={t.startsAt} />}
 
       {waiting && (
         <p role="status" className="rounded-lg border border-win/40 bg-win/10 px-3 py-2 text-sm text-win">
@@ -184,7 +186,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
         </div>
       ))}
 
-      {t.status === "registering" && <InviteBox t={t} />}
+      {t.status === "registering" && registeredCount(t) < t.size && <InviteBox t={t} />}
       {t.status === "registering" && t.createdBy === p.userId && (
         <StartNow t={t} busy={p.busy === `start:${t.id}`} onStart={() => p.onStart(t.id)} />
       )}
@@ -247,6 +249,7 @@ function Lobby({ lobby, busy, error, onRegister, onJoin, onCreate, invite, userI
             <div className="min-w-0 flex-1">
               <p className="truncate font-semibold">{isCustom(t) ? titleOf(t) : `${TC_LABEL[t.timeControl]} · ${t.size} joueurs`}</p>
               <p className="text-xs text-muted">
+                {t.startsAt && <span className="block font-semibold text-gold">Départ {startsLabel(t.startsAt)}</span>}
                 {isCustom(t) ? `${TC_LABEL[t.timeControl]} · ${t.size} joueurs · ${formatOf(t)} · ` : ""}entrée {formatMoney(t.buyInCents, t.currency)} · cagnotte <span className="text-gold">{formatMoney(t.prizePoolCents, t.currency)}</span>
               </p>
               <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-2">
@@ -279,6 +282,8 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   const [name, setName] = useState("");
   const [system, setSystem] = useState<"swiss" | "ko">("swiss");
   const [rounds, setRounds] = useState(0);
+  const [when, setWhen] = useState<"full" | "time">("full");
+  const [startAt, setStartAt] = useState(defaultStart);
   const pick = "rounded-lg px-2 py-1.5 text-sm font-semibold transition";
   const on = "bg-ink text-neon ring-1 ring-neon/50";
   const off = "text-muted hover:text-text";
@@ -292,7 +297,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   }
   const pool = Math.floor(entry * size * 0.9);
   return (
-    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}) }); }}>
+    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString() } : {}) }); }}>
       <div className="flex items-center justify-between">
         <h3 className="font-display text-base font-bold">Nouveau tournoi</h3>
         <button type="button" onClick={() => setOpen(false)} className="text-xs text-muted hover:text-text">Fermer</button>
@@ -337,6 +342,17 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
         </div>
       </div>
       <div className="flex flex-col gap-1 text-xs text-muted">
+        Départ
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1">
+          <button type="button" aria-pressed={when === "full"} onClick={() => setWhen("full")} className={`${pick} ${when === "full" ? on : off}`}>Dès que complet</button>
+          <button type="button" aria-pressed={when === "time"} onClick={() => setWhen("time")} className={`${pick} ${when === "time" ? on : off}`}>À une heure précise</button>
+        </div>
+        {when === "time" && (
+          <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} aria-label="Date et heure du départ" required
+            className="mt-1 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-text outline-none focus:border-neon/60 [color-scheme:dark]" />
+        )}
+      </div>
+      <div className="flex flex-col gap-1 text-xs text-muted">
         Entrée (jetons, sans valeur)
         <div className="grid grid-cols-4 gap-1 rounded-xl bg-surface-2 p-1">
           {ENTRIES.map((x) => <button key={x} type="button" aria-pressed={entry === x} onClick={() => setEntry(x)} className={`tabular ${pick} ${entry === x ? on : off}`}>{x === 0 ? "Gratuit" : x / 100}</button>)}
@@ -347,7 +363,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
           ? `${size} joueurs : ${swissRoundsFor(size, rounds)} rondes, tout le monde joue chaque ronde (victoire 1, nulle ½). Les rondes s'adaptent au nombre d'inscrits.${entry > 0 ? ` Cagnotte ≈ ${formatMoney(pool, "PLAY")} (${size >= 8 ? "50 % / 30 % / 20 %" : "65 % / 35 %"}).` : ""}`
           : <>{(() => { const b = bracketInfo(size); return `${size} joueurs : ${b.rounds} tour${b.rounds > 1 ? "s" : ""}${b.byes > 0 ? `, ${b.byes} exempt${b.byes > 1 ? "s" : ""} au 1er tour (les mieux classés)` : ""}. `; })()}
         En cas de nulle : revanche, puis Armageddon.{entry > 0 ? ` Cagnotte ≈ ${formatMoney(pool, "PLAY")} (65 % / 35 %).` : ""}</>}
-        {" "}Il démarre dès qu'il est complet, ou quand tu le lances.
+        {" "}{when === "time" && startAt ? `Départ automatique ${startsLabel(new Date(startAt).toISOString())} (au moins 3 inscrits) ; les inscrits restent libres de jouer d'autres parties jusqu'à 5 min avant.` : "Il démarre dès qu'il est complet, ou quand tu le lances."}
       </p>
       <button type="submit" disabled={busy} className="neon-btn rounded-lg px-3 py-2.5 font-semibold">{busy ? "Création…" : "Créer et m'inscrire"}</button>
     </form>
@@ -367,7 +383,7 @@ function InviteBox({ t }: { t: SngSnapshot }) {
   };
   return (
     <div className="panel flex flex-col gap-2 border-neon/30 p-3">
-      <p className="text-sm">Encore <b className="text-neon">{missing}</b> joueur{missing > 1 ? "s" : ""} pour démarrer. Envoie ce lien :</p>
+      <p className="text-sm">{t.startsAt ? <>Jusqu'à <b className="text-neon">{missing}</b> place{missing > 1 ? "s" : ""} libre{missing > 1 ? "s" : ""}. Invite ton club avec ce lien :</> : <>Encore <b className="text-neon">{missing}</b> joueur{missing > 1 ? "s" : ""} pour démarrer. Envoie ce lien :</>}</p>
       <div className="flex gap-2">
         <input readOnly value={link} onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-2 py-1.5 font-mono text-xs text-muted" />
         <button type="button" onClick={() => void share()} className="neon-btn shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold">{copied ? "Copié ✓" : "Partager"}</button>
@@ -382,7 +398,7 @@ function StartNow({ t, busy, onStart }: { t: SngSnapshot; busy: boolean; onStart
   const [confirm, setConfirm] = useState(false);
   const n = t.players.filter((x) => x.status === "registered").length;
   if (n < SNG_MIN_SIZE) return <p className="text-xs text-muted">Tu pourras lancer le tournoi dès qu'il y aura au moins {SNG_MIN_SIZE} inscrits.</p>;
-  if (n === t.size) return null; // complet : il démarre tout seul
+  if (n === t.size && !t.startsAt) return null; // complet : il démarre tout seul
   const b = bracketInfo(n);
   const plan = isSwiss(t)
     ? `${swissRoundsFor(n, t.totalRounds && t.totalRounds !== swissRoundsFor(t.size) ? t.totalRounds : 0)} rondes, tout le monde joue chaque ronde`
@@ -414,6 +430,7 @@ function InviteCard({ t, userId, busy, onJoin }: { t: SngSnapshot; userId: strin
       <p className="text-sm text-muted">
         {TC_LABEL[t.timeControl]} · {t.size} joueurs · {formatOf(t)} · entrée {formatMoney(t.buyInCents, t.currency)}{t.createdBy ? ` · créé par ${t.createdBy}` : ""}
       </p>
+      {t.startsAt && t.status === "registering" && <p className="mt-1 text-sm font-semibold text-gold">Départ {startsLabel(t.startsAt)} ({startsIn(t.startsAt)})</p>}
       <p className="mt-1 text-sm">{n}/{t.size} inscrits</p>
       {t.status === "registering" && !already && (
         <button type="button" disabled={busy !== null} onClick={() => onJoin(t.id)} className="neon-btn mt-3 w-full rounded-lg px-3 py-2.5 font-semibold">
@@ -508,5 +525,22 @@ function SwissRounds({ t, userId }: { t: SngSnapshot; userId: string }) {
         );
       })}
     </>
+  );
+}
+
+/** Tournoi programmé : heure de départ et compte à rebours (rafraîchi chaque seconde dans la dernière heure). */
+function StartsBanner({ iso }: { iso: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  const soon = Date.parse(iso) - now < 60 * 60_000;
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), soon ? 1_000 : 30_000);
+    return () => clearInterval(id);
+  }, [soon]);
+  return (
+    <div className="panel border-gold/40 p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-gold">Tournoi programmé</p>
+      <p className="font-display text-lg font-bold">Départ {startsLabel(iso)}</p>
+      <p className="tabular text-sm text-muted">{startsIn(iso, now)} · départ automatique avec au moins 3 inscrits. Sois sur la page Jouer à l'heure : ta première partie démarre toute seule.</p>
+    </div>
   );
 }

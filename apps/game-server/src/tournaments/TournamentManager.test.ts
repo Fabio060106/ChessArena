@@ -1,0 +1,114 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CUSTOM_LIMITS, CustomTournamentError, TournamentManager } from "./TournamentManager.js";
+import { InMemoryTournamentStore } from "./TournamentStore.js";
+import { acct, InMemoryLedger } from "../settlement/ledger.js";
+import type { StartGameRequest } from "./SitAndGo.js";
+
+const H = 60 * 60_000;
+
+function setup(inGame: Set<string> = new Set()) {
+  const ledger = new InMemoryLedger();
+  const store = new InMemoryTournamentStore();
+  const started: StartGameRequest[] = [];
+  const deps = {
+    ledger, store, rakeBps: 1000,
+    startGame: async (r: StartGameRequest) => { started.push(r); return r.gameId; },
+    emitTournament: () => {}, emitLobby: () => {},
+    isInGame: (u: string) => inGame.has(u),
+  };
+  const m = new TournamentManager([], deps);
+  return { m, ledger, store, started, deps };
+}
+const at = (ms: number) => new Date(Date.now() + ms).toISOString();
+const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+describe("tournois programmés", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-28T10:00:00Z")); });
+  afterEach(() => vi.useRealTimers());
+
+  it("complet avant l'heure : il attend son heure ; inscrits libres jusqu'à 5 min avant ; départ à l'heure", async () => {
+    const { m, started } = setup();
+    const s = await m.createCustom({ size: 4, timeControl: "blitz_3_0", buyInCents: 0, system: "swiss", startsAt: at(2 * H) }, "a", 1500);
+    expect(s.startsAt).toBe("2026-11-28T12:00:00.000Z");
+    for (const u of ["b", "c", "d"]) await m.registerById(s.id, u, 1500);
+    expect(m.get(s.id)!.state).toBe("registering"); // complet, mais programmé
+    expect(m.isBusy("b")).toBe(false); // libre pour un duel en attendant
+    expect(m.activeFor("b")).toHaveLength(1); // mais pas pour un second tournoi
+    await vi.advanceTimersByTimeAsync(2 * H - CUSTOM_LIMITS.freeUntilMs + 1_000);
+    expect(m.isBusy("b")).toBe(true); // 5 min avant : plus de nouveau duel
+    expect(started).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(CUSTOM_LIMITS.freeUntilMs);
+    await flush();
+    expect(m.get(s.id)!.state).toBe("running");
+    expect(started).toHaveLength(2);
+  });
+
+  it("à l'heure dite avec moins de 3 inscrits : annulé (et remboursé)", async () => {
+    const { m, ledger } = setup();
+    await ledger.faucet("a", 1_000, "seed-a");
+    const s = await m.createCustom({ size: 8, timeControl: "blitz_3_0", buyInCents: 100, startsAt: at(H) }, "a", 1500);
+    expect(await ledger.balance(acct.user("a", "PLAY"), "PLAY")).toBe(900);
+    await vi.advanceTimersByTimeAsync(H + 1_000);
+    await flush();
+    expect(m.get(s.id)!.snapshot()).toMatchObject({ status: "cancelled", cancelReason: "pas assez d'inscrits à l'heure du départ" });
+    expect(await ledger.balance(acct.user("a", "PLAY"), "PLAY")).toBe(1_000);
+  });
+
+  it("un inscrit encore en partie à l'heure dite : le départ attend la fin de sa partie", async () => {
+    const inGame = new Set(["c"]);
+    const { m } = setup(inGame);
+    const s = await m.createCustom({ size: 8, timeControl: "blitz_3_0", buyInCents: 0, startsAt: at(H) }, "a", 1500);
+    for (const u of ["b", "c"]) await m.registerById(s.id, u, 1500);
+    await vi.advanceTimersByTimeAsync(H + 1_000);
+    expect(m.get(s.id)!.state).toBe("registering");
+    inGame.clear();
+    await vi.advanceTimersByTimeAsync(16_000);
+    await flush();
+    expect(m.get(s.id)!.state).toBe("running");
+  });
+
+  it("refuse une heure trop proche, trop lointaine (> 14 jours) ou illisible", async () => {
+    const { m } = setup();
+    for (const startsAt of [at(30_000), at(15 * 24 * H), "demain soir"]) {
+      await expect(m.createCustom({ size: 4, timeControl: "blitz_3_0", buyInCents: 0, startsAt }, "a", 1500)).rejects.toBeInstanceOf(CustomTournamentError);
+    }
+  });
+});
+
+describe("reprise après redémarrage", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-28T10:00:00Z")); });
+  afterEach(() => vi.useRealTimers());
+
+  it("un tournoi en inscription est repris tel quel ; l'escrow reste juste (désinscription remboursée, réinscription payée)", async () => {
+    const A = setup();
+    await A.ledger.faucet("a", 1_000, "seed-a");
+    await A.ledger.faucet("b", 1_000, "seed-b");
+    const s = await A.m.createCustom({ size: 8, timeControl: "rapid_5_0", buyInCents: 100, name: "Club", system: "swiss", rounds: 3, startsAt: at(24 * H) }, "a", 1500);
+    await A.m.registerById(s.id, "b", 1600);
+    // b s'est déjà désinscrit puis réinscrit une fois avant l'arrêt (clés tunreg/tlock « 1 » et « 2 » consommées)
+    await A.m.get(s.id)!.unregister("b");
+    await A.m.registerById(s.id, "b", 1600);
+    const snap = A.m.get(s.id)!.snapshot();
+
+    // redémarrage : même grand livre (base), nouveau gestionnaire
+    vi.setSystemTime(new Date("2026-11-28T11:00:00Z"));
+    const B = setup();
+    const ledger = A.ledger;
+    const m = new TournamentManager([], { ...B.deps, ledger });
+    const t = m.restoreCustom(snap)!;
+    expect(t.snapshot()).toMatchObject({ id: s.id, name: "Club", system: "swiss", swissRounds: 3, startsAt: snap.startsAt, createdAt: snap.createdAt, status: "registering" });
+    expect(t.snapshot().players.map((p) => p.userId).sort()).toEqual(["a", "b"]);
+    expect(m.lobby().some((x) => x.id === s.id)).toBe(true);
+    expect(await ledger.balance(t.escrowAccount, "PLAY")).toBe(200);
+    // désinscription après reprise : vraiment remboursée (clé neuve)
+    await t.unregister("b");
+    expect(await ledger.balance(acct.user("b", "PLAY"), "PLAY")).toBe(1_000);
+    // réinscription : vraiment payée
+    await m.registerById(s.id, "b", 1600);
+    expect(await ledger.balance(acct.user("b", "PLAY"), "PLAY")).toBe(900);
+    expect(await ledger.balance(t.escrowAccount, "PLAY")).toBe(200);
+    // un tournoi déjà repris, en cours ou d'un lobby n'est pas repris deux fois
+    expect(m.restoreCustom(snap)).toBeNull();
+    expect(m.restoreCustom({ ...snap, id: "x", status: "running" })).toBeNull();
+  });
+});

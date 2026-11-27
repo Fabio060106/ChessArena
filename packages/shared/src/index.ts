@@ -225,6 +225,10 @@ export interface SngSnapshot {
   totalRounds?: number;
   /** suisse : départ de la prochaine ronde (pause entre les rondes) */
   nextRoundAt?: string;
+  /** suisse : rondes choisies par le créateur (0 = selon le nombre d'inscrits) */
+  swissRounds?: number;
+  /** tournoi programmé : départ automatique à cette heure (ISO) */
+  startsAt?: string | null;
   status: SngStatus;
   players: SngPlayerView[];
   rounds: SngMatchView[][];
@@ -266,6 +270,8 @@ export interface SngCreatePayload {
   system?: SngSystem;
   /** suisse : nombre de rondes souhaité (sinon calculé selon le nombre d'inscrits) */
   rounds?: number;
+  /** départ programmé (ISO), de 2 minutes à 14 jours ; sinon départ quand complet ou lancé par le créateur */
+  startsAt?: string;
 }
 
 /** Partie terminée, telle qu'affichée dans l'historique d'un joueur. */

@@ -251,6 +251,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     },
     emitTournament: (s) => io.to(tournamentRoom(s.id)).emit("sng:update", s),
     emitLobby: (tables) => io.emit("sng:lobby", tables),
+    isInGame: (u) => !!games.activeGameOf(u),
   });
   games.onGameFinished((g) => tournaments.onGameFinished(g));
 
@@ -627,7 +628,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       if (!gate.ok) return gate.code;
       if (games.activeGameOf(user.userId)) return "IN_GAME";
       if (matchmaker.isQueued(user.userId)) return "ALREADY_QUEUED";
-      if (tournaments.isBusy(user.userId)) return "IN_TOURNAMENT";
+      // un tournoi à la fois, même programmé (isBusy laisse libre pour les duels, pas pour un second tournoi)
+      if (tournaments.activeFor(user.userId).length > 0) return "IN_TOURNAMENT";
       return null;
     };
     const customError = (e: unknown): SngAck =>
@@ -636,7 +638,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
     socket.on("sng:create", guard(socket, async (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);
-      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown } | null;
+      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown } | null;
       if (!p || typeof p !== "object" || typeof p.timeControl !== "string" || !(p.timeControl in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
       const blocked = canJoinTournament();
       if (blocked) return reply({ ok: false, code: blocked });
@@ -648,6 +650,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
             size: p.size as number, timeControl, buyInCents: p.buyInCents as number, name: typeof p.name === "string" ? p.name : undefined,
             system: p.system === "swiss" ? "swiss" : p.system === undefined || p.system === "ko" ? "ko" : ("?" as "ko"),
             rounds: p.rounds === undefined ? undefined : (p.rounds as number),
+            startsAt: p.startsAt === undefined ? undefined : (p.startsAt as string),
           },
           user.userId, rating,
         );
@@ -1022,7 +1025,13 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     if (pool) {
       for (const r of (await pool.query<{ id: string }>("SELECT id FROM users WHERE chat_muted_at IS NOT NULL")).rows) chatMuted.add(r.id);
     }
-    const cancelled = await store.cancelInterrupted("server_restart");
+    // les tournois de joueurs encore en inscription (souvent programmés à l'avance) survivent à une mise en ligne
+    const restored: string[] = [];
+    for (const s of await store.loadOpenCustom()) {
+      try { if (tournaments.restoreCustom(s)) restored.push(s.id); } catch (e) { console.error(`[recover] reprise du tournoi ${s.id} impossible`, e); }
+    }
+    const cancelled = await store.cancelInterrupted("server_restart", restored);
+    if (restored.length) console.log(`[recover] ${restored.length} tournoi(s) en inscription repris`);
     const refunded = await refundOrphanedEscrows(ledger, (acc) => {
       const id = acc.split(":")[1] ?? "";
       return games.hasGame(id) || tournaments.ownsEscrow(acc);

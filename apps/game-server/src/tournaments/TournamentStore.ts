@@ -10,7 +10,9 @@ import { withTx } from "../db/tx.js";
 export interface TournamentStore {
   save(s: SngSnapshot): Promise<void>;
   /** Démarrage serveur : tournois interrompus par un arrêt → `cancelled`. Retourne leurs ids. */
-  cancelInterrupted(reason: string): Promise<string[]>;
+  cancelInterrupted(reason: string, keep?: readonly string[]): Promise<string[]>;
+  /** Tournois créés par des joueurs encore en inscription (repris au démarrage). */
+  loadOpenCustom(): Promise<SngSnapshot[]>;
   /** Dernier instantané enregistré (null si inconnu). */
   load(id: string): Promise<SngSnapshot | null>;
   /** Tournois d'un joueur, les plus récents d'abord (inscrits, joués, annulés ; pas les désinscriptions). */
@@ -81,10 +83,10 @@ export class PgTournamentStore implements TournamentStore {
     });
   }
 
-  async cancelInterrupted(reason: string): Promise<string[]> {
+  async cancelInterrupted(reason: string, keep: readonly string[] = []): Promise<string[]> {
     const r = await this.pool.query<{ id: string }>(
       `UPDATE tournaments SET status = 'cancelled', cancel_reason = $1, finished_at = now()
-        WHERE status IN ('registering', 'running') RETURNING id`, [reason],
+        WHERE status IN ('registering', 'running') AND NOT (id = ANY($2::uuid[])) RETURNING id`, [reason, [...keep]],
     );
     if (r.rows.length) {
       await this.pool.query(
@@ -93,6 +95,13 @@ export class PgTournamentStore implements TournamentStore {
       );
     }
     return r.rows.map((x) => x.id);
+  }
+
+  async loadOpenCustom(): Promise<SngSnapshot[]> {
+    const r = await this.pool.query<{ snapshot: SngSnapshot }>(
+      `SELECT snapshot FROM tournaments WHERE status = 'registering' AND snapshot IS NOT NULL
+          AND snapshot->>'createdBy' IS NOT NULL AND snapshot->>'status' = 'registering'`);
+    return r.rows.map((x) => x.snapshot);
   }
 
   async load(id: string): Promise<SngSnapshot | null> {
@@ -121,6 +130,9 @@ export class InMemoryTournamentStore implements TournamentStore {
     this.saved.set(s.id, structuredClone(s));
   }
   async cancelInterrupted(): Promise<string[]> {
+    return [];
+  }
+  async loadOpenCustom(): Promise<SngSnapshot[]> {
     return [];
   }
   async load(id: string): Promise<SngSnapshot | null> {

@@ -210,3 +210,32 @@ export const SWISS_RULES = [
   "Chaque ronde démarre toute seule quand toutes les parties de la précédente sont finies : 45 s pour jouer son premier coup, sinon la partie est perdue.",
   "Départage : Buchholz (points des adversaires rencontrés), puis Sonneborn-Berger, puis nombre de victoires.",
 ];
+
+// ─── Tournois programmés ────────────────────────────────────────────────────
+/** « samedi 28 novembre à 20:00 » (heure locale du lecteur) */
+export function startsLabel(iso: string): string {
+  const d = new Date(iso);
+  const day = d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  const hm = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return `${day} à ${hm}`;
+}
+
+/** « dans 2 h 05 », « dans 3 jours », « dans 45 s », « imminent » */
+export function startsIn(iso: string, now = Date.now()): string {
+  const ms = Date.parse(iso) - now;
+  if (ms <= 0) return "imminent";
+  const min = Math.round(ms / 60_000);
+  if (ms < 60_000) return `dans ${Math.ceil(ms / 1000)} s`;
+  if (min < 60) return `dans ${min} min`;
+  if (min < 48 * 60) { const h = Math.floor(min / 60), m = min % 60; return `dans ${h} h${m ? ` ${String(m).padStart(2, "0")}` : ""}`; }
+  return `dans ${Math.round(min / 1440)} jours`;
+}
+
+/** Valeur par défaut du champ date-heure : ce soir 20:00, ou demain 20:00 s'il est trop tard (format datetime-local). */
+export function defaultStart(now = new Date()): string {
+  const d = new Date(now);
+  d.setHours(20, 0, 0, 0);
+  if (d.getTime() - now.getTime() < 30 * 60_000) d.setDate(d.getDate() + 1);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}

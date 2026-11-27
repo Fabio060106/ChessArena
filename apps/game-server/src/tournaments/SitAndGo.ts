@@ -64,6 +64,10 @@ export interface SitAndGoConfig {
   system?: SngSystem;
   /** suisse : rondes souhaitées (0 = selon le nombre d'inscrits) */
   swissRounds?: number;
+  /** départ programmé (ISO) : la table ne démarre pas toute seule quand elle est complète */
+  startsAt?: string | null;
+  /** reprise après redémarrage : date de création d'origine */
+  createdAt?: string;
 }
 
 export interface StartGameRequest {
@@ -171,6 +175,8 @@ export class SitAndGo {
   private cancelReason: string | null = null;
   private rakeCents = 0;
   private finishing = false;
+  /** après une reprise : les clés d'idempotence des inscriptions repartent au-delà de cette base */
+  private attemptBase = 0;
   /** joueurs réellement au départ (≤ size si le créateur a lancé un tournoi incomplet) */
   private entrants = 0;
   private readonly createdAt: string;
@@ -184,11 +190,34 @@ export class SitAndGo {
     if (cfg.payoutBps.length > (swiss ? 3 : 2)) throw new SngError("INVALID_CONFIG", swiss ? "3 places payées au plus" : "KO sans petite finale : 2 places payées au plus");
     if (swiss && cfg.swissRounds && (!Number.isInteger(cfg.swissRounds) || cfg.swissRounds < 1 || cfg.swissRounds > SWISS_MAX_ROUNDS)) throw new SngError("INVALID_CONFIG", "rondes");
     this.id = cfg.id;
-    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, ...cfg };
+    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, startsAt: null, createdAt: "", ...cfg };
     this.ports = ports;
     this.now = ports.now ?? (() => Date.now());
     this.random = ports.random ?? Math.random;
-    this.createdAt = new Date(this.now()).toISOString();
+    this.createdAt = cfg.createdAt || new Date(this.now()).toISOString();
+  }
+
+  /** départ programmé (ms epoch), sinon null */
+  get startsAtMs(): number | null {
+    return this.cfg.startsAt ? Date.parse(this.cfg.startsAt) : null;
+  }
+
+  /**
+   * Reprise après un redémarrage du serveur : inscriptions déjà payées (l'escrow est intact en base),
+   * sans nouvelle écriture comptable. Les numéros de tentative repartent d'une base unique
+   * (horodatage) : une désinscription ou réinscription ultérieure aura une clé d'idempotence neuve.
+   */
+  restoreRegistrations(players: ReadonlyArray<{ userId: string; rating: number }>): void {
+    if (this.status !== "registering" || this.entries.size) throw new SngError("INVALID_CONFIG", "reprise sur une table neuve uniquement");
+    const base = Math.floor(this.now() / 1000) * 10;
+    this.attemptBase = base;
+    for (const p of players) {
+      this.entries.set(p.userId, {
+        userId: p.userId, rating: p.rating, status: "registered", attempt: base, registeredSeq: ++this.seq,
+        seed: null, eliminatedRound: null, finalRank: null, payoutCents: 0, opponents: [], colors: [], hadBye: false,
+      });
+    }
+    this.audit("restore", { players: players.map((p) => p.userId) });
   }
 
   get escrowAccount(): string {
@@ -225,7 +254,7 @@ export class SitAndGo {
     // Place réservée SYNCHRONEMENT (avant tout await) : deux inscriptions simultanées
     // ne peuvent pas prendre la dernière place toutes les deux.
     const entry: Entry = {
-      userId, rating, status: "locking", attempt: (prev?.attempt ?? 0) + 1, registeredSeq: ++this.seq,
+      userId, rating, status: "locking", attempt: Math.max(prev?.attempt ?? 0, this.attemptBase) + 1, registeredSeq: ++this.seq,
       seed: null, eliminatedRound: null, finalRank: null, payoutCents: 0, opponents: [], colors: [], hadBye: false,
     };
     this.entries.set(userId, entry);
@@ -250,7 +279,8 @@ export class SitAndGo {
     entry.status = "registered";
     this.audit("register", { userId, attempt: entry.attempt });
     this.changed();
-    if (this.status === "registering" && this.countStatus("registered") === this.cfg.size) await this.start();
+    // table complète : départ immédiat, sauf tournoi programmé (il attend son heure)
+    if (this.status === "registering" && !this.cfg.startsAt && this.countStatus("registered") === this.cfg.size) await this.start();
   }
 
   async unregister(userId: string): Promise<void> {
@@ -638,7 +668,8 @@ export class SitAndGo {
       currency: this.cfg.currency, buyInCents: this.cfg.buyInCents, sponsorAddedCents: this.cfg.sponsorAddedCents,
       rakeBps: this.cfg.rakeBps, payoutBps: [...this.cfg.payoutBps], status: this.status,
       ...(swiss && this.nextRoundAt ? { nextRoundAt: new Date(this.nextRoundAt).toISOString() } : {}),
-      ...(swiss ? { system: "swiss" as const, totalRounds: this.totalRounds || this.plannedRounds(this.cfg.size) } : {}),
+      ...(this.cfg.startsAt ? { startsAt: this.cfg.startsAt } : {}),
+      ...(swiss ? { system: "swiss" as const, swissRounds: this.cfg.swissRounds, totalRounds: this.totalRounds || this.plannedRounds(this.cfg.size) } : {}),
       players: [...this.entries.values()]
         .filter((e) => e.status !== "unregistered")
         .sort((a, b) => (a.seed ?? 999) - (b.seed ?? 999) || a.registeredSeq - b.registeredSeq)

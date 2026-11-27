@@ -17,6 +17,8 @@ export interface TournamentManagerDeps {
   emitTournament(snapshot: SngSnapshot): void;
   /** notifie le lobby (tables ouvertes) */
   emitLobby(tables: SngSnapshot[]): void;
+  /** le joueur est-il en pleine partie ? (un tournoi programmé attend la fin des parties en cours) */
+  isInGame?(userId: string): boolean;
 }
 
 /** Garde-fous des tournois créés par les joueurs (bêta : jetons PLAY uniquement). */
@@ -27,6 +29,13 @@ export const CUSTOM_LIMITS = {
   maxOpen: 30,
   /** un tournoi non complet est annulé (inscrits remboursés) au bout de… */
   expireMs: 3 * 60 * 60_000,
+  /** tournoi programmé : de 2 minutes à 14 jours à l'avance */
+  minLeadMs: 2 * 60_000,
+  maxLeadMs: 14 * 24 * 60 * 60_000,
+  /** les inscrits d'un tournoi programmé restent libres (duels, autres parties) jusqu'à… avant le départ */
+  freeUntilMs: 5 * 60_000,
+  /** à l'heure dite, on attend au plus… que les inscrits finissent leur partie en cours */
+  maxWaitMs: 10 * 60_000,
 } as const;
 
 /** pause entre deux rondes d'un suisse : le temps de voir son résultat et le classement */
@@ -75,6 +84,13 @@ export class TournamentManager {
     if (system !== "ko" && system !== "swiss") throw new CustomTournamentError("BAD_PAYLOAD");
     const rounds = p.rounds ?? 0;
     if (!Number.isInteger(rounds) || rounds < 0 || rounds > SWISS_MAX_ROUNDS) throw new CustomTournamentError("BAD_PAYLOAD");
+    let startsAt: string | null = null;
+    if (p.startsAt !== undefined) {
+      const at = typeof p.startsAt === "string" ? Date.parse(p.startsAt) : NaN;
+      const lead = at - Date.now();
+      if (!Number.isFinite(at) || lead < CUSTOM_LIMITS.minLeadMs - 5_000 || lead > CUSTOM_LIMITS.maxLeadMs) throw new CustomTournamentError("BAD_PAYLOAD");
+      startsAt = new Date(at).toISOString();
+    }
     const name = (p.name ?? "").replace(/\s+/g, " ").trim().slice(0, 40) || null;
     for (const c of this.customOpen.values()) if (c.createdBy === creator) throw new CustomTournamentError("ALREADY_CREATED");
     if (this.customOpen.size >= CUSTOM_LIMITS.maxOpen) throw new CustomTournamentError("TOO_MANY_OPEN");
@@ -83,23 +99,64 @@ export class TournamentManager {
     const t = this.makeTable(
       { id: `custom:${id}`, size: p.size, timeControl: p.timeControl, currency: "PLAY", buyInCents: p.buyInCents },
       (s) => this.onCustomChanged(id, s),
-      { id, createdBy: creator, name, system, swissRounds: system === "swiss" ? rounds : 0 },
+      { id, createdBy: creator, name, system, swissRounds: system === "swiss" ? rounds : 0, startsAt },
     );
-    const expiry = setTimeout(() => {
-      if (t.state === "registering") void t.cancel("non complet à temps").then(() => this.deps.emitLobby(this.lobby()));
-    }, CUSTOM_LIMITS.expireMs);
-    expiry.unref?.();
-    this.customOpen.set(id, { t, createdBy: creator, expiry });
+    this.customOpen.set(id, { t, createdBy: creator, expiry: this.scheduleOpen(t, Date.now() + CUSTOM_LIMITS.expireMs) });
     try {
       await t.register(creator, rating);
     } catch (e) {
-      clearTimeout(expiry);
+      clearTimeout(this.customOpen.get(id)?.expiry);
       this.customOpen.delete(id);
       this.byId.delete(id);
       throw e;
     }
     this.deps.emitLobby(this.lobby());
     return t.snapshot();
+  }
+
+  /**
+   * Fin d'attente d'un tournoi ouvert : à l'heure programmée, départ (s'il y a au moins 3 inscrits, une fois
+   * leurs parties en cours terminées) ; sans heure, annulation s'il n'est pas complet au bout de 3 h.
+   */
+  private scheduleOpen(t: SitAndGo, expireAt: number): ReturnType<typeof setTimeout> {
+    const at = t.startsAtMs;
+    const fire = async (waitedMs = 0): Promise<void> => {
+      if (t.state !== "registering") return;
+      if (at === null) { await t.cancel("non complet à temps"); this.deps.emitLobby(this.lobby()); return; }
+      const players = t.snapshot().players.filter((p) => p.status === "registered").map((p) => p.userId);
+      if (players.length < SNG_MIN_SIZE) { await t.cancel("pas assez d'inscrits à l'heure du départ"); this.deps.emitLobby(this.lobby()); return; }
+      if (waitedMs < CUSTOM_LIMITS.maxWaitMs && players.some((u) => this.deps.isInGame?.(u))) {
+        const again = setTimeout(() => void fire(waitedMs + 15_000).catch((e) => console.error(`[sng ${t.id}] départ programmé`, e)), 15_000);
+        again.unref?.();
+        return;
+      }
+      await t.startNow().catch(async (e) => {
+        if ((e as { code?: string }).code === "BUSY") { setTimeout(() => void fire(waitedMs + 1_000), 1_000).unref?.(); return; }
+        throw e;
+      });
+      this.deps.emitLobby(this.lobby());
+    };
+    // setTimeout est borné à ~24,8 jours : les 14 jours maximum passent
+    const timer = setTimeout(() => void fire().catch((e) => console.error(`[sng ${t.id}] fin d'attente`, e)), Math.max(0, (at ?? expireAt) - Date.now()));
+    timer.unref?.();
+    return timer;
+  }
+
+  /**
+   * Reprise d'un tournoi créé par un joueur, encore en inscription, après un redémarrage du serveur
+   * (mise en ligne d'une nouvelle version) : mêmes réglages, mêmes inscrits, l'escrow est resté en base.
+   */
+  restoreCustom(s: SngSnapshot): SitAndGo | null {
+    if (s.status !== "registering" || !s.createdBy || this.byId.has(s.id)) return null;
+    const id = s.id;
+    const t = this.makeTable(
+      { id: `custom:${id}`, size: s.size, timeControl: s.timeControl, currency: s.currency, buyInCents: s.buyInCents },
+      (x) => this.onCustomChanged(id, x),
+      { id, createdBy: s.createdBy, name: s.name ?? null, system: s.system ?? "ko", swissRounds: s.swissRounds ?? 0, startsAt: s.startsAt ?? null, createdAt: s.createdAt },
+    );
+    t.restoreRegistrations(s.players.filter((p) => p.status === "registered" || p.status === "locking").map((p) => ({ userId: p.userId, rating: p.rating })));
+    this.customOpen.set(id, { t, createdBy: s.createdBy, expiry: this.scheduleOpen(t, Date.parse(s.createdAt) + CUSTOM_LIMITS.expireMs) });
+    return t;
   }
 
   /** Le créateur lance son tournoi sans attendre qu'il soit complet. */
@@ -126,8 +183,10 @@ export class TournamentManager {
     return [...this.byId.values()].filter((t) => t.hasPlayer(userId));
   }
 
+  /** Engagé dans un tournoi : en jeu, ou inscrit à un tournoi qui part bientôt (un tournoi programmé laisse libre jusqu'à 5 min avant). */
   isBusy(userId: string): boolean {
-    return this.activeFor(userId).length > 0;
+    const soon = Date.now() + CUSTOM_LIMITS.freeUntilMs;
+    return this.activeFor(userId).some((t) => t.state !== "registering" || t.startsAtMs === null || t.startsAtMs <= soon);
   }
 
   /** Escrow appartenant à un tournoi vivant (pour la récupération après crash). */
@@ -185,7 +244,7 @@ export class TournamentManager {
   private makeTable(
     f: SngFormat,
     onChange: (s: SngSnapshot) => void,
-    extra: { id?: string; createdBy?: string; name?: string | null; system?: "ko" | "swiss"; swissRounds?: number } = {},
+    extra: { id?: string; createdBy?: string; name?: string | null; system?: "ko" | "swiss"; swissRounds?: number; startsAt?: string | null; createdAt?: string } = {},
   ): SitAndGo {
     const t: SitAndGo = new SitAndGo(
       {
@@ -194,7 +253,7 @@ export class TournamentManager {
         // suisse : podium payé (50/30/20) à partir de 8 places ; KO : vainqueur et finaliste
         payoutBps: extra.system === "swiss" && f.size >= 8 ? [5_000, 3_000, 2_000] : SIT_AND_GO_STRUCTURES[f.size as 4 | 6 | 8] ?? [6_500, 3_500],
         createdBy: extra.createdBy ?? null, name: extra.name ?? null,
-        system: extra.system ?? "ko", swissRounds: extra.swissRounds ?? 0,
+        system: extra.system ?? "ko", swissRounds: extra.swissRounds ?? 0, startsAt: extra.startsAt ?? null, createdAt: extra.createdAt,
       },
       {
         ledger: this.deps.ledger,
