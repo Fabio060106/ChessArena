@@ -1,7 +1,7 @@
 "use client";
 import { memo, useEffect, useState } from "react";
 import { SITE_NAME } from "../lib/site";
-import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
+import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, type ClubSummary, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
 import { weeklyLabel, ARENA_RULES, arenaJoinable, arenaRows, isArena, remaining, defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
 
 const TC_LABEL: Record<TimeControlId, string> = {
@@ -13,6 +13,7 @@ export const SNG_ERRORS: Record<string, string> = {
   INSUFFICIENT_FUNDS: "Solde insuffisant pour cette entrée.",
   ALREADY_REGISTERED: "Vous êtes déjà inscrit à cette table.",
   IN_GAME: "Terminez votre partie en cours.",
+  NOT_CLUB_MEMBER: "Seuls les membres du club peuvent créer un tournoi du club.",
   IN_TOURNAMENT: "Tu es déjà inscrit à un tournoi (un seul à la fois, même programmé).",
   ALREADY_QUEUED: "Quittez la file d'attente avant de vous inscrire.",
   FULL: "Table complète : une nouvelle table s'ouvre.",
@@ -61,7 +62,7 @@ export function inviteLink(tournamentId: string): string {
 const isCustom = (t: SngSnapshot) => t.formatId.startsWith("custom:");
 /** « Suisse · 5 rondes » ou « Élimination directe » */
 const formatOf = (t: SngSnapshot) => isArena(t) ? `Arena · ${t.arenaMinutes} min` : isSwiss(t) ? `Suisse · ${t.totalRounds ?? swissRoundsFor(t.size)} rondes` : "Élimination directe";
-const titleOf = (t: SngSnapshot) => t.name ?? (t.createdBy ? `Tournoi de ${t.createdBy}` : `Sit & Go ${t.size} joueurs`);
+const titleOf = (t: SngSnapshot) => t.name ?? (t.club ? `Tournoi · ${t.club.name}` : t.createdBy ? `Tournoi de ${t.createdBy}` : `Sit & Go ${t.size} joueurs`);
 
 /**
  * Panneau Sit & Go en direct : cagnotte, retenue du rake, structure des gains, classement live
@@ -86,6 +87,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
         </div>
         <StatusChip t={t} registered={registered} />
       </header>
+      {t.club && <a href={`/club/${t.club.slug}`} className="-mt-2 text-xs text-gold hover:underline">Club : {t.club.name} →</a>}
       {p.pageLink !== false && t.status !== "cancelled" && (
         <a href={`/tournoi/${t.id}`} className="-mt-1 text-xs text-neon hover:underline">Page du tournoi : classement en direct, à partager à ton club →</a>
       )}
@@ -291,6 +293,15 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   const [when, setWhen] = useState<"full" | "time">("full");
   const [startAt, setStartAt] = useState(defaultStart);
   const [weekly, setWeekly] = useState(false);
+  // clubs dont je suis membre : tournoi du club (présélectionné depuis la page du club : ?club=…)
+  const [myClubs, setMyClubs] = useState<ClubSummary[]>([]);
+  const [club, setClub] = useState("");
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("club") ?? "";
+    fetch("/api/clubs", { cache: "no-store" })
+      .then(async (r) => { if (!r.ok) return; const d = (await r.json()) as { mine: ClubSummary[] }; setMyClubs(d.mine); if (d.mine.some((c) => c.slug === wanted)) setClub(wanted); })
+      .catch(() => {});
+  }, []);
   const pick = "rounded-lg px-2 py-1.5 text-sm font-semibold transition";
   const on = "bg-ink text-neon ring-1 ring-neon/50";
   const off = "text-muted hover:text-text";
@@ -304,7 +315,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   }
   const pool = Math.floor(entry * size * 0.9);
   return (
-    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(system === "arena" ? { arenaMinutes: minutes } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString(), ...(weekly ? { repeatWeekly: true } : {}) } : {}) }); }}>
+    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(system === "arena" ? { arenaMinutes: minutes } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString(), ...(weekly ? { repeatWeekly: true } : {}) } : {}), ...(club ? { clubSlug: club } : {}) }); }}>
       <div className="flex items-center justify-between">
         <h3 className="font-display text-base font-bold">Nouveau tournoi</h3>
         <button type="button" onClick={() => setOpen(false)} className="text-xs text-muted hover:text-text">Fermer</button>
@@ -314,6 +325,16 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
         <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="Soirée échecs en famille"
           className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-text outline-none focus:border-neon/60" />
       </label>
+      {myClubs.length > 0 && (
+        <label className="flex flex-col gap-1 text-xs text-muted">
+          Club
+          <select value={club} onChange={(e) => setClub(e.target.value)} aria-label="Club du tournoi"
+            className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-text outline-none focus:border-neon/60">
+            <option value="">Aucun (tournoi personnel)</option>
+            {myClubs.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
+          </select>
+        </label>
+      )}
       <div className="flex flex-col gap-1 text-xs text-muted">
         Format
         <div className="grid grid-cols-3 gap-1 rounded-xl bg-surface-2 p-1">

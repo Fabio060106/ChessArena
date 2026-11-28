@@ -19,6 +19,7 @@ import { ExportError, type RegulatoryExporter } from "../audit/regulatoryExport.
 import { TokenBucket } from "../net/rateLimiter.js";
 import { AccountError, type AccountService } from "../auth/accounts.js";
 import { tournamentCard, type TournamentStore } from "../tournaments/TournamentStore.js";
+import { ClubError, cleanDescription, cleanName, type ClubStore } from "../clubs/ClubStore.js";
 import type { SngSnapshot } from "@chessarena/shared";
 
 /** Audience du jeton de service émis par le serveur web pour les routes /auth/* (jamais par un navigateur). */
@@ -69,6 +70,8 @@ export interface ApiDeps {
   repo?: GameRepository | null;
   /** comptes joueurs (pseudo + mot de passe) */
   accounts?: AccountService | null;
+  /** clubs : création, adhésion, page du club */
+  clubs?: ClubStore;
   /** tournois : instantané en direct (en mémoire) ou enregistré, historique d'un joueur */
   tournaments?: { live(id: string): SngSnapshot | null; store: TournamentStore; showcase?(): { upcoming: SngSnapshot[]; running: SngSnapshot[] }; mine?(userId: string): SngSnapshot | null };
   /** partie en cours d'un joueur (profil : bouton « Regarder ») */
@@ -466,6 +469,49 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
     }
 
     // ─── Tournois : page d'un tournoi (direct ou terminé), historique d'un joueur ──────
+    // ─── Clubs ──────────────────────────────────────────────────────────────────
+    if (url.pathname === "/account/clubs" && req.method === "GET") {
+      const c = need(d.clubs);
+      send(200, { mine: await c.mine(claims.sub), all: await c.list(60) });
+      return true;
+    }
+    if (url.pathname === "/account/clubs" && req.method === "POST") {
+      const c = need(d.clubs);
+      const b = await body(req, 4096);
+      try {
+        send(201, await c.create(claims.sub, cleanName(b.name), cleanDescription(b.description)));
+      } catch (e) {
+        if (e instanceof ClubError) throw new HttpError(e.code === "TOO_MANY_CLUBS" ? 409 : 400, e.code);
+        throw e;
+      }
+      return true;
+    }
+    const cm = url.pathname.match(/^\/account\/clubs\/([a-z0-9-]{2,48})(?:\/(join|leave))?$/);
+    if (cm) {
+      const c = need(d.clubs);
+      const slug = cm[1]!;
+      try {
+        if (!cm[2] && req.method === "GET") {
+          const club = await c.get(slug);
+          if (!club) throw new HttpError(404, "UNKNOWN_CLUB");
+          // tournois du club : à venir et en cours (en mémoire), terminés (base)
+          const live = d.tournaments?.showcase?.() ?? { upcoming: [], running: [] };
+          const ofClub = (s: SngSnapshot) => s.club?.slug === slug;
+          const finished = d.tournaments ? await d.tournaments.store.recentFinished(10, slug) : [];
+          send(200, {
+            club, member: club.members.some((m) => m.userId === claims.sub),
+            tournaments: { upcoming: live.upcoming.filter(ofClub).map(tournamentCard), running: live.running.filter(ofClub).map(tournamentCard), finished: finished.map(tournamentCard) },
+          });
+          return true;
+        }
+        if (cm[2] === "join" && req.method === "POST") { await c.join(slug, claims.sub); send(200, { ok: true }); return true; }
+        if (cm[2] === "leave" && req.method === "POST") { await c.leave(slug, claims.sub); send(200, { ok: true }); return true; }
+      } catch (e) {
+        if (e instanceof ClubError) throw new HttpError(e.code === "UNKNOWN_CLUB" ? 404 : 409, e.code);
+        throw e;
+      }
+    }
+
     // mon tournoi du moment (bandeau « ton tournoi commence dans… » sur toutes les pages)
     if (url.pathname === "/account/my-tournament" && req.method === "GET") {
       const s = d.tournaments?.mine?.(claims.sub) ?? null;

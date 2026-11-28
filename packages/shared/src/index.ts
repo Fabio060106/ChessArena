@@ -237,6 +237,8 @@ export interface SngSnapshot {
   startsAt?: string | null;
   /** tournoi programmé répété chaque semaine (le suivant est créé au départ de celui-ci) */
   repeatWeekly?: boolean;
+  /** tournoi d'un club (affiché sur la page du club) */
+  club?: ClubRef;
   /** arena : durée (minutes) et heure de fin (une fois lancé) */
   arenaMinutes?: number;
   arenaEndsAt?: string;
@@ -253,6 +255,33 @@ export interface SngSnapshot {
   finishedAt: string | null;
 }
 
+/** Club : page publique, membres, classement interne, tournois du club. */
+export interface ClubSummary {
+  slug: string;
+  name: string;
+  description: string;
+  createdBy: string;
+  createdAt: string;
+  memberCount: number;
+}
+export interface ClubMember {
+  userId: string;
+  role: "owner" | "member";
+  joinedAt: string;
+  blitz: number;
+  rapid: number;
+  games: number;
+}
+export interface ClubDetail extends ClubSummary {
+  members: ClubMember[];
+}
+export interface ClubsResponse {
+  mine: ClubSummary[];
+  all: ClubSummary[];
+}
+/** tournoi rattaché à un club */
+export interface ClubRef { slug: string; name: string }
+
 /** Carte d'un tournoi pour la page « Tournois » (résumé léger d'un instantané). */
 export interface TournamentCard {
   id: string;
@@ -267,6 +296,7 @@ export interface TournamentCard {
   currency: Currency;
   startsAt: string | null;
   repeatWeekly: boolean;
+  club: ClubRef | null;
   arenaMinutes: number | null;
   arenaEndsAt: string | null;
   totalRounds: number | null;
@@ -317,6 +347,8 @@ export interface SngCreatePayload {
   arenaMinutes?: number;
   /** avec startsAt : le même tournoi chaque semaine */
   repeatWeekly?: boolean;
+  /** tournoi d'un club dont le créateur est membre (adresse du club) */
+  clubSlug?: string;
 }
 
 /** Partie terminée, telle qu'affichée dans l'historique d'un joueur. */

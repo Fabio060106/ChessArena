@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS, TIME_CONTROLS, type SngCreatePayload, type SngSystem, type SngFormat, type SngSnapshot } from "@chessarena/shared";
+import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS, TIME_CONTROLS, type ClubRef, type SngCreatePayload, type SngSystem, type SngFormat, type SngSnapshot } from "@chessarena/shared";
 import { SitAndGo, type StartGameRequest } from "./SitAndGo.js";
 import type { TournamentStore } from "./TournamentStore.js";
 import type { Ledger } from "../settlement/ledger.js";
@@ -83,7 +83,7 @@ export class TournamentManager {
    * Création d'un tournoi par un joueur. Le créateur est inscrit d'office (s'il ne peut pas
    * payer l'entrée, le tournoi n'est pas créé). Un tournoi en inscription par créateur.
    */
-  async createCustom(p: SngCreatePayload, creator: string, rating: number): Promise<SngSnapshot> {
+  async createCustom(p: SngCreatePayload, creator: string, rating: number, club: ClubRef | null = null): Promise<SngSnapshot> {
     if (!Number.isInteger(p.size) || p.size < SNG_MIN_SIZE || p.size > SNG_MAX_SIZE || !(p.timeControl in TIME_CONTROLS)) {
       throw new CustomTournamentError("BAD_PAYLOAD");
     }
@@ -114,7 +114,7 @@ export class TournamentManager {
     const t = this.makeTable(
       { id: `custom:${id}`, size: p.size, timeControl: p.timeControl, currency: "PLAY", buyInCents: p.buyInCents },
       (s) => this.onCustomChanged(id, s),
-      { id, createdBy: creator, name, system, swissRounds: system === "swiss" ? rounds : 0, startsAt, arenaMinutes, repeatWeekly },
+      { id, createdBy: creator, name, system, swissRounds: system === "swiss" ? rounds : 0, startsAt, arenaMinutes, repeatWeekly, club },
     );
     this.customOpen.set(id, { t, createdBy: creator, expiry: this.scheduleOpen(t, Date.now() + CUSTOM_LIMITS.expireMs) });
     try {
@@ -167,7 +167,7 @@ export class TournamentManager {
     const t = this.makeTable(
       { id: `custom:${id}`, size: s.size, timeControl: s.timeControl, currency: s.currency, buyInCents: s.buyInCents },
       (x) => this.onCustomChanged(id, x),
-      { id, createdBy: s.createdBy, name: s.name ?? null, system: s.system ?? "ko", swissRounds: s.swissRounds ?? 0, startsAt: s.startsAt ?? null, createdAt: s.createdAt, arenaMinutes: s.arenaMinutes ?? 0, repeatWeekly: !!s.repeatWeekly },
+      { id, createdBy: s.createdBy, name: s.name ?? null, system: s.system ?? "ko", swissRounds: s.swissRounds ?? 0, startsAt: s.startsAt ?? null, createdAt: s.createdAt, arenaMinutes: s.arenaMinutes ?? 0, repeatWeekly: !!s.repeatWeekly, club: s.club ?? null },
     );
     t.restoreRegistrations(s.players.filter((p) => p.status === "registered" || p.status === "locking").map((p) => ({ userId: p.userId, rating: p.rating })));
     this.customOpen.set(id, { t, createdBy: s.createdBy, expiry: this.scheduleOpen(t, Date.parse(s.createdAt) + CUSTOM_LIMITS.expireMs) });
@@ -184,7 +184,7 @@ export class TournamentManager {
       size: s.size, timeControl: s.timeControl, buyInCents: s.buyInCents, name: s.name ?? undefined, system: s.system ?? "ko",
       ...(s.system === "swiss" && s.swissRounds ? { rounds: s.swissRounds } : {}), ...(s.system === "arena" ? { arenaMinutes: s.arenaMinutes } : {}),
       startsAt: new Date(at).toISOString(), repeatWeekly: true,
-    }, creator, rating);
+    }, creator, rating, s.club ?? null);
   }
 
   /** Le créateur lance son tournoi sans attendre qu'il soit complet. */
@@ -272,7 +272,7 @@ export class TournamentManager {
   private makeTable(
     f: SngFormat,
     onChange: (s: SngSnapshot) => void,
-    extra: { id?: string; createdBy?: string; name?: string | null; system?: SngSystem; swissRounds?: number; startsAt?: string | null; createdAt?: string; arenaMinutes?: number; repeatWeekly?: boolean } = {},
+    extra: { id?: string; createdBy?: string; name?: string | null; system?: SngSystem; swissRounds?: number; startsAt?: string | null; createdAt?: string; arenaMinutes?: number; repeatWeekly?: boolean; club?: ClubRef | null } = {},
   ): SitAndGo {
     const t: SitAndGo = new SitAndGo(
       {
@@ -281,7 +281,7 @@ export class TournamentManager {
         // suisse : podium payé (50/30/20) à partir de 8 places ; KO : vainqueur et finaliste
         payoutBps: extra.system && extra.system !== "ko" && f.size >= 8 ? [5_000, 3_000, 2_000] : SIT_AND_GO_STRUCTURES[f.size as 4 | 6 | 8] ?? [6_500, 3_500],
         createdBy: extra.createdBy ?? null, name: extra.name ?? null,
-        system: extra.system ?? "ko", swissRounds: extra.swissRounds ?? 0, startsAt: extra.startsAt ?? null, createdAt: extra.createdAt, arenaMinutes: extra.arenaMinutes ?? 0, repeatWeekly: !!extra.repeatWeekly,
+        system: extra.system ?? "ko", swissRounds: extra.swissRounds ?? 0, startsAt: extra.startsAt ?? null, createdAt: extra.createdAt, arenaMinutes: extra.arenaMinutes ?? 0, repeatWeekly: !!extra.repeatWeekly, club: extra.club ?? null,
       },
       {
         ledger: this.deps.ledger,

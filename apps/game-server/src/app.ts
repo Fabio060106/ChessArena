@@ -2,7 +2,7 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { performance } from "node:perf_hooks";
 import { Server, type Socket } from "socket.io";
 import pg from "pg";
-import { TIME_CONTROLS, type ChallengeAck, type ChallengeView, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
+import { TIME_CONTROLS, type ChallengeAck, type ClubRef, type ChallengeView, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "./config.js";
 import { authenticate, canPlay, type AuthUser } from "./auth.js";
 import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
@@ -29,6 +29,7 @@ import { randomUUID } from "node:crypto";
 import { FileAuditLog, PgAuditLog, type AuditSink } from "./audit/auditLog.js";
 import { InMemoryGameRepository, PgGameRepository, type GameRepository } from "./persistence/GameRepository.js";
 import { InMemoryTournamentStore, PgTournamentStore, type TournamentStore } from "./tournaments/TournamentStore.js";
+import { InMemoryClubStore, PgClubStore, type ClubStore } from "./clubs/ClubStore.js";
 import { CustomTournamentError, TournamentManager } from "./tournaments/TournamentManager.js";
 import { SngError } from "./tournaments/SitAndGo.js";
 import { migrate } from "./db/migrate.js";
@@ -81,6 +82,7 @@ export interface GameServerDeps {
   /** comptes joueurs (tests : stockage en mémoire injecté) */
   accountStore?: AccountStore;
   tournamentStore?: TournamentStore;
+  clubStore?: ClubStore;
   psp?: Psp;
   /** résolveur IP → pays (tests) ; sinon chargé depuis cfg.geoIpCsvPath */
   geoResolver?: GeoResolver;
@@ -154,6 +156,10 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     reports: [] as Array<{ reporter: string; reported: string; gameId: string; reason: string; at: string; reviewed: boolean }>,
   };
   const store: TournamentStore = deps.tournamentStore ?? (pool ? new PgTournamentStore(pool) : new InMemoryTournamentStore());
+  const clubs: ClubStore = deps.clubStore ?? (pool ? new PgClubStore(pool) : new InMemoryClubStore(async (u) => {
+    const r = await repo.getRatings(u);
+    return { blitz: r.blitz_3_0.rating, rapid: r.rapid_5_0.rating, games: Object.values(r).reduce((a, x) => a + x.games, 0) };
+  }));
 
   // ─── Argent réel, fair-play, modération (nécessitent PostgreSQL) ──────────────
   const withdrawals = pool && ledger instanceof PgLedger ? new WithdrawalService(pool, ledger, deps.psp) : null;
@@ -183,11 +189,21 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
       void handleApi(req, res, { imports, relays, reviews, parseRelaySource, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted,
-        tournaments: { live: (id) => tournaments.get(id)?.snapshot() ?? null, store, showcase: () => tournaments.showcase(), mine: (u) => tournaments.activeFor(u)[0]?.snapshot() ?? null }, memoryReports,
+        clubs, tournaments: { live: (id) => tournaments.get(id)?.snapshot() ?? null, store, showcase: () => tournaments.showcase(), mine: (u) => tournaments.activeFor(u)[0]?.snapshot() ?? null }, memoryReports,
       fairplayMem, isOnline: (u) => (io.of("/").adapter.rooms.get(userRoom(u))?.size ?? 0) > 0, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
       return;
     }
     if (req.url === "/health") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+    // aperçu public d'un club (lien partagé) : nom, description, nombre de membres
+    const pubClub = /^\/public\/clubs\/([a-z0-9-]{2,48})$/.exec(req.url ?? "");
+    if (pubClub && req.method === "GET") {
+      void clubs.get(pubClub[1]!).then((c) => {
+        if (!c) return void res.writeHead(404, { "content-type": "application/json" }).end("{}");
+        res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=60" })
+          .end(JSON.stringify({ name: c.name, description: c.description, memberCount: c.memberCount, createdBy: c.createdBy }));
+      }).catch(() => res.writeHead(500).end());
+      return;
+    }
     // aperçu public d'un tournoi (lien partagé sur WhatsApp, Messenger… : titre, format, heure) — aucun nom de joueur
     const pub = /^\/public\/tournaments\/([0-9a-f-]{36})$/i.exec(req.url ?? "");
     if (pub && req.method === "GET") {
@@ -652,12 +668,20 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
     socket.on("sng:create", guard(socket, async (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);
-      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown; arenaMinutes?: unknown; repeatWeekly?: unknown } | null;
+      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown; arenaMinutes?: unknown; repeatWeekly?: unknown; clubSlug?: unknown } | null;
       if (!p || typeof p !== "object" || typeof p.timeControl !== "string" || !(p.timeControl in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
       const blocked = canJoinTournament();
       if (blocked) return reply({ ok: false, code: blocked });
       const timeControl = p.timeControl as TimeControlId;
       const rating = (await repo.getRatings(user.userId))[timeControl].rating;
+      // tournoi de club : réservé aux membres du club
+      let club: ClubRef | null = null;
+      if (p.clubSlug !== undefined) {
+        if (typeof p.clubSlug !== "string" || !(await clubs.isMember(p.clubSlug, user.userId))) return reply({ ok: false, code: "NOT_CLUB_MEMBER" });
+        const c = await clubs.get(p.clubSlug);
+        if (!c) return reply({ ok: false, code: "NOT_CLUB_MEMBER" });
+        club = { slug: c.slug, name: c.name };
+      }
       try {
         const snapshot = await tournaments.createCustom(
           {
@@ -668,7 +692,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
             rounds: p.rounds === undefined ? undefined : (p.rounds as number),
             startsAt: p.startsAt === undefined ? undefined : (p.startsAt as string),
           },
-          user.userId, rating,
+          user.userId, rating, club,
         );
         io.in(userRoom(user.userId)).socketsJoin(tournamentRoom(snapshot.id));
         reply({ ok: true, snapshot });

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS } from "@chessarena/shared";
 import type {
-  Color, Cents, Currency, GameResult, SngGameKind, SngGameView, SngMatchView, SngPlayerView, SngSize, SngSnapshot, SngSystem, TimeControlId,
+  ClubRef, Color, Cents, Currency, GameResult, SngGameKind, SngGameView, SngMatchView, SngPlayerView, SngSize, SngSnapshot, SngSystem, TimeControlId,
 } from "@chessarena/shared";
 import { arenaPairs, arenaRanking, arenaScores, type ArenaGame } from "./arena.js";
 import { ARENA_MINUTES } from "@chessarena/shared";
@@ -74,6 +74,8 @@ export interface SitAndGoConfig {
   arenaMinutes?: number;
   /** tournoi programmé répété chaque semaine */
   repeatWeekly?: boolean;
+  /** tournoi d'un club */
+  club?: ClubRef | null;
 }
 
 export interface StartGameRequest {
@@ -202,7 +204,7 @@ export class SitAndGo {
     if (cfg.system === "arena" && !(ARENA_MINUTES as readonly number[]).includes(cfg.arenaMinutes ?? 0)) throw new SngError("INVALID_CONFIG", "durée d'arena");
     if (swiss && cfg.swissRounds && (!Number.isInteger(cfg.swissRounds) || cfg.swissRounds < 1 || cfg.swissRounds > SWISS_MAX_ROUNDS)) throw new SngError("INVALID_CONFIG", "rondes");
     this.id = cfg.id;
-    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, startsAt: null, createdAt: "", arenaMinutes: 0, repeatWeekly: false, ...cfg };
+    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, startsAt: null, createdAt: "", arenaMinutes: 0, repeatWeekly: false, club: null, ...cfg };
     this.ports = ports;
     this.now = ports.now ?? (() => Date.now());
     this.random = ports.random ?? Math.random;
@@ -826,6 +828,7 @@ export class SitAndGo {
       ...(swiss && this.nextRoundAt ? { nextRoundAt: new Date(this.nextRoundAt).toISOString() } : {}),
       ...(this.cfg.startsAt ? { startsAt: this.cfg.startsAt } : {}),
       ...(this.cfg.repeatWeekly ? { repeatWeekly: true } : {}),
+      ...(this.cfg.club ? { club: this.cfg.club } : {}),
       ...(arena ? { system: "arena" as const, arenaMinutes: this.cfg.arenaMinutes, ...(this.arenaEndAt ? { arenaEndsAt: new Date(this.arenaEndAt).toISOString() } : {}) } : {}),
       ...(swiss ? { system: "swiss" as const, swissRounds: this.cfg.swissRounds, totalRounds: this.totalRounds || this.plannedRounds(this.cfg.size) } : {}),
       players: [...this.entries.values()]

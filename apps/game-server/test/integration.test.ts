@@ -327,6 +327,35 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     for (const c of cs) c.emit("sng:unregister", { tournamentId: t.id }, () => {});
   });
 
+  it("clubs : création, adhésion, tournoi du club réservé aux membres, affiché sur la page du club", async () => {
+    const api = (who: string, path: string, init: { method?: string; body?: unknown } = {}) => fetch(`${url}${path}`, {
+      method: init.method ?? "GET", headers: { authorization: `Bearer ${token({ sub: who })}`, "content-type": "application/json" },
+      ...(init.body ? { body: JSON.stringify(init.body) } : {}),
+    });
+    const created = await api("cl-owner", "/account/clubs", { method: "POST", body: { name: "Les Fous du Roi", description: "Club du mardi" } });
+    expect(created.status).toBe(201);
+    const club = (await created.json()) as import("@chessarena/shared").ClubSummary;
+    expect(club).toMatchObject({ slug: "les-fous-du-roi", memberCount: 1 });
+    expect((await api("cl-owner", "/account/clubs", { method: "POST", body: { name: "x" } })).status).toBe(400);
+    expect((await api("cl-mate", `/account/clubs/${club.slug}/join`, { method: "POST" })).status).toBe(200);
+    expect((await api("cl-mate", `/account/clubs/${club.slug}/join`, { method: "POST" })).status).toBe(409);
+    // tournoi du club : un membre peut le créer, pas un inconnu
+    const [owner, outsider] = [client({ token: token({ sub: "cl-owner" }) }), client({ token: token({ sub: "cl-out" }) })];
+    await Promise.all([owner, outsider].map(connected));
+    expect(await sng(outsider, "sng:create", { size: 8, timeControl: "blitz_3_0", buyInCents: 0, clubSlug: club.slug } as never)).toMatchObject({ ok: false, code: "NOT_CLUB_MEMBER" });
+    const t = await sng(owner, "sng:create", { size: 8, timeControl: "blitz_3_0", buyInCents: 0, system: "swiss", clubSlug: club.slug } as never);
+    expect(t).toMatchObject({ ok: true, snapshot: { club: { slug: club.slug, name: "Les Fous du Roi" } } });
+    const page = (await (await api("cl-out", `/account/clubs/${club.slug}`)).json()) as { club: import("@chessarena/shared").ClubDetail; member: boolean; tournaments: import("@chessarena/shared").TournamentsPageResponse };
+    expect(page.member).toBe(false);
+    expect(page.club.members.map((m) => m.userId).sort()).toEqual(["cl-mate", "cl-owner"]);
+    expect(page.tournaments.upcoming.map((c) => c.club?.slug)).toEqual([club.slug]);
+    expect((await api("cl-out", "/account/clubs/inconnu")).status).toBe(404);
+    const pub = await fetch(`${url}/public/clubs/${club.slug}`);
+    expect(await pub.json()).toEqual({ name: "Les Fous du Roi", description: "Club du mardi", memberCount: 2, createdBy: "cl-owner" });
+    if (t.ok) owner.emit("sng:unregister", { tournamentId: t.snapshot.id }, () => {});
+    await new Promise((r) => setTimeout(r, 3_000)); // l'API limite les requêtes par IP : on rend les jetons aux tests suivants
+  });
+
   it("le créateur qui quitte son tournoi vide l'annule", async () => {
     const c = client({ token: token({ sub: "cr-solo" }) });
     await connected(c);

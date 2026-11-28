@@ -7,6 +7,7 @@ import { useSettings } from "../lib/settings";
 const LINKS = [
   ["/play", "Jouer"],
   ["/tournois", "Tournois"],
+  ["/clubs", "Clubs"],
   ["/analyse", "Analyse"],
   ["/direct", "En direct"],
   ["/amis", "Amis"],
