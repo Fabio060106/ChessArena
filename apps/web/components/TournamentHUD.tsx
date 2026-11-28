@@ -750,9 +750,11 @@ function ArenaGames({ t, userId }: { t: SngSnapshot; userId: string }) {
             <li key={m.slot} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${mine ? "bg-neon/10 ring-1 ring-neon/40" : "bg-surface-2"}`}>
               <span className="size-2.5 shrink-0 rounded-sm border border-line bg-[#f3f3f3]" aria-hidden />
               <span className={`min-w-0 max-w-[36%] truncate ${m.result === "1-0" ? "font-semibold text-win" : ""}`}>{m.p1}</span>
+              {last?.berserk?.w && <span className="shrink-0 text-xs text-gold" title="Berserk">⚡</span>}
               <span className="text-xs text-muted">–</span>
               <span className="size-2.5 shrink-0 rounded-sm border border-line bg-[#222]" aria-hidden />
               <span className={`min-w-0 max-w-[36%] truncate ${m.result === "0-1" ? "font-semibold text-win" : ""}`}>{m.p2}</span>
+              {last?.berserk?.b && <span className="shrink-0 text-xs text-gold" title="Berserk">⚡</span>}
               <span className="ml-auto shrink-0 text-xs">
                 {m.status === "playing"
                   ? <span className="text-neon">● en jeu{!mine && last && !last.result && <a href={`/direct/${last.gameId}`} target="_blank" rel="noreferrer" className="ml-1.5 rounded bg-neon/15 px-1.5 py-0.5 font-semibold hover:bg-neon/25" title="Regarder la partie">👁</a>}</span>

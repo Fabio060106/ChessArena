@@ -187,3 +187,8 @@
 @keyframes clock-flash { 0%, 100% { filter: none; } 25%, 75% { filter: brightness(1.8) saturate(1.6); transform: scale(1.06); } }
 .clock.flash { animation: clock-flash .9s ease-in-out 2; }
 @media (prefers-reduced-motion: reduce) { .clock.flash { animation: none; } }
+
+/* téléphone : place pour la barre d'onglets fixée en bas (SiteNav) */
+@media (max-width: 639px) {
+  .arena-app:has(nav[aria-label="Navigation"]) { padding-bottom: calc(4rem + env(safe-area-inset-bottom)); }
+}

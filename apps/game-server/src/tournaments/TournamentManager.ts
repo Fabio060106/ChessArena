@@ -27,7 +27,7 @@ export const CUSTOM_LIMITS = {
   /** entrée maximale (centimes de jetons) */
   maxBuyInCents: 5_000,
   /** tournois en inscription simultanés, tous créateurs confondus */
-  maxOpen: 30,
+  maxOpen: 200,
   /** un tournoi non complet est annulé (inscrits remboursés) au bout de… */
   expireMs: 3 * 60 * 60_000,
   /** tournoi programmé : de 2 minutes à 14 jours à l'avance */

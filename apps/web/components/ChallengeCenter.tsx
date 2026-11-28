@@ -27,7 +27,7 @@ export function ChallengeCenter() {
   const leftOut = useSecondsLeft(outgoing?.expiresAt);
   if (!first && !outgoing && !notice) return null;
   return (
-    <div className="pointer-events-none fixed inset-x-2 bottom-3 z-[90] flex flex-col items-center gap-2 sm:inset-x-auto sm:right-4 sm:items-end">
+    <div className="pointer-events-none fixed inset-x-2 bottom-[4.75rem] z-[90] sm:bottom-3 flex flex-col items-center gap-2 sm:inset-x-auto sm:right-4 sm:items-end">
       {first && (
         <div role="alertdialog" aria-label="Défi reçu" className="panel pointer-events-auto w-full max-w-[360px] border-neon/60 p-3 shadow-2xl">
           <p className="text-sm"><span aria-hidden>⚔️ </span><a href={`/profil/${encodeURIComponent(first.from)}`} className="font-semibold hover:underline">{first.from}</a> te défie</p>
