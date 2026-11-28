@@ -1,5 +1,5 @@
 "use client";
-import type { TournamentCard } from "@chessarena/shared";
+import { isOfficial, type TournamentCard } from "@chessarena/shared";
 import { TC_LABEL } from "../lib/social";
 import { formatMoney, remaining, startsIn, startsLabel, swissRoundsFor, weeklyLabel } from "../lib/tournament";
 
@@ -9,12 +9,14 @@ const SYSTEM = { swiss: "Suisse", arena: "Arena", ko: "Élimination directe" } a
 export function TournamentCardView({ c, now }: { c: TournamentCard; now: number }) {
   const format = c.teams ? `⚔️ Bataille de clubs ${c.arenaMinutes} min` : c.system === "arena" ? `Arena ${c.arenaMinutes} min` : c.system === "swiss" ? `Suisse ${c.totalRounds ?? swissRoundsFor(c.size)} rondes` : SYSTEM.ko;
   const live = c.status === "running";
+  const official = isOfficial(c.createdBy);
   const fmtPts = (p: number | null) => (p === null ? "" : p % 1 ? `${Math.floor(p) || ""}½` : String(p));
   return (
-    <a href={`/tournoi/${c.id}`} className={`panel flex h-full flex-col gap-2 p-3 transition-colors hover:border-neon/60 ${live ? "border-neon/40" : ""}`}>
+    <a href={`/tournoi/${c.id}`} className={`panel flex h-full flex-col gap-2 p-3 transition-colors hover:border-neon/60 ${live ? "border-neon/40" : official ? "border-gold/30" : ""}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate font-display text-base font-bold">{c.name ?? (c.teams ? c.teams.map((x) => x.name).join(" vs ") : c.club ? `Tournoi · ${c.club.name}` : c.createdBy ? `Tournoi de ${c.createdBy}` : "Tournoi")}</p>
+          {official && <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-gold">★ Tournoi officiel</p>}
           <p className="text-xs text-muted">{format} · {TC_LABEL[c.timeControl]} · {c.buyInCents > 0 ? `entrée ${formatMoney(c.buyInCents, c.currency)}` : "gratuit"}</p>
           {c.repeatWeekly && c.startsAt && <p className="text-xs text-neon">🔁 {weeklyLabel(c.startsAt)}</p>}
           {c.club && c.name && <p className="truncate text-xs text-muted">Club : <span className="text-text">{c.club.name}</span></p>}
@@ -39,7 +41,7 @@ export function TournamentCardView({ c, now }: { c: TournamentCard; now: number 
           ))}
         </ol>
       )}
-      <p className="mt-auto text-xs text-muted">{c.status === "registering" ? `${c.players} inscrit${c.players > 1 ? "s" : ""}` : `${c.players} joueurs`}{c.createdBy ? ` · par ${c.createdBy}` : ""}</p>
+      <p className="mt-auto text-xs text-muted">{c.status === "registering" ? (c.players ? `${c.players} inscrit${c.players > 1 ? "s" : ""}` : "Aucun inscrit pour l'instant : sois le premier") : `${c.players} joueurs`}{c.createdBy && !official ? ` · par ${c.createdBy}` : ""}</p>
     </a>
   );
 }

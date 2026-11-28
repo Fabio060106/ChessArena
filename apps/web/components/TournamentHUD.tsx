@@ -2,7 +2,7 @@
 import { memo, useEffect, useState } from "react";
 import { SITE_NAME } from "../lib/site";
 import { ChatPanel } from "./ChatPanel";
-import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, type ChatAck, type ChatMessage, type ClubSummary, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
+import { ARENA_MINUTES, isOfficial, SNG_MAX_SIZE, SNG_MIN_SIZE, type ChatAck, type ChatMessage, type ClubSummary, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
 import { swissCrosstable, weeklyLabel, ARENA_RULES, arenaJoinable, arenaRows, isArena, remaining, defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
 
 const TC_LABEL: Record<TimeControlId, string> = {
@@ -561,7 +561,7 @@ function InviteCard({ t, userId, busy, onJoin }: { t: SngSnapshot; userId: strin
       <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-neon">Invitation</p>
       <h3 className="font-display text-lg font-bold">{titleOf(t)}</h3>
       <p className="text-sm text-muted">
-        {TC_LABEL[t.timeControl]} · {t.size} joueurs · {formatOf(t)} · entrée {formatMoney(t.buyInCents, t.currency)}{t.createdBy ? ` · créé par ${t.createdBy}` : ""}
+        {TC_LABEL[t.timeControl]} · {t.size} joueurs · {formatOf(t)} · entrée {formatMoney(t.buyInCents, t.currency)}{isOfficial(t.createdBy) ? " · ★ tournoi officiel" : t.createdBy ? ` · créé par ${t.createdBy}` : ""}
       </p>
       {t.startsAt && t.status === "registering" && <p className="mt-1 text-sm font-semibold text-gold">Départ {startsLabel(t.startsAt)} ({startsIn(t.startsAt)})</p>}
       <p className="mt-1 text-sm">{n}/{t.size} inscrits</p>

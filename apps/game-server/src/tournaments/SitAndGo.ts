@@ -1005,6 +1005,9 @@ export class SitAndGo {
     };
   }
 
+  /** Enregistre l'état tout de suite (ex. tournoi officiel créé sans inscrit : son lien reste valable après une mise en ligne). */
+  save(): Promise<void> { return this.persistNow(); }
+
   /** Persistance sérialisée (un seul write en vol par tournoi, ordre préservé). */
   private persistNow(): Promise<void> {
     const snap = this.snapshot();

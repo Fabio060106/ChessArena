@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS, TIME_CONTROLS, type ClubRef, type SngCreatePayload, type SngSystem, type SngFormat, type SngSnapshot } from "@chessarena/shared";
+import { ARENA_MINUTES, OFFICIAL_CREATOR, SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS, TIME_CONTROLS, type ClubRef, type SngCreatePayload, type SngSystem, type SngFormat, type SngSnapshot } from "@chessarena/shared";
 import { SitAndGo, type StartGameRequest } from "./SitAndGo.js";
 import type { TournamentStore } from "./TournamentStore.js";
 import type { Ledger } from "../settlement/ledger.js";
 import { SIT_AND_GO_STRUCTURES } from "../settlement/rake.js";
 import type { AuditSink } from "../audit/auditLog.js";
 import type { FinishedGame } from "../game/GameRoom.js";
+import { upcomingOfficial, type OfficialSpec } from "./official.js";
 
 export interface TournamentManagerDeps {
   ledger: Ledger;
@@ -114,7 +115,7 @@ export class TournamentManager {
     if (repeatWeekly && !startsAt) throw new CustomTournamentError("BAD_PAYLOAD"); // une série a besoin d'une heure
     const name = (p.name ?? "").replace(/\s+/g, " ").trim().slice(0, 40) || null;
     for (const c of this.customOpen.values()) if (c.createdBy === creator) throw new CustomTournamentError("ALREADY_CREATED");
-    if (this.customOpen.size >= CUSTOM_LIMITS.maxOpen) throw new CustomTournamentError("TOO_MANY_OPEN");
+    if ([...this.customOpen.values()].filter((c) => c.createdBy !== OFFICIAL_CREATOR).length >= CUSTOM_LIMITS.maxOpen) throw new CustomTournamentError("TOO_MANY_OPEN");
 
     const id = randomUUID();
     const t = this.makeTable(
@@ -214,6 +215,40 @@ export class TournamentManager {
       s.teamBattle ? { leaders: s.teamBattle.leaders, teams: s.teamBattle.teams.map((t) => ({ slug: t.slug, name: t.name })), creatorTeam: s.players.find((p) => p.userId === creator)?.team ?? s.teamBattle.teams[0]!.slug } : null);
   }
 
+  /**
+   * Tournois officiels : crée les éditions des prochaines 26 h qui n'existent pas encore (idempotent : une édition
+   * reprise après redémarrage n'est pas recréée). Retourne les tournois créés.
+   */
+  ensureOfficial(now = Date.now(), schedule?: readonly OfficialSpec[]): SngSnapshot[] {
+    const existing = new Set([...this.byId.values()].map((t) => t.snapshot())
+      .filter((x) => x.createdBy === OFFICIAL_CREATOR).map((x) => `${x.name}|${x.startsAt}`));
+    const created: SngSnapshot[] = [];
+    for (const { spec, startsAt } of upcomingOfficial(now, CUSTOM_LIMITS.minLeadMs, schedule)) {
+      if (existing.has(`${spec.name}|${startsAt}`)) continue;
+      const id = randomUUID();
+      const t = this.makeTable(
+        { id: `custom:${id}`, size: spec.size, timeControl: spec.timeControl, currency: "PLAY", buyInCents: 0 },
+        (x) => this.onCustomChanged(id, x),
+        { id, createdBy: OFFICIAL_CREATOR, name: spec.name, system: spec.system, swissRounds: spec.system === "swiss" ? spec.rounds ?? 0 : 0, startsAt,
+          arenaMinutes: spec.system === "arena" ? spec.arenaMinutes ?? 30 : 0 },
+      );
+      this.customOpen.set(id, { t, createdBy: OFFICIAL_CREATOR, expiry: this.scheduleOpen(t, Date.parse(startsAt)) });
+      void t.save().catch((e) => console.error(`[officiel] ${spec.name} non enregistré`, e));
+      created.push(t.snapshot());
+    }
+    if (created.length) this.deps.emitLobby(this.lobby());
+    return created;
+  }
+
+  /** Programme les tournois officiels maintenant, puis toutes les 10 minutes. */
+  startOfficial(everyMs = 10 * 60_000): () => void {
+    const run = () => { try { this.ensureOfficial(); } catch (e) { console.error("[officiel] programmation", e); } };
+    run();
+    const id = setInterval(run, everyMs);
+    id.unref?.();
+    return () => clearInterval(id);
+  }
+
   /** Le créateur lance son tournoi sans attendre qu'il soit complet. */
   async startCustom(tournamentId: string, userId: string): Promise<SngSnapshot> {
     const c = this.customOpen.get(tournamentId);
@@ -264,7 +299,7 @@ export class TournamentManager {
     await t.unregister(userId);
     // tournoi de joueur que tout le monde a quitté : annulé (rien à rembourser) et retiré du lobby
     const c = this.customOpen.get(tournamentId);
-    if (c && t.registeredCount === 0) await t.cancel("plus aucun inscrit");
+    if (c && c.createdBy !== OFFICIAL_CREATOR && t.registeredCount === 0) await t.cancel("plus aucun inscrit");
     this.deps.emitLobby(this.lobby());
     return t.snapshot();
   }

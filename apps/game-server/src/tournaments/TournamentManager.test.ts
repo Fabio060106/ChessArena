@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CUSTOM_LIMITS, CustomTournamentError, TournamentManager } from "./TournamentManager.js";
+import { OFFICIAL_CREATOR } from "@chessarena/shared";
+import type { OfficialSpec } from "./official.js";
 import { InMemoryTournamentStore } from "./TournamentStore.js";
 import { acct, InMemoryLedger } from "../settlement/ledger.js";
 import type { StartGameRequest } from "./SitAndGo.js";
@@ -147,5 +149,39 @@ describe("séries hebdomadaires", () => {
   it("une série sans heure de départ est refusée", async () => {
     const { m } = setup();
     await expect(m.createCustom({ size: 8, timeControl: "blitz_3_0", buyInCents: 0, repeatWeekly: true }, "a", 1500)).rejects.toBeInstanceOf(CustomTournamentError);
+  });
+});
+
+describe("tournois officiels", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-28T10:00:00Z")); });
+  afterEach(() => vi.useRealTimers());
+  const spec: OfficialSpec = { name: "Arena Blitz quotidienne", system: "arena", timeControl: "blitz_3_0", arenaMinutes: 45, size: 128, hour: 20, minute: 0 };
+
+  it("créés sans inscrit, une seule fois par édition, organisateur réservé ; on s'y inscrit et s'en désinscrit librement", async () => {
+    const { m, store } = setup();
+    const made = m.ensureOfficial(Date.now(), [spec]);
+    expect(made).toHaveLength(1);
+    expect(made[0]).toMatchObject({ createdBy: OFFICIAL_CREATOR, name: "Arena Blitz quotidienne", system: "arena", arenaMinutes: 45, startsAt: "2026-11-28T19:00:00.000Z", status: "registering", players: [] });
+    expect(m.ensureOfficial(Date.now(), [spec])).toHaveLength(0); // idempotent
+    await flush();
+    expect((await store.load(made[0]!.id))?.status).toBe("registering"); // enregistré : le lien survit à une mise en ligne
+    const id = made[0]!.id;
+    await m.registerById(id, "b", 1500);
+    await m.unregister(id, "b");
+    expect(m.get(id)!.state).toBe("registering"); // vide, mais pas annulé
+    // un joueur peut toujours créer son propre tournoi (les officiels ne comptent pas dans la limite)
+    await expect(m.createCustom({ size: 8, timeControl: "blitz_3_0", buyInCents: 0 }, "a", 1500)).resolves.toBeTruthy();
+  });
+
+  it("à l'heure : l'Arena part avec ses inscrits, l'édition du lendemain est déjà là", async () => {
+    const { m, started } = setup();
+    const [s] = m.ensureOfficial(Date.now(), [spec]);
+    for (const u of ["a", "b", "c", "d"]) await m.registerById(s!.id, u, 1500);
+    await vi.advanceTimersByTimeAsync(9 * 3600_000 + 1_000);
+    await flush();
+    expect(m.get(s!.id)!.state).toBe("running");
+    expect(started.length).toBeGreaterThanOrEqual(2);
+    const next = m.ensureOfficial(Date.now(), [spec]);
+    expect(next.map((x) => x.startsAt)).toEqual(["2026-11-29T19:00:00.000Z"]);
   });
 });

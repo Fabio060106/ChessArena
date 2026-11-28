@@ -185,6 +185,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const analysisProducer = redis && cfg.analysisEnabled ? makeAnalysisProducer(redis, cfg.queuePrefix) : null;
   let verdictWorker: Worker | null = null;
   let withdrawalTimer: ReturnType<typeof setInterval> | null = null;
+  let stopOfficial: (() => void) | null = null;
 
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
@@ -1187,6 +1188,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
           .then((r) => r && console.log(`[relay] Championnat du monde ajouté (${r.id})`))
           .catch((e) => console.error("[relay] ajout par défaut", e));
       }
+      // tournois officiels (Arena du soir, Grand Suisse du dimanche…), sauf OFFICIAL_TOURNAMENTS=0 et en test
+      if (process.env.NODE_ENV !== "test" && process.env.OFFICIAL_TOURNAMENTS !== "0") stopOfficial = tournaments.startOfficial();
       if (enforcer && redis) verdictWorker = enforcer.startWorker(redis, cfg.queuePrefix);
       if (withdrawals && cfg.withdrawalIntervalMs > 0) {
         withdrawalTimer = setInterval(() => void withdrawals.process().catch((e) => console.error("[withdrawals]", e)), cfg.withdrawalIntervalMs);
@@ -1205,6 +1208,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       // dernière chance d'enregistrer les parties en attente avant l'arrêt (redéploiement)
       if (games.pendingRecords > 0) await games.flushUnrecorded().catch(() => {});
       if (withdrawalTimer) clearInterval(withdrawalTimer);
+      stopOfficial?.();
       await verdictWorker?.close();
       await analysisProducer?.close();
       matchmaker.close();

@@ -153,6 +153,10 @@ export type SngSize = number;
 /** à 2, ce n'est pas un tournoi mais un match */
 export const SNG_MIN_SIZE = 3;
 export const SNG_MAX_SIZE = 128;
+
+/** Organisateur des tournois officiels (programmés par le site). Hors du format des pseudos : aucun joueur ne peut le prendre. */
+export const OFFICIAL_CREATOR = "@ChessAurum";
+export const isOfficial = (createdBy: string | null | undefined): boolean => createdBy === OFFICIAL_CREATOR;
 export type SngStatus = "registering" | "running" | "finished" | "cancelled";
 export type SngGameKind = "main" | "rematch" | "armageddon";
 /** élimination directe (KO) ou système suisse (tout le monde joue toutes les rondes) */
