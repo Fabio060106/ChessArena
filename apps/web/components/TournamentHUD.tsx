@@ -1,7 +1,8 @@
 "use client";
 import { memo, useEffect, useState } from "react";
 import { SITE_NAME } from "../lib/site";
-import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, type ClubSummary, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
+import { ChatPanel } from "./ChatPanel";
+import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, type ChatAck, type ChatMessage, type ClubSummary, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
 import { weeklyLabel, ARENA_RULES, arenaJoinable, arenaRows, isArena, remaining, defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
 
 const TC_LABEL: Record<TimeControlId, string> = {
@@ -59,6 +60,8 @@ interface Props {
   onWithdraw?: (tournamentId: string) => void;
   /** organisateur : retirer un inscrit avant le départ */
   onKick?: (tournamentId: string, userId: string) => void;
+  /** chat du tournoi (participants : écriture ; les autres : lecture) */
+  chat?: { messages: readonly ChatMessage[]; send: (text: string) => Promise<ChatAck>; report: (m: ChatMessage) => Promise<boolean> };
 }
 
 /** Lien d'invitation d'un tournoi : sa page publique (aperçu riche quand on le partage), d'où l'on s'inscrit en un clic. */
@@ -155,6 +158,19 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
       )}
       {t.status === "running" && me?.withdrawn && isSwiss(t) && (
         <p role="status" className="rounded-lg border border-line px-3 py-2 text-sm text-muted">Tu as quitté le tournoi (ou tu as été retiré après deux forfaits) : tu gardes tes points, plus d'appariement.</p>
+      )}
+
+      {p.chat && t.status !== "cancelled" && (
+        <details className="panel p-3" open={p.chat.messages.length > 0}>
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[.14em] text-muted">💬 Chat du tournoi{p.chat.messages.length ? ` (${p.chat.messages.length})` : ""}</summary>
+          <div className="mt-2">
+            <ChatPanel messages={p.chat.messages} me={p.userId} height="h-40"
+              onSend={me && me.status !== "unregistered" && me.status !== "refunded" ? p.chat.send : undefined}
+              onReport={p.chat.report} empty="Pas encore de message. Dis bonjour au club !"
+              quick={["Bonne chance à tous !", "Bien joué !", "Merci pour le tournoi !"]} />
+            {!(me && me.status !== "unregistered" && me.status !== "refunded") && <p className="mt-1 text-xs text-muted">Seuls les participants écrivent dans le chat du tournoi.</p>}
+          </div>
+        </details>
       )}
 
       {/* Classement live */}

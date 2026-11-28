@@ -6,6 +6,7 @@ import { PageHeader } from "../../../components/PageHeader";
 import { SNG_ERRORS, TournamentHUD } from "../../../components/TournamentHUD";
 import { useGameAuth, useMe } from "../../../hooks/useMe";
 import { useTournament } from "../../../hooks/useTournament";
+import { useTournamentChat } from "../../../hooks/useTournamentChat";
 import { getSocket } from "../../../lib/socket";
 import { arenaJoinable } from "../../../lib/tournament";
 import { TournamentTV } from "../../../components/TournamentTV";
@@ -45,6 +46,7 @@ function Live({ initial, userId }: { initial: SngSnapshot; userId: string }) {
   const getAuth = useGameAuth();
   const socket = useMemo(() => getSocket(getAuth), [getAuth]);
   const sng = useTournament(socket, userId);
+  const tchat = useTournamentChat(socket, initial.id);
   const [t, setT] = useState(initial);
   // en direct : on suit le tournoi (même sans y jouer) ; un tournoi terminé depuis longtemps n'est plus en mémoire
   useEffect(() => {
@@ -88,7 +90,7 @@ function Live({ initial, userId }: { initial: SngSnapshot; userId: string }) {
       )}
       <TournamentTV t={t} userId={userId} />
       <TournamentHUD userId={userId} current={t} lobby={[]} busy={sng.busy} error={sng.error}
-        onRegister={() => {}} onUnregister={sng.unregister} onCreate={() => {}} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} onWithdraw={sng.withdraw} onKick={sng.kick} invite={null} pageLink={false} />
+        onRegister={() => {}} onUnregister={sng.unregister} onCreate={() => {}} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} onWithdraw={sng.withdraw} onKick={sng.kick} invite={null} pageLink={false} chat={tchat} />
     </>
   );
 }

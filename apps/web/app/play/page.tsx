@@ -5,6 +5,7 @@ import type { Color } from "@chessarena/shared";
 import { overText, tournamentIntro } from "../../lib/overText";
 import { useClockTicker, useGameSocket } from "../../hooks/useGameSocket";
 import { useTournament } from "../../hooks/useTournament";
+import { useTournamentChat } from "../../hooks/useTournamentChat";
 import { errorMessage, isMyTurn, sessionBanner, START_FEN } from "../../lib/gameReducer";
 import { useSettings } from "../../lib/settings";
 import { materialAdvantage } from "../../lib/profile";
@@ -83,6 +84,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
 
   const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators, queueStats } = useGameSocket(userId, getAuth);
   const sng = useTournament(socket, userId, inviteId);
+  const tchat = useTournamentChat(socket, sng.current?.id ?? null);
   const [settings, updateSettings] = useSettings();
   const playing = view.phase === "playing";
   const subscribe = useClockTicker(view.server, sync, !playing);
@@ -402,7 +404,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
               ) : <p className="px-1 text-sm text-muted">Le chat s'ouvre pendant une partie.</p>
             ) : (
               <TournamentHUD userId={userId} current={sng.current} lobby={sng.lobby} busy={sng.busy} error={sng.error}
-                onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} onWithdraw={sng.withdraw} onKick={sng.kick} invite={sng.invite} />
+                onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} onWithdraw={sng.withdraw} onKick={sng.kick} invite={sng.invite} chat={tchat} />
             )}
           </div>
 

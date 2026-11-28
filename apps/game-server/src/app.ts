@@ -799,6 +799,13 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       }
     }));
 
+    socket.on("sng:chat", guard(socket, (raw: unknown, ack: unknown) => {
+      const reply = (r: { ok: true; messages: ReturnType<typeof chat.history> } | { ok: false }) => { if (typeof ack === "function") (ack as (x: typeof r) => void)(r); };
+      const tid = (raw as { tournamentId?: unknown } | null)?.tournamentId;
+      if (typeof tid !== "string" || !tournaments.get(tid)) return reply({ ok: false });
+      reply({ ok: true, messages: chat.history(`tournament:${tid}`, ["players"]) });
+    }));
+
     // suivre un tournoi sans y jouer (page du tournoi : club, spectateurs)
     socket.on("sng:watch", guard(socket, (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);
@@ -882,6 +889,10 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         target = { channel: "players", emit: (m) => io.to(gameId).emit("chat:msg", m) };
       } else if (room && socket.data.watching === gameId) {
         target = { channel: "spectators", emit: (m) => io.to(spectatorRoom(gameId)).emit("chat:msg", m) };
+      } else if (gameId.startsWith("tournament:") && tournaments.get(gameId.slice(11))?.isParticipant(user.userId)) {
+        // chat du tournoi : écrit par les participants, lu par tous ceux qui suivent le tournoi
+        const tid = gameId.slice(11);
+        target = { channel: "players", emit: (m) => io.to(tournamentRoom(tid)).emit("chat:msg", m) };
       } else if (gameId.startsWith("relay:") && socket.data.relay === gameId.slice(6)) {
         // retransmission : un seul canal, entre spectateurs
         target = { channel: "spectators", emit: (m) => io.to(relayRoom(gameId.slice(6))).emit("chat:msg", m) };

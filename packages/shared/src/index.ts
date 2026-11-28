@@ -713,6 +713,8 @@ export interface ClientToServerEvents {
   "sng:unwatch": (p: { tournamentId: string }) => void;
   /** le créateur lance son tournoi sans attendre qu'il soit complet (≥ 3 inscrits ; exempts au 1er tour) */
   "sng:start": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
+  /** chat du tournoi : historique (les messages s'envoient par chat:send avec gameId « tournament:<id> ») */
+  "sng:chat": (p: { tournamentId: string }, ack: (r: { ok: true; messages: ChatMessage[] } | { ok: false }) => void) => void;
   /** organisateur : retirer un inscrit avant le départ (remboursé, ne peut plus se réinscrire) */
   "sng:kick": (p: { tournamentId: string; userId: string }, ack: (r: SngAck) => void) => void;
   /** quitter un tournoi en cours (suisse : plus apparié ; arena : pause définitive) */

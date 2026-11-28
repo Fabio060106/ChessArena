@@ -260,6 +260,12 @@ export class SitAndGo {
   }
 
   /** Joueurs "actifs" (inscrits ou en cours d'inscription, ou en lice). */
+  /** a pris part au tournoi (inscrit, en jeu, éliminé, vainqueur) : peut écrire dans le chat du tournoi */
+  isParticipant(userId: string): boolean {
+    const e = this.entries.get(userId);
+    return !!e && e.status !== "unregistered" && e.status !== "refunded";
+  }
+
   hasPlayer(userId: string): boolean {
     const e = this.entries.get(userId);
     if (!e || !["locking", "registered", "playing"].includes(e.status)) return false;
