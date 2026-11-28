@@ -155,7 +155,7 @@ describe("séries hebdomadaires", () => {
 describe("tournois officiels", () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-28T10:00:00Z")); });
   afterEach(() => vi.useRealTimers());
-  const spec: OfficialSpec = { name: "Arena Blitz quotidienne", system: "arena", timeControl: "blitz_3_0", arenaMinutes: 45, size: 128, hour: 20, minute: 0 };
+  const spec: OfficialSpec = { name: "Arena Blitz quotidienne", system: "arena", timeControl: "blitz_3_0", arenaMinutes: 45, size: 128, hour: 20, minute: 0, buyInCents: 0, addedCents: 0 };
 
   it("créés sans inscrit, une seule fois par édition, organisateur réservé ; on s'y inscrit et s'en désinscrit librement", async () => {
     const { m, store } = setup();
@@ -187,7 +187,7 @@ describe("tournois officiels", () => {
 
   it("Arena officielle avec un seul inscrit : elle part quand même à l'heure ; un suisse officiel sans 3 inscrits est annulé", async () => {
     const { m } = setup();
-    const swiss: OfficialSpec = { name: "Grand Suisse", system: "swiss", timeControl: "blitz_3_2", rounds: 5, size: 128, hour: 20, minute: 0 };
+    const swiss: OfficialSpec = { name: "Grand Suisse", system: "swiss", timeControl: "blitz_3_2", rounds: 5, size: 128, hour: 20, minute: 0, buyInCents: 0, addedCents: 0 };
     const [a, s] = m.ensureOfficial(Date.now(), [spec, { ...swiss, minute: 5 }]);
     await m.registerById(a!.id, "solo", 1500);
     await m.registerById(s!.id, "solo2", 1500);
@@ -195,6 +195,29 @@ describe("tournois officiels", () => {
     await flush();
     expect(m.get(a!.id)!.state).toBe("running");
     expect(m.get(s!.id)!.snapshot().status).toBe("cancelled");
+  });
+
+  it("tournoi officiel payant : dotation garantie versée par le site, entrée payée ; reprise après redémarrage avec la dotation ; annulé : tout est rendu", async () => {
+    const { m, ledger, store } = setup();
+    const paid: OfficialSpec = { name: "Suisse Blitz du soir", system: "swiss", timeControl: "blitz_3_2", rounds: 5, size: 64, hour: 20, minute: 0, buyInCents: 500, addedCents: 5_000 };
+    const [s] = m.ensureOfficial(Date.now(), [paid]);
+    await flush(); await flush();
+    const t = m.get(s!.id)!;
+    expect(await ledger.balance(t.escrowAccount, "PLAY")).toBe(5_000);
+    expect(t.snapshot()).toMatchObject({ buyInCents: 500, sponsorAddedCents: 5_000 });
+    await ledger.faucet("ana", 1_000, "w");
+    await m.registerById(s!.id, "ana", 1500);
+    expect(await ledger.balance(acct.user("ana", "PLAY"), "PLAY")).toBe(500);
+    // redémarrage : la dotation est reprise avec le tournoi
+    const saved = (await store.load(s!.id))!;
+    const B = setup();
+    const m2 = new TournamentManager([], { ...B.deps, ledger, store });
+    const t2 = m2.restoreCustom(saved)!;
+    expect(t2.snapshot().sponsorAddedCents).toBe(5_000);
+    expect(m2.ensureOfficial(Date.now(), [paid])).toHaveLength(0); // pas de doublon
+    await t2.cancel("test");
+    expect(await ledger.balance(acct.user("ana", "PLAY"), "PLAY")).toBe(1_000);
+    expect(await ledger.balance(t2.escrowAccount, "PLAY")).toBe(0);
   });
 });
 

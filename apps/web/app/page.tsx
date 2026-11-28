@@ -75,10 +75,11 @@ export default function Home() {
       <div className="hidden lg:flex lg:flex-col lg:gap-5">
         <p className="font-display text-5xl font-bold tracking-tight"><Logo /></p>
         <p className="max-w-[30ch] font-display text-3xl font-bold leading-tight">Les échecs en compétition, tous les soirs.</p>
-        <p className="max-w-[46ch] text-muted">Arenas officielles quotidiennes, tournois de club programmés en 30 secondes, défis entre amis par un simple lien. Chaque partie analysée par Stockfish 19.</p>
+        <p className="max-w-[46ch] text-muted">Des tournois officiels tous les soirs avec une dotation garantie, des pronostics en direct sur les plus grands matchs, tes tournois de club programmés en 30 secondes. Chaque partie analysée par Stockfish 19.</p>
         <LandingShowcase />
         <ul className="grid gap-2 text-sm text-muted">
-          <li>🏆 Suisse, Arena (avec berserk ⚡) ou élimination directe, de 3 à 128 joueurs</li>
+          <li>🏆 Suisse ou élimination directe, de 3 à 128 joueurs : entrée, dotation, podium payé</li>
+          <li>📈 Pronostics en direct sur le Championnat du monde : cotes recalculées à chaque coup</li>
           <li>🏛 La page de ton club : classement du mois, annonces, batailles contre d'autres clubs</li>
           <li>🔗 « Joue contre moi » : un lien WhatsApp, ton ami joue même sans compte</li>
           <li>📚 Répertoire d'ouvertures construit à partir de tes parties</li>
@@ -187,7 +188,8 @@ export default function Home() {
           <h2 className="mb-2 text-center font-semibold text-text">Les échecs en ligne, entre amis ou en tournoi</h2>
           <ul className="grid gap-1.5">
             <li>♟ Parties rapides en bullet, blitz et rapide, avec classement Elo.</li>
-            <li>🏆 Tournois suisse, Arena ou élimination directe, de 3 à 128 joueurs : programmés à l'heure que tu veux, chaque semaine si tu veux, partagés par un lien.</li>
+            <li>🏆 Tournois suisse ou à élimination directe, de 3 à 128 joueurs, avec entrée et dotation : programmés à l'heure que tu veux, chaque semaine si tu veux, partagés par un lien.</li>
+            <li>📈 Pronostics en direct sur les grands matchs : des cotes qui bougent à chaque coup.</li>
             <li>🏛 Clubs : la page de ton club, son classement interne et ses tournois.</li>
             <li>🔍 Analyse de chaque partie avec Stockfish 19, et essai de tes propres coups.</li>
             <li>📚 Répertoire d'ouvertures construit à partir de tes parties, avec exercices et armes secrètes analysées par Stockfish.</li>

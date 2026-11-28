@@ -33,7 +33,7 @@ export function RelayBanner({ className = "" }: { className?: string }) {
         <span className="block truncate text-sm font-semibold">{r.name}</span>
         <span className="block truncate text-xs text-muted">
           {score ? `${score.text} · ` : ""}
-          {r.live ? `${r.roundName ?? "Partie"} en cours` : next ? `${next.name} ${untilText(next.startsAt!, now)}` : ""}
+          {r.live ? `${r.roundName ?? "Partie"} en cours · 📈 pronostics ouverts` : next ? `${next.name} ${untilText(next.startsAt!, now)}` : ""}
         </span>
       </span>
       {r.live

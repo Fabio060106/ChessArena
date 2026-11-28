@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ARENA_MINUTES, OFFICIAL_CREATOR, SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS, TIME_CONTROLS, type ClubRef, type SngCreatePayload, type SngSystem, type SngFormat, type SngSnapshot } from "@chessarena/shared";
 import { SitAndGo, type StartGameRequest } from "./SitAndGo.js";
 import type { TournamentStore } from "./TournamentStore.js";
-import type { Ledger } from "../settlement/ledger.js";
+import { acct, type Ledger } from "../settlement/ledger.js";
 import { SIT_AND_GO_STRUCTURES } from "../settlement/rake.js";
 import type { AuditSink } from "../audit/auditLog.js";
 import type { FinishedGame } from "../game/GameRoom.js";
@@ -179,7 +179,7 @@ export class TournamentManager {
       { id: `custom:${id}`, size: s.size, timeControl: s.timeControl, currency: s.currency, buyInCents: s.buyInCents },
       (x) => this.onCustomChanged(id, x),
       { id, createdBy: s.createdBy, name: s.name ?? null, system: s.system ?? "ko", swissRounds: s.swissRounds ?? 0, startsAt: s.startsAt ?? null, createdAt: s.createdAt, arenaMinutes: s.arenaMinutes ?? 0, repeatWeekly: false, club: s.club ?? null, membersOnly: !!s.membersOnly,
-        teamBattle: s.teamBattle ? { leaders: s.teamBattle.leaders, teams: s.teamBattle.teams.map((t) => ({ slug: t.slug, name: t.name })) } : null },
+        teamBattle: s.teamBattle ? { leaders: s.teamBattle.leaders, teams: s.teamBattle.teams.map((t) => ({ slug: t.slug, name: t.name })) } : null, sponsorAddedCents: s.sponsorAddedCents ?? 0 },
     );
     try {
       await t.restoreRunning(s);
@@ -197,7 +197,7 @@ export class TournamentManager {
       { id: `custom:${id}`, size: s.size, timeControl: s.timeControl, currency: s.currency, buyInCents: s.buyInCents },
       (x) => this.onCustomChanged(id, x),
       { id, createdBy: s.createdBy, name: s.name ?? null, system: s.system ?? "ko", swissRounds: s.swissRounds ?? 0, startsAt: s.startsAt ?? null, createdAt: s.createdAt, arenaMinutes: s.arenaMinutes ?? 0, repeatWeekly: !!s.repeatWeekly, club: s.club ?? null, membersOnly: !!s.membersOnly,
-        teamBattle: s.teamBattle ? { leaders: s.teamBattle.leaders, teams: s.teamBattle.teams.map((t) => ({ slug: t.slug, name: t.name })) } : null },
+        teamBattle: s.teamBattle ? { leaders: s.teamBattle.leaders, teams: s.teamBattle.teams.map((t) => ({ slug: t.slug, name: t.name })) } : null, sponsorAddedCents: s.sponsorAddedCents ?? 0 },
     );
     t.restoreRegistrations(s.players.filter((p) => p.status === "registered" || p.status === "locking").map((p) => ({ userId: p.userId, rating: p.rating, team: p.team ?? null })));
     this.customOpen.set(id, { t, createdBy: s.createdBy, expiry: this.scheduleOpen(t, Date.parse(s.createdAt) + CUSTOM_LIMITS.expireMs) });
@@ -230,13 +230,17 @@ export class TournamentManager {
       if (existing.has(`${spec.name}|${startsAt}`)) continue;
       const id = randomUUID();
       const t = this.makeTable(
-        { id: `custom:${id}`, size: spec.size, timeControl: spec.timeControl, currency: "PLAY", buyInCents: 0 },
+        { id: `custom:${id}`, size: spec.size, timeControl: spec.timeControl, currency: "PLAY", buyInCents: spec.buyInCents },
         (x) => this.onCustomChanged(id, x),
         { id, createdBy: OFFICIAL_CREATOR, name: spec.name, system: spec.system, swissRounds: spec.system === "swiss" ? spec.rounds ?? 0 : 0, startsAt,
           arenaMinutes: spec.system === "arena" ? spec.arenaMinutes ?? 30 : 0 },
       );
       this.customOpen.set(id, { t, createdBy: OFFICIAL_CREATOR, expiry: this.scheduleOpen(t, Date.parse(startsAt)) });
-      void t.save().catch((e) => console.error(`[officiel] ${spec.name} non enregistré`, e));
+      // dotation garantie (émise par le faucet PLAY), puis enregistrement : le lien survit à une mise en ligne
+      void (spec.addedCents > 0 ? t.fundSponsor(acct.faucet(), spec.addedCents) : Promise.resolve())
+        .catch((e) => console.error(`[officiel] ${spec.name} : dotation non versée`, e))
+        .then(() => t.save())
+        .catch((e) => console.error(`[officiel] ${spec.name} non enregistré`, e));
       created.push(t.snapshot());
     }
     if (created.length) this.deps.emitLobby(this.lobby());
@@ -337,7 +341,7 @@ export class TournamentManager {
   private makeTable(
     f: SngFormat,
     onChange: (s: SngSnapshot) => void,
-    extra: { id?: string; createdBy?: string; name?: string | null; system?: SngSystem; swissRounds?: number; startsAt?: string | null; createdAt?: string; arenaMinutes?: number; repeatWeekly?: boolean; club?: ClubRef | null; membersOnly?: boolean; teamBattle?: { leaders: number; teams: ClubRef[] } | null } = {},
+    extra: { id?: string; createdBy?: string; name?: string | null; system?: SngSystem; swissRounds?: number; startsAt?: string | null; createdAt?: string; arenaMinutes?: number; repeatWeekly?: boolean; club?: ClubRef | null; membersOnly?: boolean; teamBattle?: { leaders: number; teams: ClubRef[] } | null; sponsorAddedCents?: number } = {},
   ): SitAndGo {
     const t: SitAndGo = new SitAndGo(
       {
@@ -347,6 +351,7 @@ export class TournamentManager {
         payoutBps: extra.system && extra.system !== "ko" && f.size >= 8 ? [5_000, 3_000, 2_000] : SIT_AND_GO_STRUCTURES[f.size as 4 | 6 | 8] ?? [6_500, 3_500],
         createdBy: extra.createdBy ?? null, name: extra.name ?? null,
         system: extra.system ?? "ko", swissRounds: extra.swissRounds ?? 0, startsAt: extra.startsAt ?? null, createdAt: extra.createdAt, arenaMinutes: extra.arenaMinutes ?? 0, repeatWeekly: !!extra.repeatWeekly, club: extra.club ?? null, membersOnly: !!extra.membersOnly, teamBattle: extra.teamBattle ?? null,
+        sponsorAddedCents: extra.sponsorAddedCents ?? 0,
       },
       {
         ledger: this.deps.ledger,

@@ -1,7 +1,8 @@
 import type { SngSystem, TimeControlId } from "@chessarena/shared";
 
 /**
- * Tournois officiels : programmés par le site, gratuits, toujours à l'heure (heure de Paris).
+ * Tournois officiels : programmés par le site, à entrée payante (jetons pendant la bêta) avec une dotation garantie
+ * ajoutée par le site, toujours à l'heure (heure de Paris). Rake de 10 % sur les entrées, pas sur la dotation.
  * Le gestionnaire crée chaque édition ~26 h à l'avance pour qu'il y ait toujours un prochain rendez-vous affiché.
  */
 export interface OfficialSpec {
@@ -17,13 +18,16 @@ export interface OfficialSpec {
   minute: number;
   /** jours (0 = dimanche) ; absent = tous les jours */
   days?: number[];
+  /** entrée (centimes de jetons) et dotation garantie ajoutée par le site (non rakée) */
+  buyInCents: number;
+  addedCents: number;
 }
 
 export const OFFICIAL_SCHEDULE: OfficialSpec[] = [
-  { name: "Arena Blitz quotidienne", system: "arena", timeControl: "blitz_3_0", arenaMinutes: 45, size: 128, hour: 20, minute: 0 },
-  { name: "Arena Bullet quotidienne", system: "arena", timeControl: "bullet_1_0", arenaMinutes: 30, size: 128, hour: 21, minute: 0 },
-  { name: "Arena Rapide du week-end", system: "arena", timeControl: "rapid_5_0", arenaMinutes: 45, size: 128, hour: 12, minute: 30, days: [6, 0] },
-  { name: "Grand Suisse du dimanche", system: "swiss", timeControl: "blitz_3_2", rounds: 7, size: 128, hour: 18, minute: 0, days: [0] },
+  { name: "Suisse Blitz du soir", system: "swiss", timeControl: "blitz_3_2", rounds: 5, size: 64, hour: 20, minute: 0, buyInCents: 500, addedCents: 5_000 },
+  { name: "KO Bullet de 21 h 30", system: "ko", timeControl: "bullet_1_0", size: 16, hour: 21, minute: 30, buyInCents: 200, addedCents: 2_000 },
+  { name: "Rapide du week-end", system: "swiss", timeControl: "rapid_5_0", rounds: 6, size: 64, hour: 12, minute: 30, days: [6, 0], buyInCents: 500, addedCents: 5_000 },
+  { name: "Grand Suisse du dimanche", system: "swiss", timeControl: "blitz_3_2", rounds: 7, size: 128, hour: 18, minute: 0, days: [0], buyInCents: 1_000, addedCents: 20_000 },
 ];
 
 /** Créées jusqu'à… à l'avance. */

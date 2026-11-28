@@ -29,7 +29,7 @@ import { RematchService } from "./social/RematchService.js";
 import { randomUUID } from "node:crypto";
 import { FileAuditLog, PgAuditLog, type AuditSink } from "./audit/auditLog.js";
 import { InMemoryGameRepository, PgGameRepository, type GameRepository } from "./persistence/GameRepository.js";
-import { InMemoryTournamentStore, PgTournamentStore, type TournamentStore } from "./tournaments/TournamentStore.js";
+import { InMemoryTournamentStore, PgTournamentStore, tournamentCard, type TournamentStore } from "./tournaments/TournamentStore.js";
 import { InMemoryClubStore, PgClubStore, type ClubStore } from "./clubs/ClubStore.js";
 import { CustomTournamentError, TournamentManager } from "./tournaments/TournamentManager.js";
 import { SngError } from "./tournaments/SitAndGo.js";
@@ -221,7 +221,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       const next = [...live.running.filter((s) => official(s) && s.system === "arena"), ...live.upcoming.filter(official)][0] ?? null;
       const players = next ? next.players.filter((p) => p.status !== "unregistered" && p.status !== "refunded").length : 0;
       return void res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=30" }).end(JSON.stringify({
-        nextOfficial: next ? { id: next.id, name: next.name, system: next.system, timeControl: next.timeControl, status: next.status, startsAt: next.startsAt ?? null, arenaEndsAt: next.arenaEndsAt ?? null, players } : null,
+        nextOfficial: next ? { id: next.id, name: next.name, system: next.system, timeControl: next.timeControl, status: next.status, startsAt: next.startsAt ?? null, arenaEndsAt: next.arenaEndsAt ?? null, players,
+          buyInCents: next.buyInCents, prizePoolCents: tournamentCard(next).prizePoolCents } : null,
         playing: games.activeGames * 2,
         online: io.engine.clientsCount,
       }));

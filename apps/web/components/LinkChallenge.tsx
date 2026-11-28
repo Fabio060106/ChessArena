@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import type { TimeControlId } from "@chessarena/shared";
 import { cancelLink, createLink, useChallenges } from "../lib/challenges";
-import { WhatsAppButton } from "./WhatsAppButton";
+import { ShareButtons } from "./ShareButtons";
 import { TC_LABEL, TC_ORDER } from "../lib/social";
 
 export const linkUrl = (code: string) => `${typeof window === "undefined" ? "" : window.location.origin}/defi/${code}`;
@@ -17,7 +17,6 @@ export function LinkChallenge({ compact = false }: { compact?: boolean }) {
   const [tc, setTc] = useState<TimeControlId>("blitz_3_0");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!link) return;
@@ -31,14 +30,6 @@ export function LinkChallenge({ compact = false }: { compact?: boolean }) {
     setBusy(false);
     if ("error" in r) setErr(r.error);
   };
-  const share = async (code: string) => {
-    const url = linkUrl(code);
-    const text = `Je te défie aux échecs (${TC_LABEL[link?.timeControl ?? tc]}) : ${url}`;
-    if (typeof navigator !== "undefined" && "share" in navigator) {
-      try { await navigator.share({ title: "Défi aux échecs", text, url }); return; } catch { /* annulé : on copie */ }
-    }
-    try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2500); } catch { /* rien */ }
-  };
 
   if (link) {
     const left = Math.max(0, Math.round((link.expiresAt - now) / 60_000));
@@ -46,10 +37,9 @@ export function LinkChallenge({ compact = false }: { compact?: boolean }) {
       <div className="panel flex flex-col gap-2 border-neon/40 p-3" aria-label="Lien de défi">
         <p className="text-sm font-semibold">🔗 Ton lien de défi · {TC_LABEL[link.timeControl]}</p>
         <p className="tabular truncate rounded-lg bg-surface-2 px-2.5 py-2 text-xs">{linkUrl(link.code)}</p>
-        <div className="flex gap-2">
-          <button type="button" onClick={() => void share(link.code)} className="neon-btn flex-1 rounded-lg px-3 py-2 text-sm font-semibold">{copied ? "Lien copié ✓" : "Envoyer le lien"}</button>
-          <WhatsAppButton text={`Je te défie aux échecs (${TC_LABEL[link.timeControl]}) : ${linkUrl(link.code)}`} className="!py-2" />
-          <button type="button" onClick={cancelLink} className="rounded-lg border border-line px-3 py-2 text-sm text-muted hover:text-text">Annuler</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ShareButtons text={`Je te défie aux échecs (${TC_LABEL[link.timeControl]}) :`} url={linkUrl(link.code)} />
+          <button type="button" onClick={cancelLink} className="ml-auto rounded-lg border border-line px-3 py-1.5 text-sm text-muted hover:text-text">Annuler</button>
         </div>
         <p className="text-xs text-muted">En attente d'un adversaire · valable encore {left} min. La partie commence dès qu'il accepte : garde le site ouvert.</p>
       </div>

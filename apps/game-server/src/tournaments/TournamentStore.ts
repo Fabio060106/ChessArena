@@ -34,9 +34,11 @@ export function tournamentCard(s: SngSnapshot): TournamentCard {
     : s.system === "swiss" || s.system === "arena"
       ? [...active].sort((a, b) => (b.points ?? 0) - (a.points ?? 0) || (b.buchholz ?? 0) - (a.buchholz ?? 0) || b.rating - a.rating)
       : [];
+  const added = s.sponsorAddedCents ?? 0;
+  const prizePoolCents = Math.floor((s.buyInCents * active.length * (10_000 - (s.rakeBps ?? 0))) / 10_000) + added;
   return {
     id: s.id, name: s.name ?? null, createdBy: s.createdBy ?? null, system: s.system ?? "ko", timeControl: s.timeControl, status: s.status,
-    size: s.size, players: active.length, buyInCents: s.buyInCents, currency: s.currency, startsAt: s.startsAt ?? null, repeatWeekly: !!s.repeatWeekly, club: s.club ?? null,
+    size: s.size, players: active.length, prizePoolCents, addedCents: added, buyInCents: s.buyInCents, currency: s.currency, startsAt: s.startsAt ?? null, repeatWeekly: !!s.repeatWeekly, club: s.club ?? null,
     teams: s.teamBattle ? s.teamBattle.teams.map((t) => ({ slug: t.slug, name: t.name, score: t.score })) : null,
     arenaMinutes: s.arenaMinutes ?? null, arenaEndsAt: s.arenaEndsAt ?? null, totalRounds: s.totalRounds ?? null, currentRound: s.currentRound,
     createdAt: s.createdAt, finishedAt: s.finishedAt,

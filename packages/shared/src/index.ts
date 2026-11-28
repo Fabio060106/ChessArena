@@ -335,6 +335,10 @@ export interface TournamentCard {
   players: number;
   buyInCents: Cents;
   currency: Currency;
+  /** dotation : entrées des inscrits (moins le rake) + dotation garantie ajoutée par le site */
+  prizePoolCents: Cents;
+  /** dotation garantie (tournois officiels) */
+  addedCents: Cents;
   startsAt: string | null;
   repeatWeekly: boolean;
   club: ClubRef | null;

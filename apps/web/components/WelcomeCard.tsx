@@ -27,7 +27,7 @@ export function WelcomeCard({ className = "" }: { className?: string }) {
         <p className="pr-6 text-sm font-semibold">Bienvenue sur ChessAurum ! Trois façons de commencer :</p>
         <ol className="mt-2 flex flex-col gap-1.5 text-sm">
           <li><span className="font-semibold text-neon">1.</span> Choisis une cadence ci-dessous : un adversaire de ton niveau en quelques secondes.</li>
-          <li><span className="font-semibold text-neon">2.</span> <a href="/tournois" className="underline hover:text-neon">Inscris-toi à une Arena officielle</a> : gratuite, tous les soirs.</li>
+          <li><span className="font-semibold text-neon">2.</span> <a href="/tournois" className="underline hover:text-neon">Inscris-toi au tournoi officiel du soir</a> : petite entrée, dotation garantie à gagner.</li>
           <li><span className="font-semibold text-neon">3.</span> Défie un ami avec un lien : il joue même sans compte.</li>
         </ol>
       </section>

@@ -1,6 +1,6 @@
-/** Lien « Envoyer sur WhatsApp » (application sur téléphone, WhatsApp Web sur ordinateur). */
-export const whatsappUrl = (text: string) => `https://wa.me/?text=${encodeURIComponent(text)}`;
+import { whatsappUrl } from "../lib/share";
 
+/** Lien « Envoyer sur WhatsApp » (application sur téléphone, WhatsApp Web sur ordinateur). */
 export function WhatsAppButton({ text, className = "" }: { text: string; className?: string }) {
   return (
     <a href={whatsappUrl(text)} target="_blank" rel="noopener noreferrer" title="Envoyer sur WhatsApp"

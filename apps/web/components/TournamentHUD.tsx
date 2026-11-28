@@ -1,5 +1,5 @@
 "use client";
-import { WhatsAppButton } from "./WhatsAppButton";
+import { ShareButtons } from "./ShareButtons";
 import { memo, useEffect, useState } from "react";
 import { SITE_NAME } from "../lib/site";
 import { ChatPanel } from "./ChatPanel";
@@ -522,7 +522,7 @@ function InviteBox({ t }: { t: SngSnapshot }) {
         <input readOnly value={link} onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-2 py-1.5 font-mono text-xs text-muted" />
         <button type="button" onClick={() => void share()} className="neon-btn shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold">{copied ? "Copié ✓" : "Partager"}</button>
       </div>
-      <WhatsAppButton text={`Rejoins mon tournoi d'échecs « ${titleOf(t)} »${t.startsAt ? ` (${startsLabel(t.startsAt)})` : ""} : ${link}`} className="self-start" />
+      <ShareButtons text={`Rejoins mon tournoi d'échecs « ${titleOf(t)} »${t.startsAt ? ` (${startsLabel(t.startsAt)})` : ""}`} url={link} />
       <p className="text-[11px] text-muted">Tes invités créent leur compte (30 secondes) s'ils n'en ont pas, puis rejoignent en un clic.</p>
     </div>
   );

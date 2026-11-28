@@ -26,6 +26,10 @@ export function TournamentCardView({ c, now }: { c: TournamentCard; now: number 
             : c.status === "registering" ? `${c.players}/${c.size}` : "Terminé"}
         </span>
       </div>
+      {c.prizePoolCents > 0 && (
+        <p className="text-sm"><span className="font-semibold text-gold">💰 Dotation {formatMoney(c.prizePoolCents, c.currency)}</span>
+          {c.addedCents > 0 && <span className="text-xs text-muted"> · dont {formatMoney(c.addedCents, c.currency)} garantis</span>}</p>
+      )}
       {c.teams && <p className="truncate text-sm">{c.teams.map((x) => `${x.name}${c.status === "registering" ? "" : ` ${x.score}`}`).join(" · ")}</p>}
       {c.status === "registering" && (
         <p className="text-sm">{c.startsAt ? <><b className="text-gold">{startsLabel(c.startsAt)}</b> <span className="text-muted">({startsIn(c.startsAt, now)})</span></> : <span className="text-muted">Départ dès que c'est complet ou lancé par {c.createdBy ?? "l'organisateur"}</span>}</p>

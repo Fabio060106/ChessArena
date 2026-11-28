@@ -2,10 +2,10 @@
 import { useEffect, useState } from "react";
 import type { SngStatus, SngSystem, TimeControlId } from "@chessarena/shared";
 import { TC_LABEL } from "../lib/social";
-import { remaining, startsIn, startsLabel } from "../lib/tournament";
+import { formatMoney, remaining, startsIn, startsLabel } from "../lib/tournament";
 
 interface Showcase {
-  nextOfficial: { id: string; name: string | null; system: SngSystem; timeControl: TimeControlId; status: SngStatus; startsAt: string | null; arenaEndsAt: string | null; players: number } | null;
+  nextOfficial: { id: string; name: string | null; system: SngSystem; timeControl: TimeControlId; status: SngStatus; startsAt: string | null; arenaEndsAt: string | null; players: number; buyInCents?: number; prizePoolCents?: number } | null;
   playing: number;
   online: number;
 }
@@ -29,7 +29,7 @@ export function LandingShowcase() {
             <span className="block text-[11px] font-semibold uppercase tracking-[.12em] text-gold">{t.status === "running" ? "Tournoi officiel en cours" : "Prochain tournoi officiel"}</span>
             <span className="block truncate font-semibold">{t.name}</span>
             <span className="block text-xs text-muted">
-              {TC_LABEL[t.timeControl]} · gratuit · {t.status === "running" && t.arenaEndsAt ? `encore ${remaining(t.arenaEndsAt, now)}, on peut arriver en cours de route` : t.startsAt ? `${startsLabel(t.startsAt)} (${startsIn(t.startsAt, now)})` : ""}
+              {TC_LABEL[t.timeControl]} · {t.buyInCents ? `entrée ${formatMoney(t.buyInCents, "PLAY")}` : "gratuit"}{t.prizePoolCents ? ` · 💰 ${formatMoney(t.prizePoolCents, "PLAY")} à gagner` : ""} · {t.status === "running" && t.arenaEndsAt ? `encore ${remaining(t.arenaEndsAt, now)}, on peut arriver en cours de route` : t.startsAt ? `${startsLabel(t.startsAt)} (${startsIn(t.startsAt, now)})` : ""}
             </span>
           </span>
         </a>

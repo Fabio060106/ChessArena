@@ -11,8 +11,8 @@ describe("tournois officiels — calendrier (heure de Paris)", () => {
     expect(new Date(parisTime(2026, 2, 29, 20, 0)).toISOString()).toBe("2026-03-29T18:00:00.000Z");
   });
 
-  const daily: OfficialSpec = { name: "Soir", system: "arena", timeControl: "blitz_3_0", arenaMinutes: 45, size: 128, hour: 20, minute: 0 };
-  const sunday: OfficialSpec = { name: "Dimanche", system: "swiss", timeControl: "blitz_3_2", rounds: 7, size: 128, hour: 18, minute: 0, days: [0] };
+  const daily: OfficialSpec = { name: "Soir", system: "arena", timeControl: "blitz_3_0", arenaMinutes: 45, size: 128, hour: 20, minute: 0, buyInCents: 0, addedCents: 0 };
+  const sunday: OfficialSpec = { name: "Dimanche", system: "swiss", timeControl: "blitz_3_2", rounds: 7, size: 128, hour: 18, minute: 0, days: [0], buyInCents: 0, addedCents: 0 };
 
   it("éditions des prochaines 26 h, ni trop proches ni déjà passées ; jours de la semaine respectés", () => {
     const now = Date.parse("2026-11-28T10:00:00Z"); // samedi 11 h à Paris : dimanche 18 h est à 31 h, trop loin
