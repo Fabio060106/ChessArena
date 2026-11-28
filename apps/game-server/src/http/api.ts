@@ -19,7 +19,7 @@ import { ExportError, type RegulatoryExporter } from "../audit/regulatoryExport.
 import { TokenBucket } from "../net/rateLimiter.js";
 import { AccountError, type AccountService } from "../auth/accounts.js";
 import { tournamentCard, type TournamentStore } from "../tournaments/TournamentStore.js";
-import { ClubError, cleanDescription, cleanName, type ClubStore } from "../clubs/ClubStore.js";
+import { ClubError, cleanDescription, cleanName, cleanPost, type ClubStore } from "../clubs/ClubStore.js";
 import type { SngSnapshot } from "@chessarena/shared";
 
 /** Audience du jeton de service émis par le serveur web pour les routes /auth/* (jamais par un navigateur). */
@@ -493,7 +493,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       }
       return true;
     }
-    const cm = url.pathname.match(/^\/account\/clubs\/([a-z0-9-]{2,48})(?:\/(join|leave|describe))?$/);
+    const cm = url.pathname.match(/^\/account\/clubs\/([a-z0-9-]{2,48})(?:\/(join|leave|describe|post|unpost))?$/);
     if (cm) {
       const c = need(d.clubs);
       const slug = cm[1]!;
@@ -513,6 +513,18 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
         }
         if (cm[2] === "join" && req.method === "POST") { await c.join(slug, claims.sub); send(200, { ok: true }); return true; }
         if (cm[2] === "leave" && req.method === "POST") { await c.leave(slug, claims.sub); send(200, { ok: true }); return true; }
+        if (cm[2] === "post" && req.method === "POST") {
+          const b = await body(req, 4096);
+          await c.post(slug, claims.sub, cleanPost(b.body)); // réservé au fondateur
+          send(200, { ok: true });
+          return true;
+        }
+        if (cm[2] === "unpost" && req.method === "POST") {
+          const b = await body(req, 1024);
+          await c.unpost(slug, claims.sub, typeof b.id === "string" ? b.id : "");
+          send(200, { ok: true });
+          return true;
+        }
         if (cm[2] === "describe" && req.method === "POST") {
           const b = await body(req, 4096);
           await c.describe(slug, claims.sub, cleanDescription(b.description)); // réservé au fondateur

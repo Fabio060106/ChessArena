@@ -1,7 +1,7 @@
 "use client";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import type { ClubDetail, TournamentsPageResponse } from "@chessarena/shared";
+import type { ClubDetail, ClubPost, TournamentsPageResponse } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
 import { TournamentCardView } from "../../../components/TournamentCard";
 import { useMe } from "../../../hooks/useMe";
@@ -68,6 +68,8 @@ function Club() {
                   {member && <p className="mt-2 text-xs text-win">Tu es membre ✓</p>}
                   {msg && <p role="alert" className="mt-2 text-sm text-danger">{msg}</p>}
                 </section>
+
+                {(club.posts.length > 0 || club.createdBy === me?.userId) && <Posts slug={club.slug} posts={club.posts} owner={club.createdBy === me?.userId} onChange={load} />}
 
                 {has ? (
                   <section aria-label="Tournois du club" className="flex flex-col gap-2">
@@ -138,5 +140,47 @@ function EditDescription({ slug, initial, onSaved }: { slug: string; initial: st
         {err && <span role="alert" className="text-sm text-danger">Enregistrement impossible (280 caractères au plus).</span>}
       </div>
     </div>
+  );
+}
+
+/** Annonces du club : le fondateur publie (500 caractères), tout le monde lit. */
+function Posts({ slug, posts, owner, onChange }: { slug: string; posts: ClubPost[]; owner: boolean; onChange: () => void }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(false);
+  const send = async (action: "post" | "unpost", payload: Record<string, string>) => {
+    setBusy(true); setErr(false);
+    const r = await fetch(`/api/clubs/${slug}/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).catch(() => null);
+    setBusy(false);
+    if (r?.ok) { if (action === "post") setText(""); onChange(); } else setErr(true);
+  };
+  return (
+    <section aria-label="Annonces du club" className="panel flex flex-col gap-2 p-3">
+      <h2 className="text-[11px] font-semibold uppercase tracking-[.14em] text-muted">📣 Annonces</h2>
+      {owner && (
+        <form onSubmit={(e) => { e.preventDefault(); if (text.trim()) void send("post", { body: text }); }} className="flex flex-col gap-1.5">
+          <textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={500} rows={2} aria-label="Nouvelle annonce"
+            placeholder="Tournoi blitz samedi 20 h, venez nombreux !" className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-text outline-none focus:border-neon/60" />
+          <div className="flex items-center gap-2">
+            <button type="submit" disabled={busy || !text.trim()} className="neon-btn rounded-lg px-3 py-1.5 text-sm font-semibold">{busy ? "…" : "Publier"}</button>
+            <span className="text-xs text-muted">{text.length}/500</span>
+            {err && <span role="alert" className="text-sm text-danger">Publication impossible.</span>}
+          </div>
+        </form>
+      )}
+      {posts.length === 0 ? <p className="text-sm text-muted">Pas encore d'annonce.</p> : (
+        <ul className="flex flex-col divide-y divide-line">
+          {posts.map((p) => (
+            <li key={p.id} className="py-2">
+              <p className="whitespace-pre-line text-sm">{p.body}</p>
+              <p className="mt-0.5 text-xs text-muted">
+                {new Date(p.createdAt).toLocaleString("fr-FR", { dateStyle: "medium", timeStyle: "short" })} · {p.author}
+                {owner && <button type="button" disabled={busy} onClick={() => void send("unpost", { id: p.id })} className="ml-2 hover:text-danger">supprimer</button>}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

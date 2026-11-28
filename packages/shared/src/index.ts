@@ -282,8 +282,11 @@ export interface ClubMember {
   rapid: number;
   games: number;
 }
+export interface ClubPost { id: string; author: string; body: string; createdAt: string }
 export interface ClubDetail extends ClubSummary {
   members: ClubMember[];
+  /** annonces du fondateur, les plus récentes d'abord (10 au plus) */
+  posts: ClubPost[];
 }
 export interface ClubsResponse {
   mine: ClubSummary[];

@@ -75,6 +75,20 @@ describe.skipIf(!pgAvailable())("PgClubStore — clubs en base", () => {
     expect(await clubs.remove(c.slug)).toBe(false);
   });
 
+  it("annonces : le fondateur publie et retire, les 10 dernières affichées, pas les membres", async () => {
+    const c = await clubs.create("ann", "Club Annonces", "");
+    await clubs.join(c.slug, "lecteur");
+    for (let i = 1; i <= 12; i++) await clubs.post(c.slug, "ann", `Annonce ${i}`);
+    await expect(clubs.post(c.slug, "lecteur", "spam")).rejects.toMatchObject({ code: "NOT_MEMBER" });
+    let d = (await clubs.get(c.slug))!;
+    expect(d.posts).toHaveLength(10);
+    expect(d.posts[0]!.body).toBe("Annonce 12");
+    await clubs.unpost(c.slug, "ann", d.posts[0]!.id);
+    await expect(clubs.unpost(c.slug, "lecteur", d.posts[1]!.id)).rejects.toMatchObject({ code: "NOT_MEMBER" });
+    d = (await clubs.get(c.slug))!;
+    expect(d.posts[0]!.body).toBe("Annonce 11");
+  });
+
   it("2 clubs créés au plus par joueur", async () => {
     await clubs.create("max", "Club Un", "");
     await clubs.create("max", "Club Deux", "");
