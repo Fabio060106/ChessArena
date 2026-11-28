@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { TournamentCard, TournamentsPageResponse } from "@chessarena/shared";
+import { SEASON_PARTICIPATION, SEASON_POINTS, type ClubSeason, type TournamentCard, type TournamentsPageResponse } from "@chessarena/shared";
 import { PageHeader } from "../../components/PageHeader";
 import { useMe } from "../../hooks/useMe";
 import { TournamentCardView as Card } from "../../components/TournamentCard";
@@ -63,6 +63,7 @@ export default function TournamentsPage() {
               <Section title="À venir" list={f(data.upcoming)} now={now} limit={8}
                 empty={filtered ? <>Aucun tournoi à venir avec ces filtres. <button type="button" className="text-neon underline" onClick={() => setFilter(NO_FILTER)}>Tout afficher</button></>
                   : <>Aucun tournoi ouvert pour l'instant. <a href="/play?onglet=tournoi" className="text-neon underline">Lance le premier</a> : ton club n'attend que ça.</>} />
+              {data.officialSeason && data.officialSeason.rows.length > 0 && <Champions season={data.officialSeason} me={me?.userId} />}
               <Section title="Terminés récemment" empty={null} list={f(data.finished)} now={now} limit={6} />
             </>
           )}
@@ -104,3 +105,31 @@ function Section({ title, list, now, empty, limit }: { title: string; list: Tour
   );
 }
 
+
+const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+
+/** Champions du mois : points de place cumulés sur les tournois officiels terminés ce mois-ci. */
+function Champions({ season, me }: { season: ClubSeason; me?: string }) {
+  const [y, m] = season.month.split("-").map(Number);
+  const mine = season.rows.findIndex((r) => r.userId === me);
+  return (
+    <section aria-label="Champions du mois" className="panel relative overflow-hidden border-gold/30 p-3">
+      <div className="pointer-events-none absolute -right-10 -top-10 size-32 rounded-full bg-gold/10 blur-2xl" />
+      <h2 className="text-[11px] font-semibold uppercase tracking-[.14em] text-gold">★ Champions du mois · {MONTHS[(m ?? 1) - 1]} {y}</h2>
+      <p className="mt-0.5 text-xs text-muted">Tournois officiels : {SEASON_POINTS.map((p, i) => `${i + 1}${i ? "e" : "er"} ${p}`).join(", ")}, participation {SEASON_PARTICIPATION}.</p>
+      <ol className="mt-2 flex flex-col">
+        {season.rows.slice(0, 10).map((r, i) => (
+          <li key={r.userId}>
+            <a href={`/profil/${encodeURIComponent(r.userId)}`} className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-surface-2 ${r.userId === me ? "bg-neon/10" : ""}`}>
+              <span className="tabular w-6 text-muted">{["🥇", "🥈", "🥉"][i] ?? i + 1}</span>
+              <span className="min-w-0 flex-1 truncate">{r.userId}</span>
+              <span className="tabular text-xs text-muted">{r.played} tournoi{r.played > 1 ? "s" : ""}{r.wins ? ` · ${r.wins} 🏆` : ""}</span>
+              <span className="tabular w-14 text-right font-semibold">{r.points} pts</span>
+            </a>
+          </li>
+        ))}
+      </ol>
+      {mine >= 10 && <p className="mt-1 px-2 text-xs text-muted">Toi : {mine + 1}e avec {season.rows[mine]!.points} pts.</p>}
+    </section>
+  );
+}

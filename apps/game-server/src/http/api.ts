@@ -20,8 +20,8 @@ import { TokenBucket } from "../net/rateLimiter.js";
 import { AccountError, type AccountService } from "../auth/accounts.js";
 import { tournamentCard, type TournamentStore } from "../tournaments/TournamentStore.js";
 import { ClubError, cleanDescription, cleanName, cleanPost, type ClubStore } from "../clubs/ClubStore.js";
-import { clubSeason } from "../clubs/season.js";
-import type { SngSnapshot } from "@chessarena/shared";
+import { clubSeason, monthOf, officialSeason } from "../clubs/season.js";
+import { OFFICIAL_CREATOR, type ClubSeason, type SngSnapshot } from "@chessarena/shared";
 
 /** Audience du jeton de service émis par le serveur web pour les routes /auth/* (jamais par un navigateur). */
 export const AUTH_SERVICE_AUDIENCE = "chessarena-auth-service";
@@ -175,6 +175,16 @@ function securityHeaders(res: ServerResponse, cfg: GameServerConfig): void {
 }
 
 /** Retourne true si la requête a été prise en charge. */
+/** Classement du mois des tournois officiels : recalculé au plus une fois par minute (la page Tournois se rafraîchit souvent). */
+let officialCache: { at: number; month: string; value: ClubSeason } | null = null;
+async function officialSeasonCached(store: TournamentStore, now = Date.now()): Promise<ClubSeason> {
+  const { start, month } = monthOf(now);
+  if (officialCache && officialCache.month === month && now - officialCache.at < 60_000) return officialCache.value;
+  const value = officialSeason(await store.finishedBy(OFFICIAL_CREATOR, new Date(start).toISOString(), 400), now);
+  officialCache = { at: now, month, value };
+  return value;
+}
+
 export async function handleApi(req: IncomingMessage, res: ServerResponse, d: ApiDeps): Promise<boolean> {
   const url = new URL(req.url ?? "/", "http://x");
   if (!/^\/(admin|wallet|account|kyc|auth)\//.test(url.pathname)) return false;
@@ -550,7 +560,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       const live = t.showcase?.() ?? { upcoming: [], running: [] };
       const liveIds = new Set([...live.upcoming, ...live.running].map((s) => s.id));
       const finished = (await t.store.recentFinished(12)).filter((s) => !liveIds.has(s.id));
-      send(200, { upcoming: live.upcoming.map(tournamentCard), running: live.running.map(tournamentCard), finished: finished.map(tournamentCard) });
+      send(200, { upcoming: live.upcoming.map(tournamentCard), running: live.running.map(tournamentCard), finished: finished.map(tournamentCard), officialSeason: await officialSeasonCached(t.store) });
       return true;
     }
     // toutes les parties d'un tournoi en un PGN (ChessBase…) : Event = nom du tournoi, Round = ronde.échiquier

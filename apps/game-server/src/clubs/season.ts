@@ -1,4 +1,4 @@
-import { SEASON_PARTICIPATION, SEASON_POINTS, type ClubSeason, type SngSnapshot } from "@chessarena/shared";
+import { isOfficial, SEASON_PARTICIPATION, SEASON_POINTS, type ClubSeason, type SngSnapshot } from "@chessarena/shared";
 
 /** Début du mois (UTC) contenant `now`, et son nom « AAAA-MM ». */
 export function monthOf(now: number): { start: number; month: string } {
@@ -12,16 +12,35 @@ export function monthOf(now: number): { start: number; month: string } {
  * classés entre eux. Départage : points, victoires, podiums, moins de tournois joués, pseudo.
  */
 export function clubSeason(snapshots: readonly SngSnapshot[], slug: string, now = Date.now()): ClubSeason {
+  return placementSeason(snapshots, (s) => {
+    const battle = !!s.teamBattle?.teams.some((t) => t.slug === slug);
+    if (s.club?.slug !== slug && !battle) return null;
+    return (p) => !battle || s.club?.slug === slug || p.team === slug;
+  }, now);
+}
+
+/** Tournois officiels du mois : tous les joueurs classés de chaque tournoi officiel terminé. */
+export function officialSeason(snapshots: readonly SngSnapshot[], now = Date.now()): ClubSeason {
+  return placementSeason(snapshots, (s) => (isOfficial(s.createdBy) ? () => true : null), now);
+}
+
+/**
+ * Points de place cumulés sur les tournois terminés du mois en cours. `pick` dit si un tournoi compte et,
+ * si oui, quels joueurs y sont classés (entre eux).
+ */
+export function placementSeason(
+  snapshots: readonly SngSnapshot[],
+  pick: (s: SngSnapshot) => ((p: SngSnapshot["players"][number]) => boolean) | null,
+  now = Date.now(),
+): ClubSeason {
   const { start, month } = monthOf(now);
   const rows = new Map<string, ClubSeason["rows"][number]>();
   let tournaments = 0;
   for (const s of snapshots) {
     if (s.status !== "finished" || !s.finishedAt || Date.parse(s.finishedAt) < start) continue;
-    const battle = !!s.teamBattle?.teams.some((t) => t.slug === slug);
-    if (s.club?.slug !== slug && !battle) continue;
-    const ranked = s.players
-      .filter((p) => p.finalRank && (!battle || s.club?.slug === slug || p.team === slug))
-      .sort((a, b) => a.finalRank! - b.finalRank!);
+    const keep = pick(s);
+    if (!keep) continue;
+    const ranked = s.players.filter((p) => p.finalRank && keep(p)).sort((a, b) => a.finalRank! - b.finalRank!);
     if (ranked.length < 2) continue;
     tournaments++;
     ranked.forEach((p, i) => {

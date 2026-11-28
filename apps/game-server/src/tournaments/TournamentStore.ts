@@ -21,6 +21,8 @@ export interface TournamentStore {
   listFor(userId: string, limit: number): Promise<TournamentHistoryItem[]>;
   /** Tournois de joueurs terminés récemment (page « Tournois »). */
   recentFinished(limit: number, clubSlug?: string): Promise<SngSnapshot[]>;
+  /** Tournois d'un organisateur terminés depuis une date (classement du mois des tournois officiels). */
+  finishedBy(createdBy: string, sinceIso: string, limit: number): Promise<SngSnapshot[]>;
 }
 
 /** Résumé léger d'un tournoi (page « Tournois »). */
@@ -138,6 +140,14 @@ export class PgTournamentStore implements TournamentStore {
     return r.rows.map((x) => x.id);
   }
 
+  async finishedBy(createdBy: string, sinceIso: string, limit: number): Promise<SngSnapshot[]> {
+    if (!(await this.hasSnapshot())) return [];
+    const r = await this.pool.query<{ snapshot: SngSnapshot }>(
+      `SELECT snapshot FROM tournaments WHERE status = 'finished' AND snapshot IS NOT NULL AND snapshot->>'createdBy' = $1
+          AND finished_at >= $2::timestamptz ORDER BY finished_at DESC LIMIT $3`, [createdBy, sinceIso, Math.max(1, Math.min(500, limit))]);
+    return r.rows.map((x) => x.snapshot);
+  }
+
   async recentFinished(limit: number, clubSlug?: string): Promise<SngSnapshot[]> {
     if (!(await this.hasSnapshot())) return [];
     const r = await this.pool.query<{ snapshot: SngSnapshot }>(
@@ -198,6 +208,11 @@ export class InMemoryTournamentStore implements TournamentStore {
   async loadRunningCustom(): Promise<SngSnapshot[]> {
     return [];
   }
+  async finishedBy(createdBy: string, sinceIso: string, limit: number): Promise<SngSnapshot[]> {
+    return [...this.saved.values()].filter((s) => s.status === "finished" && s.createdBy === createdBy && (s.finishedAt ?? "") >= sinceIso)
+      .sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? "")).slice(0, limit);
+  }
+
   async recentFinished(limit: number, clubSlug?: string): Promise<SngSnapshot[]> {
     return [...this.saved.values()].filter((s) => s.status === "finished" && s.createdBy && (!clubSlug || s.club?.slug === clubSlug || !!s.teamBattle?.teams.some((t) => t.slug === clubSlug)))
       .sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? "")).slice(0, limit);

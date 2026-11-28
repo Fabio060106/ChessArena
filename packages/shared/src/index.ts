@@ -354,6 +354,8 @@ export interface TournamentsPageResponse {
   upcoming: TournamentCard[];
   running: TournamentCard[];
   finished: TournamentCard[];
+  /** classement du mois des tournois officiels (même barème que les clubs) */
+  officialSeason?: ClubSeason;
 }
 
 /** Un tournoi dans l'historique d'un joueur (profil). */

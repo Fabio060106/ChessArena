@@ -34,3 +34,27 @@ describe("classement du mois d'un club", () => {
     expect(s.rows.map((r) => [r.userId, r.points])).toEqual([["f1", 10], ["f2", 7]]);
   });
 });
+
+describe("champions du mois (tournois officiels)", () => {
+  it("seuls les tournois officiels du mois comptent", async () => {
+    const { officialSeason } = await import("./season.js");
+    const { OFFICIAL_CREATOR } = await import("@chessarena/shared");
+    const now = Date.parse("2026-11-28T12:00:00Z");
+    const s = officialSeason([
+      snap("o1", "2026-11-27T20:45:00Z", [["ana", 1], ["bob", 2], ["cid", 3]], { createdBy: OFFICIAL_CREATOR, club: null }),
+      snap("p1", "2026-11-27T20:45:00Z", [["bob", 1], ["ana", 2]], { createdBy: "bob", club: null }),
+      snap("o0", "2026-10-30T20:45:00Z", [["cid", 1], ["ana", 2]], { createdBy: OFFICIAL_CREATOR, club: null }),
+    ], now);
+    expect(s.tournaments).toBe(1);
+    expect(s.rows.map((r) => [r.userId, r.points])).toEqual([["ana", 10], ["bob", 7], ["cid", 5]]);
+  });
+
+  it("stockage : tournois terminés d'un organisateur depuis une date", async () => {
+    const { InMemoryTournamentStore } = await import("../tournaments/TournamentStore.js");
+    const st = new InMemoryTournamentStore();
+    for (const [id, by, at] of [["a", "@ChessAurum", "2026-11-20T20:00:00Z"], ["b", "@ChessAurum", "2026-10-20T20:00:00Z"], ["c", "bob", "2026-11-21T20:00:00Z"]] as const) {
+      await st.save({ ...snap(id, at, [["x", 1]]), createdBy: by } as SngSnapshot);
+    }
+    expect((await st.finishedBy("@ChessAurum", "2026-11-01T00:00:00.000Z", 10)).map((x) => x.id)).toEqual(["a"]);
+  });
+});
