@@ -22,7 +22,7 @@ function parseRelaySource(raw: string): { source: "lcc" | "lichess"; id: string;
 }
 import { CHALLENGE_TTL_MS, ChallengeService, type Challenge } from "./social/ChallengeService.js";
 import { LINK_CODE_RE, OpenChallengeService, type OpenChallenge } from "./social/OpenChallengeService.js";
-import { InMemoryLedger, PgLedger, lockStakes, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
+import { acct, InMemoryLedger, PgLedger, lockStakes, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
 import { ChatService } from "./social/ChatService.js";
 import { basicSignals, type BasicSignal } from "./fairplay/basicSignals.js";
 import { RematchService } from "./social/RematchService.js";
@@ -79,6 +79,9 @@ interface SocketData {
 
 export type ArenaIO = Server<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
 type ArenaSocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<string, never>, SocketData>;
+
+/** Recharge quotidienne de jetons (bêta). */
+export const DAILY_TOPUP = { belowCents: 5_000, amountCents: 2_000 } as const;
 
 export interface GameServerDeps {
   pool?: pg.Pool;
@@ -549,12 +552,28 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     }
   };
 
+  /**
+   * Recharge du jour : solde sous 50 jetons → +20 jetons, une fois par jour (UTC) et par joueur (clé idempotente).
+   * Les tournois et les pronostics sont payants en jetons : sans recharge, un joueur malchanceux ne pourrait plus jouer.
+   */
+  const dailyTopUp = async (userId: string): Promise<{ amountCents: number; balanceCents: number } | null> => {
+    if (cfg.playFaucetCents <= 0 || !(ledger instanceof InMemoryLedger || ledger instanceof PgLedger)) return null;
+    const bal = await ledger.balance(acct.user(userId, "PLAY"), "PLAY");
+    if (bal >= DAILY_TOPUP.belowCents) return null;
+    const r = await ledger.faucet(userId, DAILY_TOPUP.amountCents, `daily:${new Date().toISOString().slice(0, 10)}`);
+    if (r.status === "duplicate") return null;
+    return { amountCents: DAILY_TOPUP.amountCents, balanceCents: bal + DAILY_TOPUP.amountCents };
+  };
+
   io.on("connection", (socket) => {
     const user = socket.data.user;
     if (user.flag) flags.set(user.userId, user.flag);
     void socket.join(userRoom(user.userId));
     socket.emit("session:mode", socket.data.mode);
-    void welcomeFaucet(user.userId).catch((e) => console.error("[faucet]", e));
+    void welcomeFaucet(user.userId)
+      .then(() => dailyTopUp(user.userId))
+      .then((g) => { if (g) socket.emit("tokens:gift", { amountCents: g.amountCents, balanceCents: g.balanceCents, reason: "daily" }); })
+      .catch((e) => console.error("[faucet]", e));
 
     // Reprise de partie après reconnexion (ou 2e onglet).
     games.onUserOnline(

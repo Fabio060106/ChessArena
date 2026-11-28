@@ -750,6 +750,8 @@ export interface ServerToClientEvents {
   "lag:probe": (serverTs: number, ack: (clientTs: number) => void) => void;
   "sng:update": (p: SngSnapshot) => void;
   "session:mode": (p: SessionModeEvent) => void;
+  /** jetons offerts (recharge du jour quand le solde est bas) */
+  "tokens:gift": (p: { amountCents: Cents; balanceCents: Cents; reason: "daily" }) => void;
   "sng:lobby": (p: SngSnapshot[]) => void;
   "error": (p: { code: ErrorCode; message: string }) => void;
   "chat:msg": (m: ChatMessage) => void;

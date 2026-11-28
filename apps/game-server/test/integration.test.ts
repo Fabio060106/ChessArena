@@ -1010,3 +1010,26 @@ describe("vitrine publique de la page d'accueil", () => {
     expect(JSON.stringify(d)).not.toMatch(/userId/);
   });
 });
+
+describe("recharge quotidienne de jetons", () => {
+  it("solde sous 50 jetons : +20 à la connexion, une seule fois par jour", async () => {
+    const { acct } = await import("../src/settlement/ledger.js");
+    const first = client({ token: token({ sub: "fauche" }) });
+    await connected(first);
+    await new Promise((r) => setTimeout(r, 300)); // jetons de bienvenue
+    first.disconnect();
+    const bal = () => server.ledger.balance(acct.user("fauche", "PLAY"), "PLAY");
+    expect(await bal()).toBe(10_000);
+    await server.ledger.post("drain-fauche", "PLAY", [{ account: acct.user("fauche", "PLAY"), amountCents: -9_000 }, { account: acct.faucet(), amountCents: 9_000 }]);
+    const again = client({ token: token({ sub: "fauche" }) });
+    const gift = once(again, "tokens:gift", 5_000);
+    await connected(again);
+    expect(await gift).toEqual({ amountCents: 2_000, balanceCents: 3_000, reason: "daily" });
+    again.disconnect();
+    const third = client({ token: token({ sub: "fauche" }) });
+    await connected(third);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(await bal()).toBe(3_000); // pas deux fois le même jour
+    third.disconnect();
+  });
+});

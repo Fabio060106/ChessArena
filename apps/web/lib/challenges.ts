@@ -56,6 +56,9 @@ function notify(text: string): void {
 export function initChallenges(getAuth: AuthProvider): void {
   if (socket) return;
   socket = getSocket(getAuth);
+  socket.on("tokens:gift", (g) => {
+    notify(`🎁 Recharge du jour : +${g.amountCents / 100} jetons (solde : ${g.balanceCents / 100} jetons).`);
+  });
   socket.on("challenge:incoming", (c) => {
     if (state.incoming.some((x) => x.id === c.id)) return;
     set({ incoming: [...state.incoming, c] });
