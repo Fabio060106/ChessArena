@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import type { PlayerProfile } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
 import { AccountSettings } from "../../../components/AccountSettings";
+import { RatingChart } from "../../../components/RatingChart";
 import { AddFriendButton, ChallengeButton } from "../../../components/ChallengeButton";
 import { useMe } from "../../../hooks/useMe";
 import { avatarFor, countryName, flagEmoji } from "../../../lib/profile";
@@ -116,6 +117,8 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
           );
         })}
       </section>
+
+      {p.ratingHistory && <RatingChart history={p.ratingHistory} initial={best} />}
 
       <section className="panel p-4">
         <h2 className="mb-2 text-sm font-semibold">Bilan · {t.games} partie{t.games > 1 ? "s" : ""}</h2>

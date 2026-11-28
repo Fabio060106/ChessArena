@@ -1,6 +1,6 @@
 import type pg from "pg";
 import {
-  DEFAULT_RATING, TIME_CONTROLS, type AccountState, type GameHistoryDetail, type GameHistoryItem, type LeaderboardEntry, type PlayerProfile, type RepertoireGame, type TimeControlId,
+  DEFAULT_RATING, TIME_CONTROLS, type AccountState, type GameHistoryDetail, type GameHistoryItem, type LeaderboardEntry, type PlayerProfile, type RatingPoint, type RepertoireGame, type TimeControlId,
 } from "@chessarena/shared";
 import type { FinishedGame } from "../game/GameRoom.js";
 import type { ImportedGame } from "../imports/lichessImport.js";
@@ -68,6 +68,8 @@ export const FRIENDS_MAX = 200;
 
 /** Comptes exclus des classements (suspendus, clôturés). */
 const HIDDEN_STATES = ["suspended", "closed"];
+/** points de la courbe d'Elo renvoyés par cadence */
+const HISTORY_POINTS = 200;
 
 /** Taille maximale du document de répertoire (octets JSON). */
 export const REPERTOIRE_MAX_BYTES = 1_048_576;
@@ -220,7 +222,7 @@ export class PgGameRepository implements GameRepository {
     );
     const row = u.rows[0];
     if (!row || HIDDEN_STATES.includes(row.state)) return null;
-    const [ratings, totals, recent] = await Promise.all([
+    const [ratings, totals, recent, history] = await Promise.all([
       this.getRatings(row.id),
       this.pool.query<{ games: string; wins: string; draws: string; losses: string }>(
         `SELECT count(*) AS games,
@@ -230,12 +232,27 @@ export class PgGameRepository implements GameRepository {
            FROM games WHERE (white_id = $1 OR black_id = $1) AND termination <> 'aborted'`, [row.id],
       ),
       this.listGames(row.id, 10),
+      this.pool.query<{ time_control: string; rating_before: number; rating_after: number; created_at: Date }>(
+        `SELECT time_control, rating_before, rating_after, created_at FROM (
+           SELECT id, time_control, rating_before, rating_after, created_at, row_number() OVER (PARTITION BY time_control ORDER BY id DESC) AS rn
+             FROM rating_history WHERE user_id = $1) h
+          WHERE rn <= $2 ORDER BY id ASC`, [row.id, HISTORY_POINTS],
+      ),
     ]);
     const t = totals.rows[0]!;
+    const ratingHistory: Partial<Record<TimeControlId, RatingPoint[]>> = {};
+    for (const h of history.rows) {
+      if (!(TCS as readonly string[]).includes(h.time_control)) continue;
+      const pts = (ratingHistory[h.time_control as TimeControlId] ??= []);
+      // point de départ : l'Elo avant la première partie affichée
+      if (!pts.length) pts.push({ at: h.created_at.toISOString(), rating: h.rating_before });
+      pts.push({ at: h.created_at.toISOString(), rating: h.rating_after });
+    }
     return {
       userId: row.id, flag: row.display_flag, memberSince: row.created_at.toISOString(), ratings,
       totals: { games: Number(t.games), wins: Number(t.wins), draws: Number(t.draws), losses: Number(t.losses) },
       recent: recent.filter((g) => g.outcome !== "aborted"),
+      ratingHistory,
     };
   }
 
@@ -537,10 +554,21 @@ export class InMemoryGameRepository implements GameRepository {
     const id = [...ids].find((x) => x === pseudo) ?? [...ids].find((x) => x.toLowerCase() === pseudo.toLowerCase());
     if (!id || HIDDEN_STATES.includes(this.states.get(id) ?? "active")) return null;
     const all = (await this.listGames(id, 100)).filter((g) => g.outcome !== "aborted");
+    const ratingHistory: Partial<Record<TimeControlId, RatingPoint[]>> = {};
+    for (const e of [...this.games.values()].sort((a, b) => +(a.endedAt ?? 0) - +(b.endedAt ?? 0))) {
+      const ch = e.recorded.changes?.[id];
+      if (!ch) continue;
+      const tc = e.game.timeControl.id;
+      const pts = (ratingHistory[tc] ??= []);
+      if (!pts.length) pts.push({ at: (e.endedAt ?? new Date()).toISOString(), rating: ch.before });
+      pts.push({ at: (e.endedAt ?? new Date()).toISOString(), rating: ch.after });
+      if (pts.length > HISTORY_POINTS + 1) pts.shift();
+    }
     return {
       userId: id, flag: null, memberSince: null, ratings: await this.getRatings(id),
       totals: { games: all.length, wins: all.filter((g) => g.outcome === "win").length, draws: all.filter((g) => g.outcome === "draw").length, losses: all.filter((g) => g.outcome === "loss").length },
       recent: all.slice(0, 10),
+      ratingHistory,
     };
   }
 

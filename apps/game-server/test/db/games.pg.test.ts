@@ -217,6 +217,10 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect(p).toMatchObject({ userId: "Lb_Top", flag: "FR", totals: { games: 1, wins: 1, draws: 0, losses: 0 } });
     expect(p.recent.map((g) => g.outcome)).toEqual(["win"]); // la partie annulée n'apparaît pas
     expect(p.ratings.blitz_3_0).toMatchObject({ rating: 1520, games: 1 });
+    expect(p.ratingHistory?.blitz_3_0?.map((x) => x.rating)).toEqual([1500, 1520]); // départ, puis après chaque partie ; la partie annulée (non classée) n'y est pas
+    expect(p.ratingHistory?.rapid_5_0).toBeUndefined();
+    const mid = (await repo.getProfile("lb_mid"))!;
+    expect(mid.ratingHistory?.blitz_3_0?.map((x) => x.rating)).toEqual([1500, 1480, mid.ratings.blitz_3_0.rating]); // de la plus ancienne à la plus récente
     expect(await repo.getProfile("lb_ban")).toBeNull();
     expect(await repo.getProfile("inconnu-total")).toBeNull();
 

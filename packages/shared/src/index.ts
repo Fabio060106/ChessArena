@@ -543,7 +543,12 @@ export interface PlayerProfile {
   recent: GameHistoryItem[];
   /** partie en cours (pour la regarder), sinon null */
   liveGameId: string | null;
+  /** évolution de l'Elo par cadence (200 dernières parties classées max., de la plus ancienne à la plus récente) ; le premier point est l'Elo avant la première de ces parties */
+  ratingHistory?: Partial<Record<TimeControlId, RatingPoint[]>>;
 }
+
+/** Un point de la courbe d'Elo : Elo après la partie, date de fin. */
+export interface RatingPoint { at: string; rating: number }
 
 export interface LeaderboardEntry {
   rank: number;

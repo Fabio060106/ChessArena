@@ -50,7 +50,7 @@ function Leaderboard() {
           <div className="panel overflow-hidden">
             <table className="w-full text-sm">
               <thead className="text-[11px] uppercase tracking-wider text-muted">
-                <tr><th className="w-12 px-3 py-2 text-left font-normal">#</th><th className="text-left font-normal">Joueur</th><th className="px-2 text-right font-normal">Elo</th><th className="hidden px-2 text-right font-normal sm:table-cell">Record</th><th className="px-3 text-right font-normal">Parties</th></tr>
+                <tr><th className="w-10 py-2 pl-3 pr-1 text-left font-normal">#</th><th className="text-left font-normal">Joueur</th><th className="w-px whitespace-nowrap px-2 text-right font-normal">Elo</th><th className="hidden w-px whitespace-nowrap px-2 text-right font-normal sm:table-cell">Record</th><th className="w-px whitespace-nowrap px-3 text-right font-normal"><span className="sm:hidden">Part.</span><span className="hidden sm:inline">Parties</span></th></tr>
               </thead>
               <tbody>
                 {data.entries.map((e) => <Row key={e.userId} e={e} me={me?.userId} />)}
@@ -74,7 +74,7 @@ function Row({ e, me }: { e: LeaderboardEntry; me?: string }) {
   const medal = e.rank === 1 ? "🥇" : e.rank === 2 ? "🥈" : e.rank === 3 ? "🥉" : null;
   return (
     <tr className={`border-t border-line ${e.userId === me ? "bg-neon/10" : ""}`}>
-      <td className="tabular px-3 py-2 text-muted">{medal ?? e.rank}</td>
+      <td className="tabular py-2 pl-3 pr-1 text-muted">{medal ?? e.rank}</td>
       <td className="max-w-0 py-2">
         <a href={`/profil/${encodeURIComponent(e.userId)}`} className="flex items-center gap-1.5 font-semibold hover:underline">
           {flagEmoji(e.flag ?? undefined) && <span>{flagEmoji(e.flag ?? undefined)}</span>}
@@ -82,7 +82,7 @@ function Row({ e, me }: { e: LeaderboardEntry; me?: string }) {
           {e.userId === me && <span className="text-xs font-normal text-muted">(toi)</span>}
         </a>
       </td>
-      <td className="tabular px-2 text-right font-display text-base font-bold">{e.rating}{e.games < 10 ? <span className="text-xs text-muted">?</span> : null}</td>
+      <td className="tabular whitespace-nowrap px-2 text-right font-display text-base font-bold">{e.rating}{e.games < 10 ? <span className="text-xs text-muted">?</span> : null}</td>
       <td className="tabular hidden px-2 text-right text-muted sm:table-cell">{e.peak}</td>
       <td className="tabular px-3 text-right text-muted">{e.games}</td>
     </tr>
