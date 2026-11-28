@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { LandingShowcase } from "../components/LandingShowcase";
 import { Logo } from "../components/Logo";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useRouter } from "next/navigation";
@@ -69,9 +70,23 @@ export default function Home() {
   return (
     <main className="arena-app relative grid place-items-center overflow-x-hidden px-4 py-8">
       <ThemeToggle className="absolute right-3 top-3" />
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-sm lg:grid lg:max-w-5xl lg:grid-cols-[minmax(0,1fr)_380px] lg:items-center lg:gap-14">
+      {/* ordinateur : la promesse à gauche, le formulaire à droite */}
+      <div className="hidden lg:flex lg:flex-col lg:gap-5">
+        <p className="font-display text-5xl font-bold tracking-tight"><Logo /></p>
+        <p className="max-w-[30ch] font-display text-3xl font-bold leading-tight">Les échecs en compétition, tous les soirs.</p>
+        <p className="max-w-[46ch] text-muted">Arenas officielles quotidiennes, tournois de club programmés en 30 secondes, défis entre amis par un simple lien. Chaque partie analysée par Stockfish 19.</p>
+        <LandingShowcase />
+        <ul className="grid gap-2 text-sm text-muted">
+          <li>🏆 Suisse, Arena (avec berserk ⚡) ou élimination directe, de 3 à 128 joueurs</li>
+          <li>🏛 La page de ton club : classement du mois, annonces, batailles contre d'autres clubs</li>
+          <li>🔗 « Joue contre moi » : un lien WhatsApp, ton ami joue même sans compte</li>
+          <li>📚 Répertoire d'ouvertures construit à partir de tes parties</li>
+        </ul>
+      </div>
+      <div className="w-full">
         <div className="mb-4 text-center">
-          <h1 className="font-display text-4xl font-bold tracking-tight"><Logo /></h1>
+          <h1 className="font-display text-4xl font-bold tracking-tight lg:sr-only"><Logo /></h1>
           <p className="mt-1 text-sm text-muted">Duels et tournois d'échecs · bêta en jetons, sans valeur</p>
           {invited && <p className="mt-2 rounded-lg border border-neon/30 bg-neon/10 px-3 py-2 text-sm text-neon">{invited === "club" ? "Tu es invité à rejoindre un club : crée ton compte (30 secondes) pour le rejoindre." : invited === "duel" ? "On te défie aux échecs : crée ton compte (30 secondes) et la partie commence." : "Tu es invité à un tournoi : crée ton compte (30 secondes) pour le rejoindre."}</p>}
         </div>
@@ -168,7 +183,7 @@ export default function Home() {
         </form>
 
         {/* présentation publique (lue aussi par les moteurs de recherche) */}
-        <section className="mt-6 text-sm text-muted" aria-label="Présentation">
+        <section className="mt-6 text-sm text-muted lg:sr-only" aria-label="Présentation">
           <h2 className="mb-2 text-center font-semibold text-text">Les échecs en ligne, entre amis ou en tournoi</h2>
           <ul className="grid gap-1.5">
             <li>♟ Parties rapides en bullet, blitz et rapide, avec classement Elo.</li>
@@ -179,6 +194,8 @@ export default function Home() {
             <li>👁 Parties en direct, chat, revanche, profils et historique complet.</li>
           </ul>
         </section>
+        <div className="mt-4 lg:hidden"><LandingShowcase /></div>
+      </div>
       </div>
     </main>
   );

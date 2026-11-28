@@ -980,3 +980,14 @@ describe("import de parties Lichess", () => {
     expect(await (await api("DELETE", "/account/imports?source=pgn")).json()).toEqual({ deleted: 1 });
   });
 });
+
+describe("vitrine publique de la page d'accueil", () => {
+  it("sans connexion : prochain tournoi officiel (s'il y en a) et activité, sans aucun nom de joueur", async () => {
+    const r = await fetch(`${url}/public/showcase`);
+    expect(r.status).toBe(200);
+    const d = (await r.json()) as { nextOfficial: unknown; playing: number; online: number };
+    expect(Object.keys(d).sort()).toEqual(["nextOfficial", "online", "playing"]);
+    expect(typeof d.playing).toBe("number");
+    expect(JSON.stringify(d)).not.toMatch(/userId/);
+  });
+});

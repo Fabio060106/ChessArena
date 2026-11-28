@@ -2,7 +2,7 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { performance } from "node:perf_hooks";
 import { Server, type Socket } from "socket.io";
 import pg from "pg";
-import { TIME_CONTROLS, type ChallengeAck, type ClubRef, TEAM_BATTLE_LIMITS, type ChallengeView, type LinkChallengeAck, type LinkChallengeView, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
+import { OFFICIAL_CREATOR, TIME_CONTROLS, type SngSnapshot, type ChallengeAck, type ClubRef, TEAM_BATTLE_LIMITS, type ChallengeView, type LinkChallengeAck, type LinkChallengeView, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "./config.js";
 import { authenticate, canPlay, type AuthUser } from "./auth.js";
 import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
@@ -205,6 +205,18 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
           .end(JSON.stringify({ name: c.name, description: c.description, memberCount: c.memberCount, createdBy: c.createdBy }));
       }).catch(() => res.writeHead(500).end());
       return;
+    }
+    // vitrine publique (page d'accueil) : prochain tournoi officiel et activité du moment — aucun nom de joueur
+    if (req.url === "/public/showcase" && req.method === "GET") {
+      const live = tournaments.showcase();
+      const official = (s: SngSnapshot) => s.createdBy === OFFICIAL_CREATOR;
+      const next = [...live.running.filter((s) => official(s) && s.system === "arena"), ...live.upcoming.filter(official)][0] ?? null;
+      const players = next ? next.players.filter((p) => p.status !== "unregistered" && p.status !== "refunded").length : 0;
+      return void res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=30" }).end(JSON.stringify({
+        nextOfficial: next ? { id: next.id, name: next.name, system: next.system, timeControl: next.timeControl, status: next.status, startsAt: next.startsAt ?? null, arenaEndsAt: next.arenaEndsAt ?? null, players } : null,
+        playing: games.activeGames * 2,
+        online: io.engine.clientsCount,
+      }));
     }
     // défi par lien : qui défie, à quelle cadence (page /defi/<code> et aperçu du lien partagé)
     const pubLink = /^\/public\/challenges\/([a-z0-9]{8})$/.exec(req.url ?? "");
