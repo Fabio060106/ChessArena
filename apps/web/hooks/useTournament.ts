@@ -32,7 +32,8 @@ export function useTournament(socket: ArenaSocket, userId: string, inviteId: str
 
   const all = useMemo(() => {
     const m = new Map(mine);
-    for (const t of lobby) if (!m.has(t.id) || t.players.some((p) => p.userId === userId)) m.set(t.id, t);
+    // les mises à jour du tournoi (sng:update, réponses) sont plus fraîches que la liste du lobby : le lobby ne fait que compléter
+    for (const t of lobby) if (!m.has(t.id)) m.set(t.id, t);
     return m;
   }, [lobby, mine, userId]);
 
@@ -111,5 +112,10 @@ export function useTournament(socket: ArenaSocket, userId: string, inviteId: str
     setError(null);
     socket.emit("sng:withdraw", { tournamentId }, handle(`withdraw:${tournamentId}`));
   }, [socket]);
-  return { lobby, current, invite, register, unregister, create, join, start, pause, withdraw, busy, error };
+  const kick = useCallback((tournamentId: string, userId: string) => {
+    setBusy(`kick:${userId}`);
+    setError(null);
+    socket.emit("sng:kick", { tournamentId, userId }, handle(`kick:${userId}`));
+  }, [socket]);
+  return { lobby, current, invite, register, unregister, create, join, start, pause, withdraw, kick, busy, error };
 }

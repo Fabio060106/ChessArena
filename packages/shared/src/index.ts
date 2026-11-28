@@ -706,6 +706,8 @@ export interface ClientToServerEvents {
   "sng:unwatch": (p: { tournamentId: string }) => void;
   /** le créateur lance son tournoi sans attendre qu'il soit complet (≥ 3 inscrits ; exempts au 1er tour) */
   "sng:start": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
+  /** organisateur : retirer un inscrit avant le départ (remboursé, ne peut plus se réinscrire) */
+  "sng:kick": (p: { tournamentId: string; userId: string }, ack: (r: SngAck) => void) => void;
   /** quitter un tournoi en cours (suisse : plus apparié ; arena : pause définitive) */
   "sng:withdraw": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
   /** arena : se mettre en pause (plus de nouvel adversaire) ou reprendre */

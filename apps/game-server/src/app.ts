@@ -768,6 +768,24 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       }
     }));
 
+    socket.on("sng:kick", guard(socket, async (raw: unknown, ack: unknown) => {
+      const reply = sngReply(ack);
+      const p = raw as { tournamentId?: unknown; userId?: unknown } | null;
+      const t = typeof p?.tournamentId === "string" ? tournaments.get(p.tournamentId) : undefined;
+      if (!t || typeof p?.userId !== "string") return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const snap = t.snapshot();
+      // seul l'organisateur, jamais lui-même
+      if (snap.createdBy !== user.userId || p.userId === user.userId) return reply({ ok: false, code: "FORBIDDEN" });
+      try {
+        await t.kick(p.userId);
+        io.in(userRoom(p.userId)).socketsLeave(tournamentRoom(t.id));
+        io.emit("sng:lobby", tournaments.lobby());
+        reply({ ok: true, snapshot: t.snapshot() });
+      } catch (e) {
+        reply(customError(e));
+      }
+    }));
+
     socket.on("sng:withdraw", guard(socket, async (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);
       const tid = (raw as { tournamentId?: unknown } | null)?.tournamentId;

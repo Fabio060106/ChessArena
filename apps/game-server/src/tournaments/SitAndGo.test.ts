@@ -646,3 +646,17 @@ describe("SitAndGo — absents et départs", () => {
     expect(t.sng.snapshot().players.find((p) => p.userId === r.white.userId)!.paused).toBeUndefined();
   });
 });
+
+describe("SitAndGo — organisateur", () => {
+  it("retirer un inscrit avant le départ : remboursé, ne peut plus se réinscrire", async () => {
+    const t = setup(8);
+    await t.fill(4);
+    expect(await t.bal("u3")).toBe(10_000 - BUY_IN);
+    await t.sng.kick("u3");
+    expect(await t.bal("u3")).toBe(10_000);
+    expect(t.sng.hasPlayer("u3")).toBe(false);
+    await expect(t.sng.register("u3", 1500)).rejects.toMatchObject({ code: "REMOVED_BY_ORGANIZER" });
+    await t.sng.startNow();
+    await expect(t.sng.kick("u1")).rejects.toMatchObject({ code: "NOT_REGISTERING" });
+  });
+});

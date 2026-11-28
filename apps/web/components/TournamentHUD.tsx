@@ -15,6 +15,8 @@ export const SNG_ERRORS: Record<string, string> = {
   IN_GAME: "Terminez votre partie en cours.",
   NOT_CLUB_MEMBER: "Réservé aux membres du club (bataille de clubs : membres des clubs engagés).",
   UNKNOWN_CLUB: "Un des clubs indiqués n'existe pas (vérifie son adresse, par exemple « les-fous-du-roi »).",
+  REMOVED_BY_ORGANIZER: "L'organisateur t'a retiré de ce tournoi.",
+  FORBIDDEN: "Action réservée à l'organisateur.",
   IN_TOURNAMENT: "Tu es déjà inscrit à un tournoi (un seul à la fois, même programmé).",
   ALREADY_QUEUED: "Quittez la file d'attente avant de vous inscrire.",
   FULL: "Table complète : une nouvelle table s'ouvre.",
@@ -55,6 +57,8 @@ interface Props {
   onPause?: (tournamentId: string, paused: boolean) => void;
   /** quitter un tournoi en cours (suisse, arena) */
   onWithdraw?: (tournamentId: string) => void;
+  /** organisateur : retirer un inscrit avant le départ */
+  onKick?: (tournamentId: string, userId: string) => void;
 }
 
 /** Lien d'invitation d'un tournoi : sa page publique (aperçu riche quand on le partage), d'où l'on s'inscrit en un clic. */
@@ -159,7 +163,9 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
       <div className="panel p-3">
         <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Classement live</h3>
         <ol className="flex flex-col gap-0.5">
-          {rows.map((r) => <StandingLine key={r.userId} r={r} me={r.userId === p.userId} currency={t.currency} rounds={t.rounds.length} />)}
+          {rows.map((r) => <StandingLine key={r.userId} r={r} me={r.userId === p.userId} currency={t.currency} rounds={t.rounds.length}
+            onKick={t.status === "registering" && t.createdBy === p.userId && r.userId !== p.userId && p.onKick ? () => p.onKick!(t.id, r.userId) : undefined}
+            kicking={p.busy === `kick:${r.userId}`} />)}
           {t.status === "registering" && t.size - rows.length > 0 && (t.size - rows.length <= 6
             ? Array.from({ length: t.size - rows.length }, (_, i) => (
                 <li key={`empty${i}`} className="rounded-md px-2 py-1.5 text-sm text-muted/50">place libre</li>
@@ -235,7 +241,8 @@ function Seat({ name, winner, bye }: { name: string | null; winner: string | nul
   return <span className={`max-w-[38%] truncate ${won ? "font-semibold text-win" : lost ? "text-muted line-through decoration-1" : ""}`}>{name}</span>;
 }
 
-function StandingLine({ r, me, currency, rounds }: { r: StandingRow; me: boolean; currency: SngSnapshot["currency"]; rounds: number }) {
+function StandingLine({ r, me, currency, rounds, onKick, kicking }: { r: StandingRow; me: boolean; currency: SngSnapshot["currency"]; rounds: number; onKick?: () => void; kicking?: boolean }) {
+  const [ask, setAsk] = useState(false);
   const state = r.state === "winner" ? <span className="text-gold">vainqueur</span>
     : r.state === "playing" ? <span className="text-neon">en jeu</span>
     : r.state === "eliminated" ? <span className="text-muted">éliminé · {rounds > 0 && r.eliminatedRound ? roundLabel(r.eliminatedRound - 1, rounds - 1).toLowerCase() : ""}</span>
@@ -246,7 +253,12 @@ function StandingLine({ r, me, currency, rounds }: { r: StandingRow; me: boolean
       <span className="tabular text-muted">{r.rank}</span>
       <span className="truncate">{r.userId}<span className="tabular ml-1.5 text-xs text-muted">{r.rating}</span></span>
       <span className="text-xs">{state}</span>
-      <span className="tabular min-w-[4.5rem] text-right text-xs">{r.payoutCents > 0 ? formatMoney(r.payoutCents, currency) : ""}</span>
+      <span className="tabular min-w-[4.5rem] text-right text-xs">
+        {onKick ? (ask
+          ? <span className="inline-flex gap-1.5"><button type="button" disabled={kicking} onClick={onKick} className="font-semibold text-danger">{kicking ? "…" : "Retirer"}</button><button type="button" onClick={() => setAsk(false)} className="text-muted">non</button></span>
+          : <button type="button" onClick={() => setAsk(true)} aria-label={`Retirer ${r.userId}`} className="text-muted hover:text-danger">retirer</button>)
+          : r.payoutCents > 0 ? formatMoney(r.payoutCents, currency) : ""}
+      </span>
     </li>
   );
 }

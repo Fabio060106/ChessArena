@@ -115,7 +115,7 @@ const ACTIVE_ENTRY = new Set(["locking", "registered", "playing", "winner", "eli
 export class SngError extends Error {
   constructor(readonly code:
     | "NOT_REGISTERING" | "ALREADY_REGISTERED" | "FULL" | "NOT_REGISTERED" | "BUSY"
-    | "INSUFFICIENT_FUNDS" | "INVALID_CONFIG" | "NOT_ENOUGH_PLAYERS" | "NOT_CLUB_MEMBER", message?: string) {
+    | "INSUFFICIENT_FUNDS" | "INVALID_CONFIG" | "NOT_ENOUGH_PLAYERS" | "NOT_CLUB_MEMBER" | "REMOVED_BY_ORGANIZER", message?: string) {
     super(message ?? code);
   }
 }
@@ -273,7 +273,19 @@ export class SitAndGo {
   // ═══════════════════════════════════════════════════════════════════════════
   // Inscriptions
   // ═══════════════════════════════════════════════════════════════════════════
+  /** joueurs retirés par l'organisateur : plus d'inscription possible à ce tournoi */
+  private readonly kicked = new Set<string>();
+
+  /** L'organisateur retire un inscrit avant le départ : remboursé, ne peut plus se réinscrire. */
+  async kick(userId: string): Promise<void> {
+    if (this.status !== "registering") throw new SngError("NOT_REGISTERING");
+    await this.unregister(userId);
+    this.kicked.add(userId);
+    this.audit("kick", { userId });
+  }
+
   async register(userId: string, rating: number, team: string | null = null): Promise<void> {
+    if (this.kicked.has(userId)) throw new SngError("REMOVED_BY_ORGANIZER");
     if (this.cfg.teamBattle && (!team || !this.cfg.teamBattle.teams.some((t) => t.slug === team))) throw new SngError("NOT_CLUB_MEMBER");
     // arena : on peut arriver en cours de route (jusqu'à 1 minute de la fin)
     const lateArena = this.cfg.system === "arena" && this.status === "running" && this.arenaEndAt !== null && this.now() < this.arenaEndAt - 60_000;
