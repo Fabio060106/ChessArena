@@ -12,6 +12,8 @@ export const metadata: Metadata = {
   openGraph: { type: "website", locale: "fr_FR", url: SITE_URL, siteName: SITE_NAME, title: `${SITE_NAME} — échecs en ligne`, description: SITE_DESCRIPTION },
   twitter: { card: "summary", title: `${SITE_NAME} — échecs en ligne`, description: SITE_DESCRIPTION },
   robots: { index: true, follow: true },
+  // installée sur l'écran d'accueil (iPhone) : plein écran, barre d'état noire (le contenu ne passe pas dessous)
+  appleWebApp: { capable: true, title: SITE_NAME, statusBarStyle: "black" },
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#0B0E14" };
