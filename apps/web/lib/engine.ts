@@ -178,6 +178,11 @@ export class Engine {
     this.w.postMessage(`go depth ${job.depth}`);
   }
 
+  /** Force de jeu (0 = très faible … 20 = maximum) : pour jouer contre l'ordinateur. */
+  setSkill(level: number) {
+    void this.ready.then(() => this.w.postMessage(`setoption name Skill Level value ${Math.max(0, Math.min(20, Math.round(level)))}`));
+  }
+
   stop() { if (this.next) { this.next.resolve(null); this.next = null; } if (this.cur) this.w.postMessage("stop"); }
   terminate() { this.stop(); this.w.terminate(); }
 }

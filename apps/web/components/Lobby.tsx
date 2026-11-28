@@ -91,6 +91,7 @@ export function Lobby({ queued, queuedStake, defaultStake, stats = {}, disabled,
           mise <b className="text-text">{stakeLabel(queuedStake ?? 0)}</b>. Ton adversaire doit choisir exactement la même chose.
         </p>
       )}
+      {queued && <LongWait onLeave={onLeave} />}
       {queued && elsewhere.length > 0 && (
         <div role="alert" className="rounded-lg border border-gold/50 bg-gold/10 p-2.5 text-sm">
           {elsewhere.map((x) => (
@@ -105,5 +106,19 @@ export function Lobby({ queued, queuedStake, defaultStake, stats = {}, disabled,
         </div>
       )}
     </section>
+  );
+}
+
+/** Après 25 s d'attente sans adversaire : proposer l'ordinateur (en quittant la file, pour ne pas rater une partie). */
+function LongWait({ onLeave }: { onLeave: () => void }) {
+  const [long, setLong] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setLong(true), 25_000); return () => clearTimeout(t); }, []);
+  if (!long) return null;
+  return (
+    <p className="rounded-lg border border-line bg-surface-2 p-2.5 text-sm">
+      Personne pour l'instant ?{" "}
+      <a href="/ordinateur" onClick={onLeave} className="font-semibold text-neon underline">Joue contre l'ordinateur</a> en attendant,
+      ou <a href="/amis" onClick={onLeave} className="font-semibold text-neon underline">défie un ami par lien</a>.
+    </p>
   );
 }

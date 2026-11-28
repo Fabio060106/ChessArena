@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 
 const LINKS = [
   ["/play", "Jouer"],
+  ["/ordinateur", "Contre l'ordi"],
   ["/tournois", "Tournois"],
   ["/clubs", "Clubs"],
   ["/analyse", "Analyse"],
