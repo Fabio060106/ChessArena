@@ -86,7 +86,7 @@ function Live({ initial, userId }: { initial: SngSnapshot; userId: string }) {
         </a>
       )}
       <TournamentHUD userId={userId} current={t} lobby={[]} busy={sng.busy} error={sng.error}
-        onRegister={() => {}} onUnregister={sng.unregister} onCreate={() => {}} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} invite={null} pageLink={false} />
+        onRegister={() => {}} onUnregister={sng.unregister} onCreate={() => {}} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} onWithdraw={sng.withdraw} invite={null} pageLink={false} />
     </>
   );
 }

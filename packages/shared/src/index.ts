@@ -207,6 +207,8 @@ export interface SngPlayerView {
   sonnebornBerger?: number;
   /** bataille de clubs : club défendu (adresse) */
   team?: string;
+  /** suisse : retiré (absent ou parti) — plus apparié, garde ses points */
+  withdrawn?: boolean;
   /** arena : série en cours (la prochaine victoire vaut double), pause, points marqués partie par partie */
   fire?: boolean;
   paused?: boolean;
@@ -704,6 +706,8 @@ export interface ClientToServerEvents {
   "sng:unwatch": (p: { tournamentId: string }) => void;
   /** le créateur lance son tournoi sans attendre qu'il soit complet (≥ 3 inscrits ; exempts au 1er tour) */
   "sng:start": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
+  /** quitter un tournoi en cours (suisse : plus apparié ; arena : pause définitive) */
+  "sng:withdraw": (p: { tournamentId: string }, ack: (r: SngAck) => void) => void;
   /** arena : se mettre en pause (plus de nouvel adversaire) ou reprendre */
   "sng:pause": (p: { tournamentId: string; paused: boolean }, ack: (r: SngAck) => void) => void;
   "chat:send": (p: { gameId: string; text: string }, ack?: (r: ChatAck) => void) => void;

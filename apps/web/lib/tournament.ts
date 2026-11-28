@@ -178,7 +178,7 @@ export function fmtPoints(p: number): string {
   return p % 1 ? `${Math.floor(p)},5` : String(p);
 }
 
-export interface SwissRow { userId: string; rating: number; rank: number; points: number; buchholz: number; sb: number; payoutCents: Cents; playing: boolean }
+export interface SwissRow { userId: string; rating: number; rank: number; points: number; buchholz: number; sb: number; payoutCents: Cents; playing: boolean; withdrawn: boolean }
 
 /** Classement suisse : rang final s'il est connu, sinon points, Buchholz, Sonneborn-Berger, tête de série. */
 export function swissRows(s: SngSnapshot): SwissRow[] {
@@ -189,7 +189,7 @@ export function swissRows(s: SngSnapshot): SwissRow[] {
     || (b.sonnebornBerger ?? 0) - (a.sonnebornBerger ?? 0) || (a.seed ?? 999) - (b.seed ?? 999) || b.rating - a.rating);
   return sorted.map((p, i) => ({
     userId: p.userId, rating: p.rating, rank: p.finalRank ?? i + 1, points: p.points ?? 0, buchholz: p.buchholz ?? 0,
-    sb: p.sonnebornBerger ?? 0, payoutCents: p.payoutCents, playing: inGame.has(p.userId),
+    sb: p.sonnebornBerger ?? 0, payoutCents: p.payoutCents, playing: inGame.has(p.userId), withdrawn: !!p.withdrawn,
   }));
 }
 

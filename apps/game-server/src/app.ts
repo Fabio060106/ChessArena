@@ -768,6 +768,19 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       }
     }));
 
+    socket.on("sng:withdraw", guard(socket, async (raw: unknown, ack: unknown) => {
+      const reply = sngReply(ack);
+      const tid = (raw as { tournamentId?: unknown } | null)?.tournamentId;
+      const t = typeof tid === "string" ? tournaments.get(tid) : undefined;
+      if (!t) return reply({ ok: false, code: "UNKNOWN_TOURNAMENT" });
+      try {
+        await t.withdraw(user.userId);
+        reply({ ok: true, snapshot: t.snapshot() });
+      } catch (e) {
+        reply(customError(e));
+      }
+    }));
+
     // suivre un tournoi sans y jouer (page du tournoi : club, spectateurs)
     socket.on("sng:watch", guard(socket, (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);

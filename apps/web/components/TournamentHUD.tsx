@@ -53,6 +53,8 @@ interface Props {
   pageLink?: boolean;
   /** arena : pause / reprise */
   onPause?: (tournamentId: string, paused: boolean) => void;
+  /** quitter un tournoi en cours (suisse, arena) */
+  onWithdraw?: (tournamentId: string) => void;
 }
 
 /** Lien d'invitation d'un tournoi : sa page publique (aperçu riche quand on le partage), d'où l'on s'inscrit en un clic. */
@@ -143,6 +145,13 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
         <summary className="cursor-pointer font-semibold text-text">Comment se joue le tournoi ?</summary>
         <ul className="mt-2 list-disc space-y-1 pl-4">{(isArena(t) ? ARENA_RULES : isSwiss(t) ? SWISS_RULES : KNOCKOUT_RULES).map((r) => <li key={r}>{r}</li>)}</ul>
       </details>
+
+      {t.status === "running" && t.system && t.system !== "ko" && me?.status === "playing" && !me.withdrawn && p.onWithdraw && (
+        <WithdrawButton busy={p.busy === `withdraw:${t.id}`} arena={isArena(t)} onConfirm={() => p.onWithdraw!(t.id)} />
+      )}
+      {t.status === "running" && me?.withdrawn && isSwiss(t) && (
+        <p role="status" className="rounded-lg border border-line px-3 py-2 text-sm text-muted">Tu as quitté le tournoi (ou tu as été retiré après deux forfaits) : tu gardes tes points, plus d'appariement.</p>
+      )}
 
       {/* Classement live */}
       {t.teamBattle && <TeamBattle t={t} userId={p.userId} />}
@@ -546,7 +555,7 @@ function SwissTable({ t, userId }: { t: SngSnapshot; userId: string }) {
           {rows.map((r) => (
             <tr key={r.userId} className={r.userId === userId ? "bg-neon/10" : ""}>
               <td className="tabular py-1 pl-1 text-muted">{r.rank === 1 && t.status === "finished" ? "🏆" : r.rank}</td>
-              <td className="max-w-0 truncate py-1">{r.userId}<span className="tabular ml-1.5 text-xs text-muted">{r.rating}</span>{r.playing && <span className="ml-1.5 text-xs text-neon">●</span>}</td>
+              <td className="max-w-0 truncate py-1">{r.userId}<span className="tabular ml-1.5 text-xs text-muted">{r.rating}</span>{r.playing && <span className="ml-1.5 text-xs text-neon">●</span>}{r.withdrawn && <span className="ml-1.5 text-xs text-muted">retiré</span>}</td>
               <td className="tabular py-1 text-right font-semibold">{fmtPoints(r.points)}</td>
               <td className="tabular py-1 text-right text-xs text-muted">{fmtPoints(r.buchholz)}</td>
               {rows.some((x) => x.payoutCents > 0) && <td className="tabular py-1 pr-1 text-right text-xs text-gold">{r.payoutCents > 0 ? formatMoney(r.payoutCents, t.currency) : ""}</td>}
@@ -647,7 +656,7 @@ function ArenaMe({ t, userId, busy, onPause }: { t: SngSnapshot; userId: string;
       <span className="min-w-0 flex-1">
         {over ? "Temps écoulé : plus de nouvelle partie, classement final dès la fin des parties en cours."
           : inGame ? (me.fire ? "🔥 En série : ta prochaine victoire vaut 4 points !" : "Partie en cours.")
-          : me.paused ? "En pause : tu ne reçois plus d'adversaire."
+          : me.paused ? (me.withdrawn ? "Tu as quitté l'arena : plus d'adversaire (Reprendre pour revenir)." : "En pause : tu ne reçois plus d'adversaire.")
           : "En attente d'un adversaire… (quelques secondes)"}
       </span>
       {!over && (
@@ -742,5 +751,19 @@ function TeamBattle({ t, userId }: { t: SngSnapshot; userId: string }) {
         ))}
       </ol>
     </div>
+  );
+}
+
+/** Quitter un tournoi en cours, avec confirmation. */
+function WithdrawButton({ busy, arena, onConfirm }: { busy: boolean; arena: boolean; onConfirm: () => void }) {
+  const [ask, setAsk] = useState(false);
+  return ask ? (
+    <div className="flex items-center gap-2 rounded-lg border border-danger/40 bg-danger/5 px-3 py-2 text-sm">
+      <span className="min-w-0 flex-1">{arena ? "Quitter l'arena ? Plus aucun adversaire ; tes points restent." : "Quitter le tournoi ? Tu ne seras plus apparié ; tes points restent."}</span>
+      <button type="button" disabled={busy} onClick={onConfirm} className="shrink-0 rounded-md border border-danger/60 px-2.5 py-1 text-xs font-semibold text-danger">{busy ? "…" : "Quitter"}</button>
+      <button type="button" onClick={() => setAsk(false)} className="shrink-0 text-xs text-muted">Rester</button>
+    </div>
+  ) : (
+    <button type="button" onClick={() => setAsk(true)} className="self-end text-xs text-muted underline-offset-2 hover:text-danger hover:underline">Quitter le tournoi</button>
   );
 }

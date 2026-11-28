@@ -138,6 +138,9 @@ interface Entry {
   paused?: boolean;
   /** bataille de clubs : club défendu */
   team?: string | null;
+  /** suisse : retiré (plus apparié) ; forfaits consécutifs (2 = retrait automatique) */
+  withdrawn?: boolean;
+  forfeits?: number;
 }
 
 interface GameRec {
@@ -257,7 +260,10 @@ export class SitAndGo {
   /** Joueurs "actifs" (inscrits ou en cours d'inscription, ou en lice). */
   hasPlayer(userId: string): boolean {
     const e = this.entries.get(userId);
-    return !!e && ["locking", "registered", "playing"].includes(e.status);
+    if (!e || !["locking", "registered", "playing"].includes(e.status)) return false;
+    // retiré d'un tournoi en cours : libre, sauf s'il finit encore une partie du tournoi
+    if (e.withdrawn) return this.rounds.flat().some((m) => m.status === "playing" && (m.p1 === userId || m.p2 === userId));
+    return true;
   }
 
   get registeredCount(): number {
@@ -496,6 +502,11 @@ export class SitAndGo {
       m.result = g.aborted ? (g.abortedBy ? (g.abortedBy === "w" ? "0-1" : "1-0") : null) : g.result;
       m.winner = m.result === "1-0" ? rec.white : m.result === "0-1" ? rec.black : null;
       m.status = "done";
+      // premier coup non joué : le joueur est sans doute absent, on le met en pause (il reprend d'un clic)
+      if (g.aborted && g.abortedBy) {
+        const absent = this.entries.get(colorPlayer(g.abortedBy));
+        if (absent) { absent.paused = true; this.audit("arena_auto_pause", { userId: absent.userId }); }
+      }
       this.audit("arena_game", { slot: m.slot, result: m.result, aborted: g.aborted, game: rec.gameId });
       this.changed();
       if (this.arenaEndAt !== null && this.now() >= this.arenaEndAt) await this.arenaTick();
@@ -506,7 +517,16 @@ export class SitAndGo {
       if (g.aborted) {
         if (!g.abortedBy) { this.changed(); return this.startGame(m, rec.kind); } // personne en cause : on rejoue
         result = g.abortedBy === "w" ? "0-1" : "1-0"; // forfait du responsable
-      } else result = g.result;
+        // deux forfaits de suite : joueur absent, retiré des appariements (il garde ses points)
+        const absent = this.entries.get(colorPlayer(g.abortedBy));
+        if (absent) {
+          absent.forfeits = (absent.forfeits ?? 0) + 1;
+          if (absent.forfeits >= 2 && !absent.withdrawn) { absent.withdrawn = true; this.audit("swiss_auto_withdraw", { userId: absent.userId }); }
+        }
+      } else {
+        result = g.result;
+        for (const u of [rec.white, rec.black]) { const e = this.entries.get(u); if (e) e.forfeits = 0; }
+      }
       m.result = result;
       m.winner = result === "1-0" ? rec.white : result === "0-1" ? rec.black : null;
       m.status = "done";
@@ -616,11 +636,26 @@ export class SitAndGo {
     }
   }
 
+  /**
+   * Quitter un tournoi en cours : suisse → plus apparié (la partie en cours se joue, les points restent) ;
+   * arena → pause définitive. Les gains éventuels restent dus au classement final.
+   */
+  async withdraw(userId: string): Promise<void> {
+    const e = this.entries.get(userId);
+    if (this.status !== "running" || !e || e.status !== "playing" || this.cfg.system === "ko") throw new SngError("NOT_REGISTERED");
+    if (this.cfg.system === "arena") e.paused = true;
+    e.withdrawn = true;
+    this.audit("withdraw", { userId });
+    this.changed();
+    if (this.cfg.system === "swiss") await this.advance();
+  }
+
   /** Pause (plus de nouvel adversaire, la partie en cours continue) ou reprise. */
   async setPaused(userId: string, paused: boolean): Promise<void> {
     const e = this.entries.get(userId);
     if (this.cfg.system !== "arena" || !e || e.status !== "playing" || this.status !== "running") throw new SngError("NOT_REGISTERED");
     e.paused = paused;
+    if (!paused) e.withdrawn = false;
     this.audit(paused ? "arena_pause" : "arena_resume", { userId });
     this.changed();
   }
@@ -718,7 +753,7 @@ export class SitAndGo {
     }
     this.nextRoundAt = null;
     const table = new Map(this.swissTable().map((r) => [r.id, r]));
-    const live = [...this.entries.values()].filter((e) => e.seed !== null);
+    const live = [...this.entries.values()].filter((e) => e.seed !== null && !e.withdrawn);
     const pr = pairRound(live.map((e) => ({
       id: e.userId, seed: e.seed!, pts2: table.get(e.userId)?.pts2 ?? 0, opponents: e.opponents, colors: e.colors, hadBye: e.hadBye,
     })), this.random);
@@ -851,6 +886,7 @@ export class SitAndGo {
           userId: e.userId, rating: e.rating, seed: e.seed, status: e.status,
           eliminatedRound: e.eliminatedRound, finalRank: e.finalRank, payoutCents: e.payoutCents,
           ...(e.team ? { team: e.team } : {}),
+          ...(e.withdrawn ? { withdrawn: true } : {}),
           ...(arena && e.seed !== null ? (() => {
             const sc = aScores!.get(e.userId);
             return { points: sc?.score ?? 0, fire: sc?.fire ?? false, sheet: sc?.sheet ?? [], ...(e.paused ? { paused: true } : {}) };

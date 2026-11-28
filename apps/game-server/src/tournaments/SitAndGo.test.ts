@@ -600,3 +600,49 @@ describe("SitAndGo — bataille de clubs", () => {
     expect(() => setup(8, { arena: 30, teams: ["a"] })).toThrow(SngError);
   });
 });
+
+describe("SitAndGo — absents et départs", () => {
+  it("suisse : deux forfaits de suite → retiré des appariements (garde ses points) ; départ volontaire", async () => {
+    const t = setup(8, { swiss: 4, buyIn: 0 });
+    await t.fill(5); // 5 joueurs : 4 rondes possibles
+    await t.sng.startNow();
+    // u? absent : il ne joue jamais son premier coup
+    const absent = "u2"; // bien classé : jamais exempt, il a bien des parties à rater
+    const play = async () => {
+      const done = new Set(t.sng.snapshot().rounds.flat().flatMap((m) => m.games.filter((g) => g.result).map((g) => g.gameId)));
+      for (const r of t.started.filter((x) => !done.has(x.gameId))) {
+        if (r.white.userId === absent || r.black.userId === absent) await t.finish(r, "1/2-1/2", { aborted: true, abortedBy: r.white.userId === absent ? "w" : "b", termination: "aborted" });
+        else await t.finish(r, "1-0");
+      }
+    };
+    await play(); // ronde 1 : forfait n°1
+    expect(t.sng.snapshot().players.find((p) => p.userId === absent)!.withdrawn).toBeUndefined();
+    await play(); // ronde 2 : forfait n°2 → retiré
+    let s = t.sng.snapshot();
+    expect(s.players.find((p) => p.userId === absent)!.withdrawn).toBe(true);
+    expect(s.rounds[2]!.some((m) => m.p1 === absent || m.p2 === absent)).toBe(false); // ronde 3 sans lui
+    expect(s.rounds[2]!.filter((m) => m.p2).length).toBe(2); // 4 joueurs restants : 2 parties
+    expect(t.sng.hasPlayer(absent)).toBe(false); // libre pour jouer ailleurs
+    // départ volontaire d'un autre joueur
+    const leaver = "u1";
+    await t.sng.withdraw(leaver);
+    await play();
+    s = t.sng.snapshot();
+    expect(s.rounds[3]!.some((m) => m.p1 === leaver || m.p2 === leaver)).toBe(false);
+    await play();
+    expect(t.sng.snapshot().status).toBe("finished");
+    expect(t.sng.snapshot().players.every((p) => p.finalRank)).toBe(true); // les retirés restent classés
+  });
+
+  it("arena : premier coup non joué → mis en pause automatiquement (il reprend d'un clic)", async () => {
+    const clock = { t: Date.parse("2026-11-28T20:00:00Z") };
+    const t = setup(8, { arena: 30, clock, buyIn: 0 });
+    await t.fill(4);
+    await t.sng.startNow();
+    const r = t.started[0]!;
+    await t.finish(r, "1/2-1/2", { aborted: true, abortedBy: "w", termination: "aborted" });
+    expect(t.sng.snapshot().players.find((p) => p.userId === r.white.userId)!.paused).toBe(true);
+    await t.sng.setPaused(r.white.userId, false);
+    expect(t.sng.snapshot().players.find((p) => p.userId === r.white.userId)!.paused).toBeUndefined();
+  });
+});

@@ -106,5 +106,10 @@ export function useTournament(socket: ArenaSocket, userId: string, inviteId: str
     setError(null);
     socket.emit("sng:pause", { tournamentId, paused }, handle(`pause:${tournamentId}`));
   }, [socket]);
-  return { lobby, current, invite, register, unregister, create, join, start, pause, busy, error };
+  const withdraw = useCallback((tournamentId: string) => {
+    setBusy(`withdraw:${tournamentId}`);
+    setError(null);
+    socket.emit("sng:withdraw", { tournamentId }, handle(`withdraw:${tournamentId}`));
+  }, [socket]);
+  return { lobby, current, invite, register, unregister, create, join, start, pause, withdraw, busy, error };
 }

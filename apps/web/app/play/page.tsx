@@ -402,7 +402,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
               ) : <p className="px-1 text-sm text-muted">Le chat s'ouvre pendant une partie.</p>
             ) : (
               <TournamentHUD userId={userId} current={sng.current} lobby={sng.lobby} busy={sng.busy} error={sng.error}
-                onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} invite={sng.invite} />
+                onRegister={sng.register} onUnregister={sng.unregister} onCreate={sng.create} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} onWithdraw={sng.withdraw} invite={sng.invite} />
             )}
           </div>
 
