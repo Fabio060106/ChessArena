@@ -2,6 +2,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { SEASON_PARTICIPATION, SEASON_POINTS, type ClubDetail, type ClubPost, type ClubSeason, type TournamentsPageResponse } from "@chessarena/shared";
+import { WhatsAppButton } from "../../../components/WhatsAppButton";
 import { PageHeader } from "../../../components/PageHeader";
 import { TournamentCardView } from "../../../components/TournamentCard";
 import { useMe } from "../../../hooks/useMe";
@@ -63,6 +64,7 @@ function Club() {
                     {member && <a href={`/play?onglet=tournoi&club=${club.slug}`} className="neon-btn rounded-xl px-4 py-2.5 font-semibold">＋ Tournoi du club</a>}
                     <button type="button" onClick={() => { void navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); }}
                       className="rounded-xl border border-neon/50 px-4 py-2.5 text-sm font-semibold text-neon">{copied ? "Lien copié ✓" : "Inviter : copier le lien"}</button>
+                    <WhatsAppButton text={`Rejoins le club d'échecs « ${club.name} » sur ChessAurum : ${link}`} className="!rounded-xl !px-4 !py-2.5" />
                     {member && club.createdBy !== me?.userId && <button type="button" disabled={busy} onClick={() => act("leave")} className="rounded-xl border border-line px-3 py-2.5 text-xs text-muted">Quitter</button>}
                   </div>
                   {member && <p className="mt-2 text-xs text-win">Tu es membre ✓</p>}

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { TimeControlId } from "@chessarena/shared";
 import { cancelLink, createLink, useChallenges } from "../lib/challenges";
+import { WhatsAppButton } from "./WhatsAppButton";
 import { TC_LABEL, TC_ORDER } from "../lib/social";
 
 export const linkUrl = (code: string) => `${typeof window === "undefined" ? "" : window.location.origin}/defi/${code}`;
@@ -47,6 +48,7 @@ export function LinkChallenge({ compact = false }: { compact?: boolean }) {
         <p className="tabular truncate rounded-lg bg-surface-2 px-2.5 py-2 text-xs">{linkUrl(link.code)}</p>
         <div className="flex gap-2">
           <button type="button" onClick={() => void share(link.code)} className="neon-btn flex-1 rounded-lg px-3 py-2 text-sm font-semibold">{copied ? "Lien copié ✓" : "Envoyer le lien"}</button>
+          <WhatsAppButton text={`Je te défie aux échecs (${TC_LABEL[link.timeControl]}) : ${linkUrl(link.code)}`} className="!py-2" />
           <button type="button" onClick={cancelLink} className="rounded-lg border border-line px-3 py-2 text-sm text-muted hover:text-text">Annuler</button>
         </div>
         <p className="text-xs text-muted">En attente d'un adversaire · valable encore {left} min. La partie commence dès qu'il accepte : garde le site ouvert.</p>
