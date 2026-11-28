@@ -97,7 +97,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
         </div>
         <StatusChip t={t} registered={registered} />
       </header>
-      {t.club && <a href={`/club/${t.club.slug}`} className="-mt-2 text-xs text-gold hover:underline">Club : {t.club.name} →</a>}
+      {t.club && <a href={`/club/${t.club.slug}`} className="-mt-2 text-xs text-gold hover:underline">Club : {t.club.name}{t.membersOnly ? " · réservé aux membres" : ""} →</a>}
       {(t.status === "running" || t.status === "finished") && t.rounds.flat().some((m) => m.games.some((g) => g.result)) && (
         <a href={`/api/tournaments/${t.id}/pgn`} download className="-mt-1 text-xs text-muted hover:text-text">⬇ Télécharger les parties (PGN, pour ChessBase)</a>
       )}
@@ -339,6 +339,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   // clubs dont je suis membre : tournoi du club (présélectionné depuis la page du club : ?club=…)
   const [myClubs, setMyClubs] = useState<ClubSummary[]>([]);
   const [club, setClub] = useState("");
+  const [membersOnly, setMembersOnly] = useState(false);
   // bataille de clubs (arena) : clubs engagés (les miens cochés + adresses d'autres clubs) et joueurs qui comptent
   const [battle, setBattle] = useState(false);
   const [teams, setTeams] = useState<string[]>([]);
@@ -364,7 +365,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   }
   const pool = Math.floor(entry * size * 0.9);
   return (
-    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(system === "arena" ? { arenaMinutes: minutes } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString(), ...(weekly ? { repeatWeekly: true } : {}) } : {}), ...(club && !(system === "arena" && battle) ? { clubSlug: club } : {}), ...(system === "arena" && battle ? { teamClubs: teams, teamLeaders: leaders } : {}) }); }}>
+    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(system === "arena" ? { arenaMinutes: minutes } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString(), ...(weekly ? { repeatWeekly: true } : {}) } : {}), ...(club && !(system === "arena" && battle) ? { clubSlug: club, ...(membersOnly ? { membersOnly: true } : {}) } : {}), ...(system === "arena" && battle ? { teamClubs: teams, teamLeaders: leaders } : {}) }); }}>
       <div className="flex items-center justify-between">
         <h3 className="font-display text-base font-bold">Nouveau tournoi</h3>
         <button type="button" onClick={() => setOpen(false)} className="text-xs text-muted hover:text-text">Fermer</button>
@@ -382,6 +383,12 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
             <option value="">Aucun (tournoi personnel)</option>
             {myClubs.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
           </select>
+          {club && (
+            <span className="mt-1 flex items-center gap-2 text-sm text-text">
+              <input type="checkbox" checked={membersOnly} onChange={(e) => setMembersOnly(e.target.checked)} className="size-4" aria-label="Réservé aux membres du club" />
+              Réservé aux membres du club <span className="text-xs text-muted">(sinon, invités bienvenus)</span>
+            </span>
+          )}
         </label>
       )}
       <div className="flex flex-col gap-1 text-xs text-muted">

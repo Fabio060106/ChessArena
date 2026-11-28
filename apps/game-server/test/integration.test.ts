@@ -357,6 +357,16 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     const pub = await fetch(`${url}/public/clubs/${club.slug}`);
     expect(await pub.json()).toEqual({ name: "Les Fous du Roi", description: "Club du mardi", memberCount: 2, createdBy: "cl-owner" });
     if (t.ok) owner.emit("sng:unregister", { tournamentId: t.snapshot.id }, () => {});
+    // réservé aux membres : un inconnu ne peut pas s'inscrire, un membre si
+    const mate = client({ token: token({ sub: "cl-mate" }) });
+    await connected(mate);
+    const priv = await sng(owner, "sng:create", { size: 8, timeControl: "blitz_3_0", buyInCents: 0, clubSlug: club.slug, membersOnly: true } as never);
+    expect(priv).toMatchObject({ ok: true, snapshot: { membersOnly: true } });
+    if (priv.ok) {
+      expect(await sng(outsider, "sng:join", { tournamentId: priv.snapshot.id })).toMatchObject({ ok: false, code: "NOT_CLUB_MEMBER" });
+      expect((await sng(mate, "sng:join", { tournamentId: priv.snapshot.id })).ok).toBe(true);
+      for (const c of [owner, mate]) c.emit("sng:unregister", { tournamentId: priv.snapshot.id }, () => {});
+    }
     await new Promise((r) => setTimeout(r, 3_000)); // l'API limite les requêtes par IP : on rend les jetons aux tests suivants
   });
 

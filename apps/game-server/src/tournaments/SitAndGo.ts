@@ -76,6 +76,8 @@ export interface SitAndGoConfig {
   repeatWeekly?: boolean;
   /** tournoi d'un club */
   club?: ClubRef | null;
+  /** réservé aux membres du club (contrôlé à l'inscription par le serveur) */
+  membersOnly?: boolean;
   /** bataille de clubs (arena) */
   teamBattle?: { leaders: number; teams: ClubRef[] } | null;
 }
@@ -217,7 +219,7 @@ export class SitAndGo {
     if (cfg.system === "arena" && !(ARENA_MINUTES as readonly number[]).includes(cfg.arenaMinutes ?? 0)) throw new SngError("INVALID_CONFIG", "durée d'arena");
     if (swiss && cfg.swissRounds && (!Number.isInteger(cfg.swissRounds) || cfg.swissRounds < 1 || cfg.swissRounds > SWISS_MAX_ROUNDS)) throw new SngError("INVALID_CONFIG", "rondes");
     this.id = cfg.id;
-    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, startsAt: null, createdAt: "", arenaMinutes: 0, repeatWeekly: false, club: null, teamBattle: null, ...cfg };
+    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, startsAt: null, createdAt: "", arenaMinutes: 0, repeatWeekly: false, club: null, teamBattle: null, membersOnly: false, ...cfg };
     this.ports = ports;
     this.now = ports.now ?? (() => Date.now());
     this.random = ports.random ?? Math.random;
@@ -963,6 +965,7 @@ export class SitAndGo {
       ...(this.cfg.startsAt ? { startsAt: this.cfg.startsAt } : {}),
       ...(this.cfg.repeatWeekly ? { repeatWeekly: true } : {}),
       ...(this.cfg.club ? { club: this.cfg.club } : {}),
+      ...(this.cfg.club && this.cfg.membersOnly ? { membersOnly: true } : {}),
       ...(this.cfg.teamBattle ? { teamBattle: {
         leaders: this.cfg.teamBattle.leaders,
         teams: teamStandings(aScores ?? new Map(), new Map([...this.entries.values()].filter((e) => e.team && ACTIVE_ENTRY.has(e.status)).map((e) => [e.userId, e.team!])), this.cfg.teamBattle.teams, this.cfg.teamBattle.leaders),

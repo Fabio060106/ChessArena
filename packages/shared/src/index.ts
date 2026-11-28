@@ -243,6 +243,8 @@ export interface SngSnapshot {
   repeatWeekly?: boolean;
   /** tournoi d'un club (affiché sur la page du club) */
   club?: ClubRef;
+  /** tournoi de club réservé à ses membres */
+  membersOnly?: boolean;
   /** bataille de clubs (arena uniquement) : clubs engagés et leurs scores */
   teamBattle?: TeamBattleView;
   /** arena : durée (minutes) et heure de fin (une fois lancé) */
@@ -370,6 +372,8 @@ export interface SngCreatePayload {
   repeatWeekly?: boolean;
   /** tournoi d'un club dont le créateur est membre (adresse du club) */
   clubSlug?: string;
+  /** avec clubSlug : réservé aux membres du club */
+  membersOnly?: boolean;
   /** bataille de clubs (arena) : adresses des clubs engagés (2 à 8) et nombre de joueurs qui comptent par club */
   teamClubs?: string[];
   teamLeaders?: number;

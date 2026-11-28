@@ -668,7 +668,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
     socket.on("sng:create", guard(socket, async (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);
-      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown; arenaMinutes?: unknown; repeatWeekly?: unknown; clubSlug?: unknown; teamClubs?: unknown; teamLeaders?: unknown } | null;
+      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown; arenaMinutes?: unknown; repeatWeekly?: unknown; clubSlug?: unknown; teamClubs?: unknown; teamLeaders?: unknown; membersOnly?: unknown } | null;
       if (!p || typeof p !== "object" || typeof p.timeControl !== "string" || !(p.timeControl in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
       const blocked = canJoinTournament();
       if (blocked) return reply({ ok: false, code: blocked });
@@ -707,6 +707,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
             system: p.system === "swiss" || p.system === "arena" ? p.system : p.system === undefined || p.system === "ko" ? "ko" : ("?" as "ko"),
             arenaMinutes: p.arenaMinutes === undefined ? undefined : (p.arenaMinutes as number),
             repeatWeekly: p.repeatWeekly === undefined ? undefined : (p.repeatWeekly as boolean),
+            membersOnly: p.membersOnly === true,
             rounds: p.rounds === undefined ? undefined : (p.rounds as number),
             startsAt: p.startsAt === undefined ? undefined : (p.startsAt as string),
           },
@@ -729,6 +730,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       const blocked = canJoinTournament();
       if (blocked) return reply({ ok: false, code: blocked });
       const rating = (await repo.getRatings(user.userId))[snap.timeControl].rating;
+      // tournoi de club réservé aux membres
+      if (snap.club && snap.membersOnly && !(await clubs.isMember(snap.club.slug, user.userId).catch(() => false))) return reply({ ok: false, code: "NOT_CLUB_MEMBER" });
       // bataille de clubs : on défend le premier des clubs engagés dont on est membre
       let team: string | null = null;
       if (snap.teamBattle) {
