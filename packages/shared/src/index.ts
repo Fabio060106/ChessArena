@@ -95,6 +95,8 @@ export interface GameStateEvent {
   turn: Color;
   /** horodatage serveur, pour que le client extrapole l'horloge localement */
   serverTs: number;
+  /** Arena : camps passés en « berserk » (moitié du temps, sans incrément, +1 point en cas de victoire) */
+  berserk?: { w: boolean; b: boolean };
 }
 
 export interface GameOverEvent {
@@ -142,7 +144,7 @@ export type ErrorCode =
   | "REAL_MONEY_DISABLED" | "JURISDICTION_BLOCKED" | "KYC_REQUIRED_OR_ACCOUNT_HELD" | "ACCOUNT_SUSPENDED"
   | "BAD_STAKE" | "IN_GAME" | "ALREADY_QUEUED" | "STAKE_LOCK_FAILED"
   | "NO_GAME" | "GAME_OVER" | "NOT_A_PLAYER" | "NOT_YOUR_TURN" | "STALE_PLY" | "BAD_FORMAT"
-  | "ILLEGAL_MOVE" | "FLAGGED" | "IN_TOURNAMENT"
+  | "ILLEGAL_MOVE" | "FLAGGED" | "IN_TOURNAMENT" | "BERSERK_REFUSED"
   | "SELF_EXCLUDED" | "LIMIT_EXCEEDED" | "LIMITS_REQUIRED" | "PLAY_MONEY_ONLY" | "MATCH_FAILED";
 
 export type MoveAck = { ok: true; ply: number } | { ok: false; code: ErrorCode };
@@ -182,6 +184,9 @@ export interface SngGameView {
   kind: SngGameKind;
   result: GameResult | null;
   termination: Termination | null;
+  /** Arena : berserk de chaque camp et nombre de demi-coups joués (le bonus demande 7 coups chacun) */
+  berserk?: { w: boolean; b: boolean };
+  plies?: number;
 }
 
 export interface SngMatchView {
@@ -712,6 +717,8 @@ export interface ClientToServerEvents {
   /** ack optionnel : permet l'UI optimiste avec rollback si le serveur refuse. */
   "game:move": (p: MovePayload, ack?: (r: MoveAck) => void) => void;
   "game:resign": (p: { gameId: string }) => void;
+  /** Arena : berserk avant son premier coup */
+  "game:berserk": (p: { gameId: string }) => void;
   "game:draw": (p: { gameId: string; action: DrawAction }) => void;
   "game:signal": (p: ClientSignalPayload) => void;
   /** synchro d'horloge pour l'AFFICHAGE (offset client↔serveur), sans effet sur l'arbitrage. */

@@ -621,6 +621,15 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       if (p) games.get(p.gameId)?.resign(user.userId);
     }));
 
+    socket.on("game:berserk", guard(socket, (raw: unknown) => {
+      const p = parseGameRef(raw);
+      if (!p) return fail(socket, "BAD_PAYLOAD");
+      const room = games.get(p.gameId);
+      if (!room) return fail(socket, "NO_GAME");
+      const err = room.berserk(user.userId);
+      if (err) fail(socket, err);
+    }));
+
     socket.on("game:signal", guard(socket, (raw: unknown) => {
       const p = parseSignal(raw);
       if (p?.kind === "focus_lost") games.get(p.gameId)?.recordFocusLoss(user.userId);

@@ -7,6 +7,8 @@
  * POINTS : victoire 2, nulle 1, défaite 0. Série : après deux victoires de suite, le joueur est « en feu » 🔥 :
  * ses victoires valent 4 et ses nulles 2, jusqu'à ce qu'il ne gagne pas. Une partie annulée parce qu'un joueur n'a pas
  * joué son premier coup : 0 pour lui (série perdue), rien pour l'autre (ni points, ni série cassée).
+ * BERSERK : un joueur qui a joué avec la moitié de son temps gagne un point de plus en cas de victoire,
+ * si la partie a duré au moins 7 coups chacun (14 demi-coups) : pas de bonus sur une victoire « éclair ».
  *
  * APPARIEMENT : les joueurs libres, triés par score puis Elo, sont appariés avec leur voisin de classement ;
  * on évite de rejouer tout de suite son dernier adversaire quand il y a un autre choix.
@@ -18,7 +20,13 @@ export interface ArenaGame {
   black: string;
   /** « 1-0 », « 0-1 », « 1/2-1/2 », « forfeit-w » / « forfeit-b » (premier coup non joué), null = en cours ou annulée sans responsable */
   result: "1-0" | "0-1" | "1/2-1/2" | "forfeit-w" | "forfeit-b" | null;
+  /** camps en berserk, et nombre de demi-coups joués */
+  berserk?: { w: boolean; b: boolean };
+  plies?: number;
 }
+
+/** Demi-coups minimum pour le bonus de berserk (7 coups chacun). */
+export const BERSERK_MIN_PLIES = 14;
 
 export interface ArenaScore {
   id: string;
@@ -39,9 +47,9 @@ export function arenaScores(ids: readonly string[], games: readonly ArenaGame[])
     if (!s) { s = { id, score: 0, sheet: [], wins: 0, games: 0, fire: false, streak: 0 }; out.set(id, s); }
     return s;
   };
-  const record = (s: ArenaScore & { streak: number }, outcome: 2 | 1 | 0) => {
+  const record = (s: ArenaScore & { streak: number }, outcome: 2 | 1 | 0, bonus = 0) => {
     const onFire = s.streak >= 2;
-    const pts = outcome === 2 ? (onFire ? 4 : 2) : outcome === 1 ? (onFire ? 2 : 1) : 0;
+    const pts = (outcome === 2 ? (onFire ? 4 : 2) + bonus : outcome === 1 ? (onFire ? 2 : 1) : 0);
     s.score += pts; s.sheet.push(pts); s.games++;
     if (outcome === 2) { s.wins++; s.streak++; } else s.streak = 0;
     s.fire = s.streak >= 2;
@@ -54,8 +62,9 @@ export function arenaScores(ids: readonly string[], games: readonly ArenaGame[])
       culprit.sheet.push(0); culprit.games++; culprit.streak = 0; culprit.fire = false;
       continue;
     }
-    record(w, g.result === "1-0" ? 2 : g.result === "0-1" ? 0 : 1);
-    record(b, g.result === "0-1" ? 2 : g.result === "1-0" ? 0 : 1);
+    const long = (g.plies ?? 0) >= BERSERK_MIN_PLIES;
+    record(w, g.result === "1-0" ? 2 : g.result === "0-1" ? 0 : 1, g.berserk?.w && long ? 1 : 0);
+    record(b, g.result === "0-1" ? 2 : g.result === "1-0" ? 0 : 1, g.berserk?.b && long ? 1 : 0);
   }
   for (const s of out.values()) delete (s as { streak?: number }).streak;
   return out;

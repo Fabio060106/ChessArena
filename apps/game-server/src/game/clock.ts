@@ -14,6 +14,8 @@ export class ServerClock {
   static readonly MAX_LAG_COMP_MS = 250;
 
   private remaining: Record<Color, number>;
+  /** berserk : sans incrément */
+  private noIncrement: Record<Color, boolean> = { w: false, b: false };
   private turnStartedAt: number | null = null;
   private running: Color | null = null;
   private flagTimer: ReturnType<typeof setTimeout> | null = null;
@@ -51,7 +53,7 @@ export class ServerClock {
       this.flag(color);
       return null;
     }
-    this.remaining[color] = left + this.tc.incrementMs;
+    this.remaining[color] = left + (this.noIncrement[color] ? 0 : this.tc.incrementMs);
     this.running = color === "w" ? "b" : "w";
     this.turnStartedAt = at;
     this.armFlagTimer();
@@ -64,6 +66,13 @@ export class ServerClock {
     const elapsed = at - this.turnStartedAt;
     const comp = Math.min(Math.max(0, lagMs), ServerClock.MAX_LAG_COMP_MS, elapsed);
     return this.remaining[color] - (elapsed - comp) <= 0;
+  }
+
+  /** Berserk : la moitié du temps initial, plus d'incrément (seulement avant que ce camp ait joué). */
+  halve(color: Color): void {
+    this.remaining[color] = Math.floor(this.tc.initialMs / 2);
+    this.noIncrement[color] = true;
+    if (this.running === color) this.armFlagTimer();
   }
 
   /** Temps restants à l'instant présent (le camp au trait est décompté en direct). */

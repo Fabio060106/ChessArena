@@ -278,6 +278,7 @@ export const ARENA_RULES = [
   "Arena : pendant toute la durée du tournoi, tu reçois un nouvel adversaire dès que ta partie est finie. Joue autant de parties que tu veux.",
   "Victoire 2 points, nulle 1, défaite 0.",
   "Série 🔥 : après deux victoires de suite, tes victoires valent 4 points et tes nulles 2, jusqu'à ce que tu ne gagnes pas.",
+  "Berserk ⚡ : avant ton premier coup, tu peux sacrifier la moitié de ton temps (et l'incrément) ; si tu gagnes, +1 point (partie d'au moins 7 coups).",
   "Tu peux te mettre en pause à tout moment (plus de nouvel adversaire), puis reprendre. On peut aussi arriver en cours de route.",
   "À l'heure de fin, plus de nouvelle partie : celles en cours comptent encore. Départage : victoires, puis moins de parties jouées.",
   "45 s pour jouer son premier coup : sinon 0 point et la série s'arrête (l'adversaire ne perd rien).",

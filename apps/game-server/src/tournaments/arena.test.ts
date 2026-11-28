@@ -79,3 +79,16 @@ describe("Arena — bataille de clubs", () => {
     expect(t[0]!.top.map((x) => x.userId)).toEqual(["a1", "a2"]);
   });
 });
+
+describe("Arena — berserk", () => {
+  it("victoire en berserk : +1 point si la partie a duré 7 coups chacun ; rien sur une défaite, une nulle ou une victoire éclair", () => {
+    const s = arenaScores(["a", "b"], [
+      { white: "a", black: "b", result: "1-0", berserk: { w: true, b: false }, plies: 30 }, // 2 + 1
+      { white: "b", black: "a", result: "0-1", berserk: { w: true, b: true }, plies: 9 },  // trop court : 2
+      { white: "a", black: "b", result: "1-0", berserk: { w: true, b: true }, plies: 40 }, // en feu : 4 + 1
+      { white: "b", black: "a", result: "1/2-1/2", berserk: { w: false, b: true }, plies: 60 }, // nulle en feu : 2, pas de bonus
+    ]);
+    expect(s.get("a")!.sheet).toEqual([3, 2, 5, 2]);
+    expect(s.get("b")!.sheet).toEqual([0, 0, 0, 1]); // b berserk et perdant : rien de plus
+  });
+});

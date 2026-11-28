@@ -5,7 +5,7 @@ import { GameRoom, type FinishedGame } from "./GameRoom.js";
 const FIRST_MOVE_MS = 20_000;
 const GRACE_MS = 30_000;
 
-function setup(opts: { tc?: TimeControlId; fen?: string } = {}) {
+function setup(opts: { tc?: TimeControlId; fen?: string; arena?: boolean } = {}) {
   const finished: FinishedGame[] = [];
   const states: GameStateEvent[] = [];
   const presence: PresenceEvent[] = [];
@@ -19,6 +19,7 @@ function setup(opts: { tc?: TimeControlId; fen?: string } = {}) {
     firstMoveTimeoutMs: FIRST_MOVE_MS,
     disconnectGraceMs: GRACE_MS,
     initialFen: opts.fen,
+    tournament: opts.arena ? { tournamentId: "t1", round: 1, slot: 0, kind: "main", arena: true } : null,
     hooks: {
       onState: (s) => states.push(s),
       onMove: (_id, ply, uci, san, chargedMs) => moves.push({ ply, uci, san, chargedMs }),
@@ -345,5 +346,29 @@ describe("GameRoom — nulle par accord", () => {
     expect(room.draw("X", "offer")).toBe("NOT_A_PLAYER");
     room.resign("W");
     expect(room.draw("B", "offer")).toBe("GAME_OVER");
+  });
+});
+
+describe("GameRoom — berserk (Arena)", () => {
+  it("avant son premier coup seulement : moitié du temps, plus d'incrément ; annoncé à tous ; noté en fin de partie", () => {
+    const { room, states, finished, playAll } = setup({ tc: "blitz_3_2", arena: true });
+    expect(room.berserk("X")).toBe("NOT_A_PLAYER");
+    expect(room.berserk("B")).toBeNull(); // les Noirs, avant que les Blancs aient joué
+    expect(states.at(-1)).toMatchObject({ blackMs: 90_000, whiteMs: 180_000, berserk: { w: false, b: true } });
+    expect(room.berserk("B")).toBe("BERSERK_REFUSED"); // une seule fois
+    playAll(["e2e4"]);
+    expect(room.berserk("W")).toBe("BERSERK_REFUSED"); // les Blancs ont déjà joué
+    playAll(["e7e5", "g1f3"]);
+    vi.advanceTimersByTime(5_000);
+    playAll(["b8c6"]); // pas d'incrément pour les Noirs en berserk
+    expect(room.state().blackMs).toBe(85_000);
+    room.resign("W");
+    expect(finished[0]).toMatchObject({ result: "0-1", berserk: { w: false, b: true } });
+  });
+
+  it("refusé hors Arena", () => {
+    const { room } = setup();
+    expect(room.berserk("W")).toBe("BERSERK_REFUSED");
+    expect(room.state().berserk).toBeUndefined();
   });
 });

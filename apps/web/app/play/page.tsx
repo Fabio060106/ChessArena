@@ -84,7 +84,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
     return r.ok ? { token: ((await r.json()) as { token: string }).token } : {};
   }, [userId, flag, dev]);
 
-  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators, queueStats } = useGameSocket(userId, getAuth);
+  const { view, socket, sync, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, berserk, chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators, queueStats } = useGameSocket(userId, getAuth);
   const sng = useTournament(socket, userId, inviteId);
   const tchat = useTournamentChat(socket, sng.current?.id ?? null);
   const [settings, updateSettings] = useSettings();
@@ -166,6 +166,8 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
   const myTurn = isMyTurn(view) && view.premoves.length === 0;
   const mat = useMemo(() => material(fen), [fen]);
   const inTournament = !!sng.current && (sng.current.status === "running" || sng.current.players.some((p) => p.userId === userId && p.status === "registered"));
+  const canBerserk = playing && !browsing && !!view.start?.tournament?.arena && !!view.server && !view.server.berserk?.[me]
+    && (me === "w" ? view.server.ply === 0 : view.server.ply <= 1);
   const lobbyFirst = (view.phase === "idle" || view.phase === "queued" || view.phase === "connecting") && !inTournament;
   const lobby = (
     <Lobby
@@ -187,7 +189,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
 
   const card = (c: Color) => c === opp ? (
     <PlayerCard
-      userId={seat(opp)?.userId ?? "Adversaire"} rating={seat(opp)?.rating} flag={seat(opp)?.flag} profileLink={!!seat(opp)}
+      userId={seat(opp)?.userId ?? "Adversaire"} rating={seat(opp)?.rating} flag={seat(opp)?.flag} profileLink={!!seat(opp)} berserk={!!view.server?.berserk?.[opp]}
       pingMs={view.start ? pingOf(opp) : null} toMove={running === opp} graceMs={graceLeft}
       materialAdvantage={view.start ? materialAdvantage(fen, opp) : 0} captured={view.start ? mat[opp].captured : undefined}
       clock={<ChessClock color={opp} subscribe={subscribe} active={running === opp} initialMs={initialMs} alert={false} />}
@@ -195,7 +197,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
   ) : (
     <PlayerCard
       userId={view.start ? (seat(me)?.userId ?? userId) : userId} rating={seat(me)?.rating} flag={seat(me)?.flag ?? (flag || undefined)}
-      pingMs={pingOf(me)} isMe toMove={running === me}
+      pingMs={pingOf(me)} isMe toMove={running === me} berserk={!!view.server?.berserk?.[me]}
       materialAdvantage={view.start ? materialAdvantage(fen, me) : 0} captured={view.start ? mat[me].captured : undefined}
       clock={<ChessClock color={me} subscribe={subscribe} active={running === me} initialMs={initialMs} alert={settings.timeAlert} />}
     />
@@ -322,6 +324,12 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
             )}
           </div>
           {card(bottom)}
+          {canBerserk && (
+            <button type="button" onClick={berserk} title="Moitié de ton temps, sans incrément ; +1 point si tu gagnes (partie d'au moins 7 coups)"
+              className="mx-auto rounded-full border border-gold/60 bg-gold/10 px-4 py-1.5 text-sm font-semibold text-gold hover:bg-gold/20">
+              ⚡ Berserk : moitié du temps, +1 point si tu gagnes
+            </button>
+          )}
           {(status || (spectators > 0 && view.start)) && (
             <p className="px-2 text-center text-xs text-muted" role="status">
               {status}{spectators > 0 && view.start ? <span className="ml-2 whitespace-nowrap" title="Spectateurs">👁 {spectators} spectateur{spectators > 1 ? "s" : ""}</span> : null}

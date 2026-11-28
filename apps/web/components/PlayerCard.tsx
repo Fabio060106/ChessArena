@@ -20,6 +20,8 @@ interface Props {
   clock: ReactNode;
   /** lien vers le profil du joueur (par défaut /profil/<pseudo>) ; false = pas de lien */
   profileLink?: boolean;
+  /** Arena : joue en berserk (moitié du temps) */
+  berserk?: boolean;
 }
 
 const PING_COLOR: Record<PingQuality, string> = {
@@ -53,6 +55,7 @@ export const PlayerCard = memo(function PlayerCard(p: Props) {
             <a href={`/profil/${encodeURIComponent(p.userId)}`} className="truncate font-semibold text-text hover:text-neon hover:underline" title={`Profil de ${p.userId}`}>{p.userId}</a>
           )}
           {p.isMe && <span className="text-xs text-muted">(vous)</span>}
+          {p.berserk && <span className="shrink-0 rounded bg-gold/15 px-1 text-xs font-semibold text-gold" title="Berserk : moitié du temps, +1 point s'il gagne">⚡</span>}
           {p.rating !== undefined && <span className="tabular text-sm text-muted">{p.rating}</span>}
           {p.captured ? <span className="truncate text-sm leading-none tracking-tight text-muted" aria-label="Pièces prises">{p.captured}</span> : null}
           {p.materialAdvantage ? <span className="tabular text-xs font-semibold text-text">+{p.materialAdvantage}</span> : null}

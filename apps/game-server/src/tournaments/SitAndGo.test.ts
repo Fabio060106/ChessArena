@@ -571,6 +571,18 @@ describe("SitAndGo — Arena", () => {
     expect(t.sng.snapshot().players.reduce((a, x) => a + (x.points ?? 0), 0)).toBe(0);
   });
 
+  it("berserk : la victoire vaut un point de plus, noté dans la partie (et conservé dans l'instantané)", async () => {
+    const clock = { t: Date.parse("2026-11-28T20:00:00Z") };
+    const t = setup(4, { arena: 30, clock, buyIn: 0 });
+    await t.fill(3);
+    await t.sng.startNow();
+    const [g] = live(t);
+    await t.finish(g!, "1-0", { berserk: { w: true, b: false }, moveTimesMs: new Array(20).fill(1000) });
+    const s = t.sng.snapshot();
+    expect(s.players.find((x) => x.userId === g!.white.userId)!.sheet).toEqual([3]);
+    expect(s.rounds[0]![0]!.games[0]).toMatchObject({ berserk: { w: true, b: false }, plies: 20 });
+  });
+
   it("refuse une durée d'arena non proposée", () => {
     expect(() => setup(8, { arena: 17 })).toThrow(SngError);
   });

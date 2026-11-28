@@ -224,6 +224,12 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
     if (id) socket.emit("game:resign", { gameId: id });
   }, [socket]);
 
+  /** Arena : berserk avant son premier coup. */
+  const berserk = useCallback(() => {
+    const id = hot.current.start?.gameId;
+    if (id) socket.emit("game:berserk", { gameId: id });
+  }, [socket]);
+
   /** Nulle : proposer (ou accepter si l'adversaire la propose déjà), accepter, refuser. */
   const draw = useCallback((action: "offer" | "accept" | "decline") => {
     const id = hot.current.start?.gameId;
@@ -261,7 +267,7 @@ export function useGameSocket(userId: string, getAuth: AuthProvider) {
   }), [socket]);
 
   return {
-    view, socket, sync: syncRef.current, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw,
+    view, socket, sync: syncRef.current, localRtt, joinQueue, leaveQueue, playOrPremove, cancelPremoves, resign, draw, berserk,
     chat, sendChat, reportChat, reportCheat, rematch, rematchAction, spectators, queueStats,
   };
 }

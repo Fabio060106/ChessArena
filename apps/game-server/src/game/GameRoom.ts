@@ -33,6 +33,8 @@ export interface FinishedGame {
   rated: boolean;
   /** partie de tournoi (routage du résultat vers le moteur Sit & Go) */
   tournament: TournamentGameRef | null;
+  /** Arena : camps passés en berserk */
+  berserk?: { w: boolean; b: boolean };
 }
 
 export interface TournamentGameRef {
@@ -110,6 +112,7 @@ export class GameRoom {
   /** demi-coup de la dernière proposition de chaque camp (anti-harcèlement) */
   private lastDrawOfferPly: Record<Color, number> = { w: -10, b: -10 };
   private abortTimer: ReturnType<typeof setTimeout> | null = null;
+  private berserkBy: { w: boolean; b: boolean } = { w: false, b: false };
   private graceTimers: Partial<Record<Color, { timer: ReturnType<typeof setTimeout>; deadline: number }>> = {};
 
   constructor(o: GameRoomOptions) {
@@ -179,6 +182,7 @@ export class GameRoom {
     return {
       gameId: this.id, fen: this.chess.fen(), lastMoveUci: this.lastMoveUci, ply: this.ply,
       whiteMs: t.w, blackMs: t.b, turn: this.chess.turn(), serverTs: this.now(),
+      ...(this.berserkBy.w || this.berserkBy.b ? { berserk: { ...this.berserkBy } } : {}),
     };
   }
 
@@ -250,6 +254,22 @@ export class GameRoom {
     if (!c || this.finished) return;
     if (this.ply < ABORT_PLY_THRESHOLD) return this.finish("1/2-1/2", "aborted", c);
     this.finish(c === "w" ? "0-1" : "1-0", "resignation");
+  }
+
+  /**
+   * Berserk (Arena seulement) : avant SON premier coup, le joueur garde la moitié de son temps, sans incrément ;
+   * une victoire lui rapporte un point de plus (si la partie a duré au moins 7 coups chacun).
+   */
+  berserk(userId: string): ErrorCode | null {
+    const c = this.colorOf(userId);
+    if (!c) return "NOT_A_PLAYER";
+    if (this.finished) return "GAME_OVER";
+    const myFirstMoveDone = c === "w" ? this.ply >= 1 : this.ply >= 2;
+    if (!this.tournament?.arena || myFirstMoveDone || this.berserkBy[c]) return "BERSERK_REFUSED";
+    this.berserkBy[c] = true;
+    this.clock.halve(c);
+    this.hooks.onState(this.state());
+    return null;
   }
 
   // ─── Nulle par accord ──────────────────────────────────────────────────────
@@ -382,6 +402,7 @@ export class GameRoom {
       abortedBy: termination === "aborted" ? abortedBy : null,
       rated: this.rated && termination !== "aborted",
       tournament: this.tournament,
+      ...(this.berserkBy.w || this.berserkBy.b ? { berserk: { ...this.berserkBy } } : {}),
     });
   }
 

@@ -154,6 +154,9 @@ interface GameRec {
   kind: SngGameKind;
   result: FinishedGame["result"] | null;
   termination: FinishedGame["termination"] | null;
+  /** Arena : berserk et longueur de la partie (bonus) */
+  berserk?: { w: boolean; b: boolean };
+  plies?: number;
 }
 
 interface Match {
@@ -310,7 +313,8 @@ export class SitAndGo {
     this.lateSeed = Math.max(0, ...[...this.entries.values()].map((e) => e.seed ?? 0));
     const ko = this.cfg.system === "ko";
     this.rounds = s.rounds.map((r) => r.map((m): Match => {
-      const games: GameRec[] = m.games.filter((g) => g.result).map((g) => ({ gameId: g.gameId, white: g.white, black: g.black, kind: g.kind, result: g.result, termination: g.termination }));
+      const games: GameRec[] = m.games.filter((g) => g.result).map((g) => ({ gameId: g.gameId, white: g.white, black: g.black, kind: g.kind, result: g.result, termination: g.termination,
+        ...(g.berserk ? { berserk: g.berserk } : {}), ...(g.plies !== undefined ? { plies: g.plies } : {}) }));
       const done = ko ? m.status === "done" : m.result !== null && m.result !== undefined;
       return { round: m.round, slot: m.slot, p1: m.p1, p2: m.p2, winner: m.winner, status: done ? "done" : "pending", games, result: m.result ?? null };
     }));
@@ -590,6 +594,8 @@ export class SitAndGo {
 
     const colorPlayer = (c: Color) => (c === "w" ? rec.white : rec.black);
     if (this.cfg.system === "arena") {
+      if (g.berserk) rec.berserk = g.berserk;
+      rec.plies = g.moveTimesMs.length;
       // annulée sans responsable : ni points ni série touchés ; premier coup non joué : forfait du responsable
       m.result = g.aborted ? (g.abortedBy ? (g.abortedBy === "w" ? "0-1" : "1-0") : null) : g.result;
       m.winner = m.result === "1-0" ? rec.white : m.result === "0-1" ? rec.black : null;
@@ -686,7 +692,9 @@ export class SitAndGo {
   private arenaGames(): ArenaGame[] {
     return (this.rounds[0] ?? []).map((m) => {
       const forfeit = m.result && m.games.at(-1)?.termination === "aborted";
-      return { white: m.p1!, black: m.p2!, result: !m.result || m.result === "bye" ? null : forfeit ? (m.result === "0-1" ? "forfeit-w" : "forfeit-b") : m.result };
+      const last = m.games.at(-1);
+      return { white: m.p1!, black: m.p2!, result: !m.result || m.result === "bye" ? null : forfeit ? (m.result === "0-1" ? "forfeit-w" : "forfeit-b") : m.result,
+        ...(last?.berserk ? { berserk: last.berserk, plies: last.plies ?? 0 } : {}) };
     });
   }
 
@@ -995,6 +1003,7 @@ export class SitAndGo {
         ...(swiss || arena ? { result: m.result ?? null } : {}),
         games: m.games.filter((g) => g.gameId).map((g): SngGameView => ({
           gameId: g.gameId!, white: g.white, black: g.black, kind: g.kind, result: g.result, termination: g.termination,
+          ...(g.berserk ? { berserk: g.berserk } : {}), ...(g.plies !== undefined ? { plies: g.plies } : {}),
         })),
       }))),
       currentRound: swiss ? this.rounds.length : arena ? (this.rounds.length ? 1 : 0) : this.rounds.findIndex((r) => r.some((m) => m.status !== "done")) + 1,
