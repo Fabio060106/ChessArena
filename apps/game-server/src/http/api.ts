@@ -596,7 +596,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       try { pseudo = decodeURIComponent(ptm[1]!); } catch { throw new HttpError(400, "BAD_PSEUDO"); }
       const p = await need(d.repo).getProfile(pseudo);
       if (!p) throw new HttpError(404, "NOT_FOUND");
-      send(200, { tournaments: await need(d.tournaments).store.listFor(p.userId, 30) });
+      send(200, { tournaments: await need(d.tournaments).store.listFor(p.userId, 100) });
       return true;
     }
 

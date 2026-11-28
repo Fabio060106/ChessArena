@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { ClubSummary, GameHistoryItem, TournamentHistoryItem } from "@chessarena/shared";
+import { isOfficial, type ClubSummary, type GameHistoryItem, type TournamentHistoryItem } from "@chessarena/shared";
+import { trophies } from "../../../lib/tournament";
 import { useParams } from "next/navigation";
 import type { PlayerProfile } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
@@ -150,11 +151,11 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
           <ul className="flex flex-col divide-y divide-line">
             {games.map((g) => (
               <li key={g.gameId} className="flex items-center gap-3 py-2 text-sm">
-                <span className={`w-20 shrink-0 rounded-md px-2 py-1 text-center text-xs font-semibold ${OUTCOME[g.outcome].cls}`}>{OUTCOME[g.outcome].label}</span>
+                <span className={`w-[4.5rem] shrink-0 rounded-md px-1.5 py-1 text-center text-xs font-semibold sm:w-20 sm:px-2 ${OUTCOME[g.outcome].cls}`}>{OUTCOME[g.outcome].label}</span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className={`inline-block size-2.5 rounded-sm border border-line ${g.color === "w" ? "bg-[#E7ECF3]" : "bg-[#1C2233]"}`} aria-label={g.color === "w" ? "Blancs" : "Noirs"} />
-                    <span className="text-muted">contre</span>
+                    <span className="hidden text-muted sm:inline">contre</span>
                     <a href={`/profil/${encodeURIComponent(g.opponent)}`} className="truncate font-semibold hover:underline">{g.opponent}</a>
                     {g.opponentRating !== null && <span className="tabular text-xs text-muted">{g.opponentRating}</span>}
                   </span>
@@ -165,7 +166,7 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
                     {g.ratingAfter >= g.ratingBefore ? "+" : ""}{g.ratingAfter - g.ratingBefore}
                   </span>
                 )}
-                <a href={mine ? `/history?g=${g.gameId}` : `/partie/${g.gameId}`} className="shrink-0 text-xs text-neon hover:underline">{mine ? "Analyser" : "Voir la partie"}</a>
+                <a href={mine ? `/history?g=${g.gameId}` : `/partie/${g.gameId}`} className="shrink-0 text-xs text-neon hover:underline">{mine ? "Analyser" : <>Voir<span className="hidden sm:inline"> la partie</span></>}</a>
               </li>
             ))}
           </ul>
@@ -192,12 +193,43 @@ function Tournaments({ userId }: { userId: string }) {
       .then(async (r) => setList(r.ok ? ((await r.json()) as { tournaments: TournamentHistoryItem[] }).tournaments : []))
       .catch(() => setList([]));
   }, [userId]);
+  const [all, setAll] = useState(false);
   if (!list?.length) return null;
+  const tr = trophies(list);
+  const shown = all ? list : list.slice(0, 10);
   return (
+    <>
+    {tr.gold + tr.silver + tr.bronze > 0 && (
+      <section className="panel relative overflow-hidden p-4" aria-label="Trophées">
+        <div className="pointer-events-none absolute -right-10 -top-10 size-36 rounded-full bg-gold/10 blur-2xl" />
+        <h2 className="mb-2 text-sm font-semibold">Trophées</h2>
+        <div className="flex gap-2">
+          {([["🥇", tr.gold, "victoire"], ["🥈", tr.silver, "2e place"], ["🥉", tr.bronze, "3e place"]] as const).map(([icon, n, label]) => (
+            <div key={icon} className={`flex flex-1 flex-col items-center rounded-lg bg-surface-2 py-2 ${n ? "" : "opacity-40"}`}>
+              <span className="text-2xl" aria-hidden>{icon}</span>
+              <span className="tabular font-display text-xl font-bold">{n}</span>
+              <span className="text-[11px] text-muted">{label}{n > 1 && label === "victoire" ? "s" : ""}</span>
+            </div>
+          ))}
+        </div>
+        {tr.wins.length > 0 && (
+          <ul className="mt-3 flex flex-col gap-1 text-sm">
+            {tr.wins.slice(0, 5).map((x) => (
+              <li key={x.id} className="flex items-center gap-2">
+                <span aria-hidden>🏆</span>
+                <a href={`/tournoi/${x.id}`} className="min-w-0 flex-1 truncate font-semibold hover:underline">{x.name ?? (x.createdBy ? `Tournoi de ${x.createdBy}` : "Tournoi")}</a>
+                {isOfficial(x.createdBy) && <span className="shrink-0 text-[11px] font-semibold text-gold">★ officiel</span>}
+                <span className="shrink-0 text-xs text-muted">{relativeDate(x.finishedAt ?? x.createdAt)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    )}
     <section className="panel p-4" aria-label="Tournois">
       <h2 className="mb-2 text-sm font-semibold">Tournois <span className="font-normal text-muted">({list.length})</span></h2>
       <ul className="flex flex-col divide-y divide-line">
-        {list.map((x) => (
+        {shown.map((x) => (
           <li key={x.id}>
             <a href={`/tournoi/${x.id}`} className="flex items-center gap-3 py-2 text-sm hover:bg-surface-2/50">
               <span className={`tabular w-12 shrink-0 rounded-md px-1.5 py-1 text-center text-xs font-semibold ${x.rank === 1 ? "bg-gold/15 text-gold" : "bg-surface-2"}`}>
@@ -206,7 +238,7 @@ function Tournaments({ userId }: { userId: string }) {
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-semibold">{x.name ?? (x.createdBy ? `Tournoi de ${x.createdBy}` : "Sit & Go")}</span>
                 <span className="block text-xs text-muted">
-                  {x.system === "swiss" ? "Suisse" : "Élimination directe"} · {x.players} joueurs · {TC_LABEL[x.timeControl]} · {STATUS[x.status]} · {relativeDate(x.finishedAt ?? x.createdAt)}
+                  {x.system === "swiss" ? "Suisse" : x.system === "arena" ? "Arena" : "Élimination directe"} · {x.players} joueurs · {TC_LABEL[x.timeControl]} · {STATUS[x.status]} · {relativeDate(x.finishedAt ?? x.createdAt)}
                 </span>
               </span>
               {x.points !== null && x.status !== "cancelled" && <span className="tabular shrink-0 text-xs font-semibold">{fmtPts(x.points)} pt{x.points > 1 ? "s" : ""}</span>}
@@ -214,7 +246,11 @@ function Tournaments({ userId }: { userId: string }) {
           </li>
         ))}
       </ul>
+      {shown.length < list.length && (
+        <button type="button" onClick={() => setAll(true)} className="mt-2 text-sm font-semibold text-neon hover:underline">Voir les {list.length - shown.length} autres</button>
+      )}
     </section>
+    </>
   );
 }
 

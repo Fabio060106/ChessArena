@@ -335,3 +335,17 @@ export function pickOfficial(d: TournamentsPageResponse, now: number): Tournamen
     .sort((a, b) => a.startsAt!.localeCompare(b.startsAt!))[0] ?? null;
 }
 
+
+/** Vitrine des trophées : podiums des tournois terminés d'au moins 3 joueurs ; victoires, de la plus récente à la plus ancienne. */
+export function trophies<T extends { status: string; rank: number | null; players: number; createdBy: string | null; finishedAt: string | null; createdAt: string }>(list: readonly T[]):
+  { gold: number; silver: number; bronze: number; official: number; wins: T[] } {
+  const done = list.filter((x) => x.status === "finished" && x.rank !== null && x.players >= 3);
+  const wins = done.filter((x) => x.rank === 1).sort((a, b) => (b.finishedAt ?? b.createdAt).localeCompare(a.finishedAt ?? a.createdAt));
+  return {
+    gold: wins.length,
+    silver: done.filter((x) => x.rank === 2).length,
+    bronze: done.filter((x) => x.rank === 3).length,
+    official: wins.filter((x) => isOfficial(x.createdBy)).length,
+    wins,
+  };
+}

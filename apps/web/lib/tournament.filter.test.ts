@@ -34,3 +34,13 @@ describe("bandeau du tournoi officiel", () => {
     expect(pickOfficial({ upcoming: [player, far], running: [], finished: [] }, now)).toBeNull();
   });
 });
+
+describe("trophées du profil", () => {
+  it("podiums des tournois terminés (3 joueurs et plus), victoires officielles, plus récentes d'abord", async () => {
+    const { trophies } = await import("./tournament");
+    const t = (id: string, rank: number | null, o: Record<string, unknown> = {}) => ({ id, status: "finished", rank, players: 8, createdBy: "bob", finishedAt: `2026-11-${10 + Number(id.slice(1))}T20:00:00Z`, createdAt: "2026-11-01T00:00:00Z", ...o });
+    const r = trophies([t("t1", 1), t("t2", 2), t("t3", 1, { createdBy: OFFICIAL_CREATOR }), t("t4", 3), t("t5", 1, { status: "cancelled" }), t("t6", 1, { players: 2 }), t("t7", null, { status: "running" })]);
+    expect([r.gold, r.silver, r.bronze, r.official]).toEqual([2, 1, 1, 1]);
+    expect(r.wins.map((x) => x.id)).toEqual(["t3", "t1"]);
+  });
+});
