@@ -17,3 +17,23 @@ describe("tournois programmés : textes", () => {
     expect(defaultStart(new Date(2026, 11, 31, 22, 0))).toBe("2027-01-01T20:00");
   });
 });
+
+import { swissCrosstable } from "./tournament";
+import type { SngSnapshot } from "@chessarena/shared";
+describe("grille américaine", () => {
+  it("adversaire par son rang, couleur, résultat ; exempt", () => {
+    const p = (userId: string, points: number, seed: number) => ({ userId, rating: 1500, status: "eliminated", seed, eliminatedRound: null, finalRank: null, payoutCents: 0, points, buchholz: 0, sonnebornBerger: 0 });
+    const s = {
+      system: "swiss", status: "running", players: [p("a", 2, 1), p("b", 1, 2), p("c", 0.5, 3)],
+      rounds: [
+        [{ round: 1, slot: 0, p1: "a", p2: "b", winner: "a", status: "done", games: [], result: "1-0" }, { round: 1, slot: 1, p1: "c", p2: null, winner: "c", status: "done", games: [], result: "bye" }],
+        [{ round: 2, slot: 0, p1: "c", p2: "a", winner: null, status: "done", games: [], result: "1/2-1/2" }, { round: 2, slot: 1, p1: "b", p2: null, winner: "b", status: "done", games: [], result: "bye" }],
+      ],
+    } as unknown as SngSnapshot;
+    const g = swissCrosstable(s);
+    expect(g.map((r) => r.row.userId)).toEqual(["a", "b", "c"]);
+    expect(g[0]!.cells.map((c) => c.text)).toEqual(["+2B", "½3N"]);
+    expect(g[1]!.cells.map((c) => c.text)).toEqual(["−1N", "+ exempt"]);
+    expect(g[2]!.cells.map((c) => c.text)).toEqual(["+ exempt", "½1B"]);
+  });
+});

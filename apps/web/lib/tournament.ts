@@ -288,3 +288,25 @@ export function weeklyLabel(iso: string): string {
   const d = new Date(iso);
   return `chaque ${d.toLocaleDateString("fr-FR", { weekday: "long" })} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
 }
+
+/** Grille américaine d'un suisse : pour chaque joueur (dans l'ordre du classement), une case par ronde. */
+export interface CrossCell { text: string; result: "win" | "draw" | "loss" | "bye" | "pending" | "none" }
+export function swissCrosstable(s: SngSnapshot): Array<{ row: SwissRow; cells: CrossCell[] }> {
+  const rows = swissRows(s);
+  const rankOf = new Map(rows.map((r) => [r.userId, r.rank]));
+  return rows.map((row) => ({
+    row,
+    cells: s.rounds.map((round) => {
+      const m = round.find((x) => x.p1 === row.userId || x.p2 === row.userId);
+      if (!m) return { text: "—", result: "none" as const };
+      if (m.result === "bye") return { text: "+ exempt", result: "bye" as const };
+      const white = m.p1 === row.userId;
+      const opp = white ? m.p2! : m.p1!;
+      const color = white ? "B" : "N";
+      if (!m.result) return { text: `${rankOf.get(opp) ?? "?"}${color}`, result: "pending" as const };
+      const win = (m.result === "1-0") === white && m.result !== "1/2-1/2";
+      const sign = m.result === "1/2-1/2" ? "½" : win ? "+" : "−";
+      return { text: `${sign}${rankOf.get(opp) ?? "?"}${color}`, result: m.result === "1/2-1/2" ? "draw" as const : win ? "win" as const : "loss" as const };
+    }),
+  }));
+}

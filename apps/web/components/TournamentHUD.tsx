@@ -3,7 +3,7 @@ import { memo, useEffect, useState } from "react";
 import { SITE_NAME } from "../lib/site";
 import { ChatPanel } from "./ChatPanel";
 import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, type ChatAck, type ChatMessage, type ClubSummary, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
-import { weeklyLabel, ARENA_RULES, arenaJoinable, arenaRows, isArena, remaining, defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
+import { swissCrosstable, weeklyLabel, ARENA_RULES, arenaJoinable, arenaRows, isArena, remaining, defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
 
 const TC_LABEL: Record<TimeControlId, string> = {
   bullet_1_0: "Bullet 1+0", blitz_3_0: "Blitz 3+0", blitz_3_2: "Blitz 3+2", rapid_5_0: "Rapide 5+0",
@@ -197,6 +197,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
       {/* Appariements */}
       {/* tour en cours puis tours précédents : on garde la trace de chaque match (nulles, revanches, Armageddon) */}
       {isArena(t) && t.rounds[0]?.length ? <ArenaGames t={t} userId={p.userId} /> : null}
+      {isSwiss(t) && t.rounds.length > 0 && <Crosstable t={t} userId={p.userId} />}
       {pairings && isSwiss(t) && <SwissRounds t={t} userId={p.userId} />}
       {pairings && !isSwiss(t) && !isArena(t) && Array.from({ length: pairings.round + 1 }, (_, i) => pairings.round - i).map((r) => (
         <div key={r} className="panel p-3">
@@ -796,5 +797,38 @@ function WithdrawButton({ busy, arena, onConfirm }: { busy: boolean; arena: bool
     </div>
   ) : (
     <button type="button" onClick={() => setAsk(true)} className="self-end text-xs text-muted underline-offset-2 hover:text-danger hover:underline">Quitter le tournoi</button>
+  );
+}
+
+/** Grille américaine (suisse) : adversaire (rang), couleur, résultat par ronde. */
+function Crosstable({ t, userId }: { t: SngSnapshot; userId: string }) {
+  const grid = swissCrosstable(t);
+  const tone = { win: "text-win", draw: "text-gold", loss: "text-danger", bye: "text-muted", pending: "text-neon", none: "text-muted" } as const;
+  return (
+    <details className="panel p-3" open={t.status === "finished"}>
+      <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Grille américaine</summary>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full min-w-max text-xs">
+          <thead>
+            <tr className="text-muted">
+              <th className="px-1 text-left font-normal">#</th><th className="px-1 text-left font-normal">Joueur</th>
+              {t.rounds.map((_, i) => <th key={i} className="px-1.5 font-normal">R{i + 1}</th>)}
+              <th className="px-1 text-right font-normal">Pts</th>
+            </tr>
+          </thead>
+          <tbody>
+            {grid.map(({ row, cells }) => (
+              <tr key={row.userId} className={row.userId === userId ? "bg-neon/10" : ""}>
+                <td className="tabular px-1 py-1 text-muted">{row.rank}</td>
+                <td className="max-w-[9rem] truncate px-1 py-1">{row.userId}</td>
+                {cells.map((c, i) => <td key={i} className={`tabular whitespace-nowrap px-1.5 py-1 text-center ${tone[c.result]}`}>{c.text}</td>)}
+                <td className="tabular px-1 py-1 text-right font-semibold">{fmtPoints(row.points)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="mt-1.5 text-[11px] text-muted">+ victoire, ½ nulle, − défaite ; le nombre est le rang de l'adversaire, B/N la couleur jouée.</p>
+      </div>
+    </details>
   );
 }
