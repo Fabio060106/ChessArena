@@ -68,7 +68,7 @@ export function arenaRanking(scores: Map<string, ArenaScore>, ratings: Map<strin
     .map((s) => s.id);
 }
 
-export interface ArenaWaiting { id: string; score: number; rating: number; lastOpponent: string | null; whites: number; blacks: number }
+export interface ArenaWaiting { id: string; score: number; rating: number; lastOpponent: string | null; whites: number; blacks: number; team?: string | null }
 
 /** Appariement des joueurs libres : voisins de classement, sans rejouer son dernier adversaire si possible. */
 export function arenaPairs(waiting: readonly ArenaWaiting[], random: () => number = Math.random): Array<[string, string]> {
@@ -76,10 +76,12 @@ export function arenaPairs(waiting: readonly ArenaWaiting[], random: () => numbe
   const out: Array<[string, string]> = [];
   while (pool.length >= 2) {
     const a = pool.shift()!;
-    let j = pool.findIndex((b) => b.id !== a.lastOpponent && a.id !== b.lastOpponent);
+    // bataille de clubs : jamais deux joueurs du même club
+    const rival = (b: ArenaWaiting) => !a.team || !b.team || a.team !== b.team;
+    let j = pool.findIndex((b) => rival(b) && b.id !== a.lastOpponent && a.id !== b.lastOpponent);
     if (j < 0) {
       // seul choix : son dernier adversaire. On le rejoue seulement s'ils ne sont que deux à attendre.
-      if (pool.length === 1 && waiting.length === 2) j = 0;
+      if (pool.length === 1 && waiting.length === 2 && rival(pool[0]!)) j = 0;
       else continue;
     }
     const b = pool.splice(j, 1)[0]!;
@@ -91,3 +93,15 @@ export function arenaPairs(waiting: readonly ArenaWaiting[], random: () => numbe
 
 /** Durées proposées (minutes). */
 export const ARENA_MINUTES = [20, 30, 45, 60, 90, 120] as const;
+
+/** Bataille de clubs : score de chaque club = somme des points de ses `leaders` meilleurs joueurs. Clubs triés. */
+export function teamStandings(
+  scores: Map<string, ArenaScore>, teamOf: Map<string, string>, teams: ReadonlyArray<{ slug: string; name: string }>, leaders: number,
+): Array<{ slug: string; name: string; score: number; players: number; top: Array<{ userId: string; points: number }> }> {
+  return teams.map((t) => {
+    const members = [...teamOf.entries()].filter(([, team]) => team === t.slug).map(([u]) => ({ userId: u, points: scores.get(u)?.score ?? 0 }))
+      .sort((a, b) => b.points - a.points);
+    const top = members.slice(0, leaders);
+    return { slug: t.slug, name: t.name, score: top.reduce((s, x) => s + x.points, 0), players: members.length, top };
+  }).sort((a, b) => b.score - a.score || b.players - a.players || a.name.localeCompare(b.name));
+}

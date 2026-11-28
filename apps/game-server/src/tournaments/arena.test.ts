@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arenaPairs, arenaRanking, arenaScores, type ArenaGame } from "./arena.js";
+import { arenaPairs, arenaRanking, arenaScores, teamStandings, type ArenaGame } from "./arena.js";
 
 describe("Arena — points et séries", () => {
   it("victoire 2, nulle 1 ; après deux victoires de suite, en feu : victoire 4, nulle 2 ; la série s'arrête à la première non-victoire", () => {
@@ -56,5 +56,26 @@ describe("Arena — appariements", () => {
 
   it("nombre impair : un joueur attend la prochaine vague", () => {
     expect(arenaPairs([w("a", 1), w("b", 1), w("c", 1)])).toHaveLength(1);
+  });
+});
+
+describe("Arena — bataille de clubs", () => {
+  const w = (id: string, score: number, team: string) => ({ id, score, rating: 1500, lastOpponent: null, whites: 0, blacks: 0, team });
+
+  it("jamais deux joueurs du même club face à face (quitte à attendre la vague suivante)", () => {
+    const pairs = arenaPairs([w("a1", 9, "A"), w("a2", 8, "A"), w("b1", 7, "B"), w("b2", 1, "B")], () => 0.4);
+    for (const [x, y] of pairs) expect(x[0]).not.toBe(y[0]);
+    expect(pairs).toHaveLength(2);
+    expect(arenaPairs([w("a1", 9, "A"), w("a2", 8, "A")])).toHaveLength(0);
+  });
+
+  it("score d'un club : ses N meilleurs joueurs ; classement des clubs", () => {
+    const scores = arenaScores(["a1", "a2", "a3", "b1"], [
+      { white: "a1", black: "b1", result: "1-0" }, { white: "b1", black: "a2", result: "0-1" }, { white: "a3", black: "b1", result: "1/2-1/2" },
+    ]);
+    const teamOf = new Map([["a1", "A"], ["a2", "A"], ["a3", "A"], ["b1", "B"]]);
+    const t = teamStandings(scores, teamOf, [{ slug: "B", name: "Club B" }, { slug: "A", name: "Club A" }], 2);
+    expect(t.map((x) => [x.slug, x.score, x.players])).toEqual([["A", 4, 3], ["B", 1, 1]]); // A : 2 + 2 (le ½ de a3 ne compte pas, top 2)
+    expect(t[0]!.top.map((x) => x.userId)).toEqual(["a1", "a2"]);
   });
 });

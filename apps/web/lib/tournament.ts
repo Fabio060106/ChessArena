@@ -257,7 +257,7 @@ export function remaining(iso: string, now = Date.now()): string {
   return m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
 }
 
-export interface ArenaRow { userId: string; rating: number; rank: number; points: number; fire: boolean; paused: boolean; sheet: number[]; payoutCents: Cents; playing: boolean }
+export interface ArenaRow { userId: string; rating: number; rank: number; points: number; fire: boolean; paused: boolean; sheet: number[]; payoutCents: Cents; playing: boolean; team: string | null }
 
 /** Classement d'une arena : rang final s'il est connu, sinon points, victoires, moins de parties, Elo. */
 export function arenaRows(s: SngSnapshot): ArenaRow[] {
@@ -269,7 +269,7 @@ export function arenaRows(s: SngSnapshot): ArenaRow[] {
     || (a.sheet?.length ?? 0) - (b.sheet?.length ?? 0) || b.rating - a.rating);
   return sorted.map((p, i) => ({
     userId: p.userId, rating: p.rating, rank: p.finalRank ?? i + 1, points: p.points ?? 0, fire: !!p.fire, paused: !!p.paused,
-    sheet: p.sheet ?? [], payoutCents: p.payoutCents, playing: inGame.has(p.userId),
+    sheet: p.sheet ?? [], payoutCents: p.payoutCents, playing: inGame.has(p.userId), team: p.team ?? null,
   }));
 }
 

@@ -6,14 +6,15 @@ import type { FinishedGame } from "../game/GameRoom.js";
 
 const BUY_IN = 500;
 
-function setup(size: number, opts: { buyIn?: number; random?: () => number; swiss?: number | true; payoutBps?: number[]; pause?: number; arena?: number; clock?: { t: number } } = {}) {
+function setup(size: number, opts: { buyIn?: number; random?: () => number; swiss?: number | true; payoutBps?: number[]; pause?: number; arena?: number; clock?: { t: number }; teams?: string[] } = {}) {
   const ledger = new InMemoryLedger();
   const started: StartGameRequest[] = [];
   const snapshots: SngSnapshot[] = [];
   const sng = new SitAndGo(
     { id: "T1", formatId: "f", size, timeControl: "blitz_3_0", currency: "PLAY", buyInCents: opts.buyIn ?? BUY_IN, rakeBps: 1000, payoutBps: opts.payoutBps ?? [6500, 3500],
       ...(opts.swiss ? { system: "swiss" as const, swissRounds: opts.swiss === true ? 0 : opts.swiss } : {}),
-      ...(opts.arena ? { system: "arena" as const, arenaMinutes: opts.arena } : {}) },
+      ...(opts.arena ? { system: "arena" as const, arenaMinutes: opts.arena } : {}),
+      ...(opts.teams ? { teamBattle: { leaders: 2, teams: opts.teams.map((x) => ({ slug: x, name: `Club ${x}` })) } } : {}) },
     {
       ledger,
       startGame: async (r) => { started.push(r); return r.gameId; },
@@ -572,5 +573,30 @@ describe("SitAndGo — Arena", () => {
 
   it("refuse une durée d'arena non proposée", () => {
     expect(() => setup(8, { arena: 17 })).toThrow(SngError);
+  });
+});
+
+describe("SitAndGo — bataille de clubs", () => {
+  it("inscription avec son club, appariements entre clubs uniquement, scores des clubs dans l'instantané", async () => {
+    const clock = { t: Date.parse("2026-11-28T20:00:00Z") };
+    const t = setup(8, { arena: 30, clock, teams: ["fous", "tours"], buyIn: 0 });
+    for (const [u, team] of [["f1", "fous"], ["f2", "fous"], ["t1", "tours"], ["t2", "tours"]] as const) { await t.fund(u); await t.sng.register(u, 1500, team); }
+    await t.fund("x");
+    await expect(t.sng.register("x", 1500, null)).rejects.toMatchObject({ code: "NOT_CLUB_MEMBER" });
+    await expect(t.sng.register("x", 1500, "autre")).rejects.toMatchObject({ code: "NOT_CLUB_MEMBER" });
+    await t.sng.startNow();
+    expect(t.started).toHaveLength(2);
+    for (const r of t.started) expect(r.white.userId[0]).not.toBe(r.black.userId[0]); // jamais f contre f
+    // les fous gagnent tout
+    for (const r of [...t.started]) await t.finish(r, r.white.userId.startsWith("f") ? "1-0" : "0-1");
+    const s = t.sng.snapshot();
+    expect(s.teamBattle!.leaders).toBe(2);
+    expect(s.teamBattle!.teams.map((x) => [x.slug, x.score, x.players])).toEqual([["fous", 4, 2], ["tours", 0, 2]]);
+    expect(s.players.find((p) => p.userId === "f1")!.team).toBe("fous");
+  });
+
+  it("une bataille de clubs est forcément une arena, avec 2 à 8 clubs", () => {
+    expect(() => setup(8, { swiss: true, teams: ["a", "b"] })).toThrow(SngError);
+    expect(() => setup(8, { arena: 30, teams: ["a"] })).toThrow(SngError);
   });
 });

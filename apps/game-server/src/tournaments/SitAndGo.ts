@@ -3,7 +3,7 @@ import { SNG_MAX_SIZE, SNG_MIN_SIZE, SWISS_MAX_ROUNDS } from "@chessarena/shared
 import type {
   ClubRef, Color, Cents, Currency, GameResult, SngGameKind, SngGameView, SngMatchView, SngPlayerView, SngSize, SngSnapshot, SngSystem, TimeControlId,
 } from "@chessarena/shared";
-import { arenaPairs, arenaRanking, arenaScores, type ArenaGame } from "./arena.js";
+import { arenaPairs, arenaRanking, arenaScores, teamStandings, type ArenaGame } from "./arena.js";
 import { ARENA_MINUTES } from "@chessarena/shared";
 import { defaultSwissRounds, pairRound, swissStandings, type SwissResult, type SwissStanding } from "./swiss.js";
 import type { FinishedGame, Seat, TournamentGameRef } from "../game/GameRoom.js";
@@ -76,6 +76,8 @@ export interface SitAndGoConfig {
   repeatWeekly?: boolean;
   /** tournoi d'un club */
   club?: ClubRef | null;
+  /** bataille de clubs (arena) */
+  teamBattle?: { leaders: number; teams: ClubRef[] } | null;
 }
 
 export interface StartGameRequest {
@@ -107,10 +109,13 @@ export interface SitAndGoPorts {
   arenaTickMs?: number;
 }
 
+/** inscriptions comptées (bataille de clubs : effectifs des clubs) */
+const ACTIVE_ENTRY = new Set(["locking", "registered", "playing", "winner", "eliminated"]);
+
 export class SngError extends Error {
   constructor(readonly code:
     | "NOT_REGISTERING" | "ALREADY_REGISTERED" | "FULL" | "NOT_REGISTERED" | "BUSY"
-    | "INSUFFICIENT_FUNDS" | "INVALID_CONFIG" | "NOT_ENOUGH_PLAYERS", message?: string) {
+    | "INSUFFICIENT_FUNDS" | "INVALID_CONFIG" | "NOT_ENOUGH_PLAYERS" | "NOT_CLUB_MEMBER", message?: string) {
     super(message ?? code);
   }
 }
@@ -131,6 +136,8 @@ interface Entry {
   hadBye: boolean;
   /** arena : en pause (pas de nouvel adversaire) */
   paused?: boolean;
+  /** bataille de clubs : club défendu */
+  team?: string | null;
 }
 
 interface GameRec {
@@ -201,10 +208,11 @@ export class SitAndGo {
     const swiss = cfg.system === "swiss";
     const podium = swiss || cfg.system === "arena";
     if (cfg.payoutBps.length > (podium ? 3 : 2)) throw new SngError("INVALID_CONFIG", podium ? "3 places payées au plus" : "KO sans petite finale : 2 places payées au plus");
+    if (cfg.teamBattle && (cfg.system !== "arena" || cfg.teamBattle.teams.length < 2 || cfg.teamBattle.teams.length > 8 || cfg.teamBattle.leaders < 1)) throw new SngError("INVALID_CONFIG", "bataille de clubs");
     if (cfg.system === "arena" && !(ARENA_MINUTES as readonly number[]).includes(cfg.arenaMinutes ?? 0)) throw new SngError("INVALID_CONFIG", "durée d'arena");
     if (swiss && cfg.swissRounds && (!Number.isInteger(cfg.swissRounds) || cfg.swissRounds < 1 || cfg.swissRounds > SWISS_MAX_ROUNDS)) throw new SngError("INVALID_CONFIG", "rondes");
     this.id = cfg.id;
-    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, startsAt: null, createdAt: "", arenaMinutes: 0, repeatWeekly: false, club: null, ...cfg };
+    this.cfg = { sponsorAddedCents: 0, createdBy: null, name: null, system: "ko", swissRounds: 0, startsAt: null, createdAt: "", arenaMinutes: 0, repeatWeekly: false, club: null, teamBattle: null, ...cfg };
     this.ports = ports;
     this.now = ports.now ?? (() => Date.now());
     this.random = ports.random ?? Math.random;
@@ -221,14 +229,14 @@ export class SitAndGo {
    * sans nouvelle écriture comptable. Les numéros de tentative repartent d'une base unique
    * (horodatage) : une désinscription ou réinscription ultérieure aura une clé d'idempotence neuve.
    */
-  restoreRegistrations(players: ReadonlyArray<{ userId: string; rating: number }>): void {
+  restoreRegistrations(players: ReadonlyArray<{ userId: string; rating: number; team?: string | null }>): void {
     if (this.status !== "registering" || this.entries.size) throw new SngError("INVALID_CONFIG", "reprise sur une table neuve uniquement");
     const base = Math.floor(this.now() / 1000) * 10;
     this.attemptBase = base;
     for (const p of players) {
       this.entries.set(p.userId, {
         userId: p.userId, rating: p.rating, status: "registered", attempt: base, registeredSeq: ++this.seq,
-        seed: null, eliminatedRound: null, finalRank: null, payoutCents: 0, opponents: [], colors: [], hadBye: false,
+        seed: null, eliminatedRound: null, finalRank: null, payoutCents: 0, opponents: [], colors: [], hadBye: false, team: p.team ?? null,
       });
     }
     this.audit("restore", { players: players.map((p) => p.userId) });
@@ -259,7 +267,8 @@ export class SitAndGo {
   // ═══════════════════════════════════════════════════════════════════════════
   // Inscriptions
   // ═══════════════════════════════════════════════════════════════════════════
-  async register(userId: string, rating: number): Promise<void> {
+  async register(userId: string, rating: number, team: string | null = null): Promise<void> {
+    if (this.cfg.teamBattle && (!team || !this.cfg.teamBattle.teams.some((t) => t.slug === team))) throw new SngError("NOT_CLUB_MEMBER");
     // arena : on peut arriver en cours de route (jusqu'à 1 minute de la fin)
     const lateArena = this.cfg.system === "arena" && this.status === "running" && this.arenaEndAt !== null && this.now() < this.arenaEndAt - 60_000;
     if (this.status !== "registering" && !lateArena) throw new SngError("NOT_REGISTERING");
@@ -272,8 +281,8 @@ export class SitAndGo {
     // ne peuvent pas prendre la dernière place toutes les deux.
     const entry: Entry = {
       userId, rating, status: "locking", attempt: Math.max(prev?.attempt ?? 0, this.attemptBase) + 1, registeredSeq: ++this.seq,
-      seed: null, eliminatedRound: null, finalRank: null, payoutCents: 0, opponents: [], colors: [], hadBye: false,
-    };
+      seed: null, eliminatedRound: null, finalRank: null, payoutCents: 0, opponents: [], colors: [], hadBye: false, team,
+      };
     this.entries.set(userId, entry);
 
     const lock = this.cfg.buyInCents > 0
@@ -591,7 +600,7 @@ export class SitAndGo {
         .filter((e) => e.status === "playing" && !e.paused && !busy.has(e.userId))
         .map((e) => ({
           id: e.userId, score: scores.get(e.userId)?.score ?? 0, rating: e.rating, lastOpponent: lastOpp.get(e.userId) ?? null,
-          whites: e.colors.filter((c) => c === "w").length, blacks: e.colors.filter((c) => c === "b").length,
+          whites: e.colors.filter((c) => c === "w").length, blacks: e.colors.filter((c) => c === "b").length, team: e.team ?? null,
         }));
       const pairs = arenaPairs(waiting, this.random);
       for (const [w, b] of pairs) {
@@ -829,6 +838,10 @@ export class SitAndGo {
       ...(this.cfg.startsAt ? { startsAt: this.cfg.startsAt } : {}),
       ...(this.cfg.repeatWeekly ? { repeatWeekly: true } : {}),
       ...(this.cfg.club ? { club: this.cfg.club } : {}),
+      ...(this.cfg.teamBattle ? { teamBattle: {
+        leaders: this.cfg.teamBattle.leaders,
+        teams: teamStandings(aScores ?? new Map(), new Map([...this.entries.values()].filter((e) => e.team && ACTIVE_ENTRY.has(e.status)).map((e) => [e.userId, e.team!])), this.cfg.teamBattle.teams, this.cfg.teamBattle.leaders),
+      } } : {}),
       ...(arena ? { system: "arena" as const, arenaMinutes: this.cfg.arenaMinutes, ...(this.arenaEndAt ? { arenaEndsAt: new Date(this.arenaEndAt).toISOString() } : {}) } : {}),
       ...(swiss ? { system: "swiss" as const, swissRounds: this.cfg.swissRounds, totalRounds: this.totalRounds || this.plannedRounds(this.cfg.size) } : {}),
       players: [...this.entries.values()]
@@ -837,6 +850,7 @@ export class SitAndGo {
         .map((e) => ({
           userId: e.userId, rating: e.rating, seed: e.seed, status: e.status,
           eliminatedRound: e.eliminatedRound, finalRank: e.finalRank, payoutCents: e.payoutCents,
+          ...(e.team ? { team: e.team } : {}),
           ...(arena && e.seed !== null ? (() => {
             const sc = aScores!.get(e.userId);
             return { points: sc?.score ?? 0, fire: sc?.fire ?? false, sheet: sc?.sheet ?? [], ...(e.paused ? { paused: true } : {}) };

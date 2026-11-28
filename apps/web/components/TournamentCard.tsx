@@ -7,14 +7,14 @@ const SYSTEM = { swiss: "Suisse", arena: "Arena", ko: "Élimination directe" } a
 
 /** Carte d'un tournoi (page Tournois, page d'un club). */
 export function TournamentCardView({ c, now }: { c: TournamentCard; now: number }) {
-  const format = c.system === "arena" ? `Arena ${c.arenaMinutes} min` : c.system === "swiss" ? `Suisse ${c.totalRounds ?? swissRoundsFor(c.size)} rondes` : SYSTEM.ko;
+  const format = c.teams ? `⚔️ Bataille de clubs ${c.arenaMinutes} min` : c.system === "arena" ? `Arena ${c.arenaMinutes} min` : c.system === "swiss" ? `Suisse ${c.totalRounds ?? swissRoundsFor(c.size)} rondes` : SYSTEM.ko;
   const live = c.status === "running";
   const fmtPts = (p: number | null) => (p === null ? "" : p % 1 ? `${Math.floor(p) || ""}½` : String(p));
   return (
     <a href={`/tournoi/${c.id}`} className={`panel flex h-full flex-col gap-2 p-3 transition-colors hover:border-neon/60 ${live ? "border-neon/40" : ""}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate font-display text-base font-bold">{c.name ?? (c.club ? `Tournoi · ${c.club.name}` : c.createdBy ? `Tournoi de ${c.createdBy}` : "Tournoi")}</p>
+          <p className="truncate font-display text-base font-bold">{c.name ?? (c.teams ? c.teams.map((x) => x.name).join(" vs ") : c.club ? `Tournoi · ${c.club.name}` : c.createdBy ? `Tournoi de ${c.createdBy}` : "Tournoi")}</p>
           <p className="text-xs text-muted">{format} · {TC_LABEL[c.timeControl]} · {c.buyInCents > 0 ? `entrée ${formatMoney(c.buyInCents, c.currency)}` : "gratuit"}</p>
           {c.repeatWeekly && c.startsAt && <p className="text-xs text-neon">🔁 {weeklyLabel(c.startsAt)}</p>}
           {c.club && c.name && <p className="truncate text-xs text-muted">Club : <span className="text-text">{c.club.name}</span></p>}
@@ -24,6 +24,7 @@ export function TournamentCardView({ c, now }: { c: TournamentCard; now: number 
             : c.status === "registering" ? `${c.players}/${c.size}` : "Terminé"}
         </span>
       </div>
+      {c.teams && <p className="truncate text-sm">{c.teams.map((x) => `${x.name}${c.status === "registering" ? "" : ` ${x.score}`}`).join(" · ")}</p>}
       {c.status === "registering" && (
         <p className="text-sm">{c.startsAt ? <><b className="text-gold">{startsLabel(c.startsAt)}</b> <span className="text-muted">({startsIn(c.startsAt, now)})</span></> : <span className="text-muted">Départ dès que c'est complet ou lancé par {c.createdBy ?? "l'organisateur"}</span>}</p>
       )}

@@ -33,6 +33,7 @@ export function tournamentCard(s: SngSnapshot): TournamentCard {
   return {
     id: s.id, name: s.name ?? null, createdBy: s.createdBy ?? null, system: s.system ?? "ko", timeControl: s.timeControl, status: s.status,
     size: s.size, players: active.length, buyInCents: s.buyInCents, currency: s.currency, startsAt: s.startsAt ?? null, repeatWeekly: !!s.repeatWeekly, club: s.club ?? null,
+    teams: s.teamBattle ? s.teamBattle.teams.map((t) => ({ slug: t.slug, name: t.name, score: t.score })) : null,
     arenaMinutes: s.arenaMinutes ?? null, arenaEndsAt: s.arenaEndsAt ?? null, totalRounds: s.totalRounds ?? null, currentRound: s.currentRound,
     createdAt: s.createdAt, finishedAt: s.finishedAt,
     leaders: (s.status === "registering" ? [] : ordered.slice(0, 3)).map((p) => ({ userId: p.userId, points: pts(p) })),
@@ -139,7 +140,7 @@ export class PgTournamentStore implements TournamentStore {
     if (!(await this.hasSnapshot())) return [];
     const r = await this.pool.query<{ snapshot: SngSnapshot }>(
       `SELECT snapshot FROM tournaments WHERE status = 'finished' AND snapshot IS NOT NULL AND snapshot->>'createdBy' IS NOT NULL
-          AND ($2::text IS NULL OR snapshot->'club'->>'slug' = $2)
+          AND ($2::text IS NULL OR snapshot->'club'->>'slug' = $2 OR snapshot->'teamBattle'->'teams' @> jsonb_build_array(jsonb_build_object('slug', $2::text)))
         ORDER BY finished_at DESC NULLS LAST LIMIT $1`, [Math.max(1, Math.min(50, limit)), clubSlug ?? null]);
     return r.rows.map((x) => x.snapshot);
   }
@@ -185,7 +186,7 @@ export class InMemoryTournamentStore implements TournamentStore {
     return [];
   }
   async recentFinished(limit: number, clubSlug?: string): Promise<SngSnapshot[]> {
-    return [...this.saved.values()].filter((s) => s.status === "finished" && s.createdBy && (!clubSlug || s.club?.slug === clubSlug))
+    return [...this.saved.values()].filter((s) => s.status === "finished" && s.createdBy && (!clubSlug || s.club?.slug === clubSlug || !!s.teamBattle?.teams.some((t) => t.slug === clubSlug)))
       .sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? "")).slice(0, limit);
   }
   async load(id: string): Promise<SngSnapshot | null> {

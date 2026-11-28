@@ -13,7 +13,8 @@ export const SNG_ERRORS: Record<string, string> = {
   INSUFFICIENT_FUNDS: "Solde insuffisant pour cette entrée.",
   ALREADY_REGISTERED: "Vous êtes déjà inscrit à cette table.",
   IN_GAME: "Terminez votre partie en cours.",
-  NOT_CLUB_MEMBER: "Seuls les membres du club peuvent créer un tournoi du club.",
+  NOT_CLUB_MEMBER: "Réservé aux membres du club (bataille de clubs : membres des clubs engagés).",
+  UNKNOWN_CLUB: "Un des clubs indiqués n'existe pas (vérifie son adresse, par exemple « les-fous-du-roi »).",
   IN_TOURNAMENT: "Tu es déjà inscrit à un tournoi (un seul à la fois, même programmé).",
   ALREADY_QUEUED: "Quittez la file d'attente avant de vous inscrire.",
   FULL: "Table complète : une nouvelle table s'ouvre.",
@@ -61,8 +62,8 @@ export function inviteLink(tournamentId: string): string {
 
 const isCustom = (t: SngSnapshot) => t.formatId.startsWith("custom:");
 /** « Suisse · 5 rondes » ou « Élimination directe » */
-const formatOf = (t: SngSnapshot) => isArena(t) ? `Arena · ${t.arenaMinutes} min` : isSwiss(t) ? `Suisse · ${t.totalRounds ?? swissRoundsFor(t.size)} rondes` : "Élimination directe";
-const titleOf = (t: SngSnapshot) => t.name ?? (t.club ? `Tournoi · ${t.club.name}` : t.createdBy ? `Tournoi de ${t.createdBy}` : `Sit & Go ${t.size} joueurs`);
+const formatOf = (t: SngSnapshot) => t.teamBattle ? `Bataille de clubs · ${t.arenaMinutes} min` : isArena(t) ? `Arena · ${t.arenaMinutes} min` : isSwiss(t) ? `Suisse · ${t.totalRounds ?? swissRoundsFor(t.size)} rondes` : "Élimination directe";
+const titleOf = (t: SngSnapshot) => t.name ?? (t.teamBattle ? [...t.teamBattle.teams].sort((a, b) => a.name.localeCompare(b.name)).map((x) => x.name).join(" vs ") : t.club ? `Tournoi · ${t.club.name}` : t.createdBy ? `Tournoi de ${t.createdBy}` : `Sit & Go ${t.size} joueurs`);
 
 /**
  * Panneau Sit & Go en direct : cagnotte, retenue du rake, structure des gains, classement live
@@ -144,6 +145,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
       </details>
 
       {/* Classement live */}
+      {t.teamBattle && <TeamBattle t={t} userId={p.userId} />}
       {isArena(t) && t.status !== "registering" ? <ArenaTable t={t} userId={p.userId} /> : isSwiss(t) && t.status !== "registering" ? <SwissTable t={t} userId={p.userId} /> : (
       <div className="panel p-3">
         <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Classement live</h3>
@@ -296,6 +298,12 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   // clubs dont je suis membre : tournoi du club (présélectionné depuis la page du club : ?club=…)
   const [myClubs, setMyClubs] = useState<ClubSummary[]>([]);
   const [club, setClub] = useState("");
+  // bataille de clubs (arena) : clubs engagés (les miens cochés + adresses d'autres clubs) et joueurs qui comptent
+  const [battle, setBattle] = useState(false);
+  const [teams, setTeams] = useState<string[]>([]);
+  const [other, setOther] = useState("");
+  const [leaders, setLeaders] = useState(5);
+  const toggleTeam = (slug: string) => setTeams((x) => (x.includes(slug) ? x.filter((y) => y !== slug) : [...x, slug].slice(0, 8)));
   useEffect(() => {
     const wanted = new URLSearchParams(window.location.search).get("club") ?? "";
     fetch("/api/clubs", { cache: "no-store" })
@@ -315,7 +323,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   }
   const pool = Math.floor(entry * size * 0.9);
   return (
-    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(system === "arena" ? { arenaMinutes: minutes } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString(), ...(weekly ? { repeatWeekly: true } : {}) } : {}), ...(club ? { clubSlug: club } : {}) }); }}>
+    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(system === "arena" ? { arenaMinutes: minutes } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString(), ...(weekly ? { repeatWeekly: true } : {}) } : {}), ...(club && !(system === "arena" && battle) ? { clubSlug: club } : {}), ...(system === "arena" && battle ? { teamClubs: teams, teamLeaders: leaders } : {}) }); }}>
       <div className="flex items-center justify-between">
         <h3 className="font-display text-base font-bold">Nouveau tournoi</h3>
         <button type="button" onClick={() => setOpen(false)} className="text-xs text-muted hover:text-text">Fermer</button>
@@ -356,6 +364,38 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
           </div>
         </div>
       </div>
+      {system === "arena" && (
+        <div className="flex flex-col gap-2 rounded-xl border border-gold/30 p-2 text-xs text-muted">
+          <label className="flex items-center gap-2 text-sm text-text">
+            <input type="checkbox" checked={battle} onChange={(e) => setBattle(e.target.checked)} className="size-4" aria-label="Bataille de clubs" />
+            ⚔️ Bataille de clubs <span className="text-xs text-muted">(club contre club)</span>
+          </label>
+          {battle && (
+            <>
+              <p>Chaque joueur défend son club, jamais contre un coéquipier ; le score d'un club = les points de ses {leaders} meilleurs joueurs.</p>
+              <div className="flex flex-wrap gap-1.5">
+                {myClubs.map((c) => (
+                  <button key={c.slug} type="button" aria-pressed={teams.includes(c.slug)} onClick={() => toggleTeam(c.slug)}
+                    className={`rounded-full border px-2.5 py-1 text-xs ${teams.includes(c.slug) ? "border-gold bg-gold/15 text-gold" : "border-line text-muted"}`}>{c.name}</button>
+                ))}
+                {teams.filter((t) => !myClubs.some((c) => c.slug === t)).map((t) => (
+                  <button key={t} type="button" onClick={() => toggleTeam(t)} className="rounded-full border border-gold bg-gold/15 px-2.5 py-1 text-xs text-gold">{t} ✕</button>
+                ))}
+              </div>
+              <div className="flex gap-1.5">
+                <input value={other} onChange={(e) => setOther(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="adresse d'un autre club (ex. echiquier-marseillais)" aria-label="Adresse d'un autre club"
+                  className="min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-text outline-none focus:border-neon/60" />
+                <button type="button" disabled={other.length < 2} onClick={() => { toggleTeam(other); setOther(""); }} className="rounded-lg border border-line px-2.5 text-xs text-text">Ajouter</button>
+              </div>
+              <div className="flex items-center gap-2">
+                Joueurs qui comptent par club
+                {[3, 5, 10].map((n) => <button key={n} type="button" aria-pressed={leaders === n} onClick={() => setLeaders(n)} className={`rounded-md px-2 py-0.5 font-semibold ${leaders === n ? "bg-gold/20 text-gold" : "text-muted"}`}>{n}</button>)}
+              </div>
+              {teams.length < 2 && <p className="text-gold">Choisis au moins 2 clubs (le tien et le club adverse).</p>}
+            </>
+          )}
+        </div>
+      )}
       {system === "arena" && (
         <div className="flex flex-col gap-1 text-xs text-muted">
           Durée
@@ -410,7 +450,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
         En cas de nulle : revanche, puis Armageddon.{entry > 0 ? ` Cagnotte ≈ ${formatMoney(pool, "PLAY")} (65 % / 35 %).` : ""}</>}
         {" "}{system === "arena" && when !== "time" ? "Elle démarre quand tu la lances (au moins 3 inscrits)." : when === "time" && startAt ? `Départ automatique ${startsLabel(new Date(startAt).toISOString())} (au moins 3 inscrits) ; les inscrits restent libres de jouer d'autres parties jusqu'à 5 min avant.` : "Il démarre dès qu'il est complet, ou quand tu le lances."}
       </p>
-      <button type="submit" disabled={busy} className="neon-btn rounded-lg px-3 py-2.5 font-semibold">{busy ? "Création…" : "Créer et m'inscrire"}</button>
+      <button type="submit" disabled={busy || (system === "arena" && battle && teams.length < 2)} className="neon-btn rounded-lg px-3 py-2.5 font-semibold">{busy ? "Création…" : "Créer et m'inscrire"}</button>
     </form>
   );
 }
@@ -631,7 +671,7 @@ function ArenaTable({ t, userId }: { t: SngSnapshot; userId: string }) {
           <li key={r.userId} className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${r.userId === userId ? "bg-neon/10" : ""}`}>
             <span className="tabular w-6 shrink-0 text-muted">{r.rank === 1 && t.status === "finished" ? "🏆" : r.rank}</span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate">{r.userId}<span className="tabular ml-1.5 text-xs text-muted">{r.rating}</span>{r.fire && <span className="ml-1" title="En série : victoires à 4 points">🔥</span>}{r.paused && <span className="ml-1.5 text-xs text-gold">pause</span>}{r.playing && <span className="ml-1.5 text-xs text-neon">●</span>}</span>
+              <span className="block truncate">{r.userId}<span className="tabular ml-1.5 text-xs text-muted">{r.rating}</span>{r.fire && <span className="ml-1" title="En série : victoires à 4 points">🔥</span>}{r.team && <span className="ml-1.5 text-[11px] text-gold">{t.teamBattle?.teams.find((x) => x.slug === r.team)?.name ?? r.team}</span>}{r.paused && <span className="ml-1.5 text-xs text-gold">pause</span>}{r.playing && <span className="ml-1.5 text-xs text-neon">●</span>}</span>
               {r.sheet.length > 0 && (
                 <span className="tabular flex gap-1.5 overflow-hidden text-[11px] text-muted" aria-label={`Points partie par partie : ${r.sheet.join(", ")}`}>
                   {r.sheet.map((x, i) => <span key={i} className={x === 4 ? "font-bold text-gold" : ""}>{x}</span>)}
@@ -676,5 +716,31 @@ function ArenaGames({ t, userId }: { t: SngSnapshot; userId: string }) {
       </ul>
       {games.length > shown.length && <p className="mt-2 text-xs text-muted">… et {games.length - shown.length} parties plus anciennes.</p>}
     </details>
+  );
+}
+
+/** Bataille de clubs : classement des clubs (score = N meilleurs joueurs), barres de score, meneurs. */
+function TeamBattle({ t, userId }: { t: SngSnapshot; userId: string }) {
+  const b = t.teamBattle!;
+  const max = Math.max(1, ...b.teams.map((x) => x.score));
+  const mine = t.players.find((p) => p.userId === userId)?.team;
+  return (
+    <div className="panel border-gold/40 p-3">
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[.14em] text-gold">⚔️ Bataille de clubs · {b.leaders} meilleurs par club</h3>
+      <ol className="flex flex-col gap-2">
+        {b.teams.map((c, i) => (
+          <li key={c.slug} className={`rounded-lg p-2 ${c.slug === mine ? "bg-gold/10 ring-1 ring-gold/40" : "bg-surface-2"}`}>
+            <div className="flex items-baseline gap-2">
+              <span className="tabular w-5 text-muted">{i === 0 && t.status === "finished" ? "🏆" : i + 1}</span>
+              <a href={`/club/${c.slug}`} className="min-w-0 flex-1 truncate font-semibold hover:underline">{c.name}</a>
+              <span className="tabular text-xs text-muted">{c.players} joueur{c.players > 1 ? "s" : ""}</span>
+              <span className="tabular w-10 text-right font-display text-lg font-bold">{c.score}</span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface"><div className="h-full rounded-full bg-gold" style={{ width: `${(100 * c.score) / max}%` }} /></div>
+            {c.top.length > 0 && <p className="mt-1 truncate text-[11px] text-muted">{c.top.map((x) => `${x.userId} ${x.points}`).join(" · ")}</p>}
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }

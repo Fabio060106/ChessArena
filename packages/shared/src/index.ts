@@ -205,6 +205,8 @@ export interface SngPlayerView {
   points?: number;
   buchholz?: number;
   sonnebornBerger?: number;
+  /** bataille de clubs : club défendu (adresse) */
+  team?: string;
   /** arena : série en cours (la prochaine victoire vaut double), pause, points marqués partie par partie */
   fire?: boolean;
   paused?: boolean;
@@ -239,6 +241,8 @@ export interface SngSnapshot {
   repeatWeekly?: boolean;
   /** tournoi d'un club (affiché sur la page du club) */
   club?: ClubRef;
+  /** bataille de clubs (arena uniquement) : clubs engagés et leurs scores */
+  teamBattle?: TeamBattleView;
   /** arena : durée (minutes) et heure de fin (une fois lancé) */
   arenaMinutes?: number;
   arenaEndsAt?: string;
@@ -281,6 +285,12 @@ export interface ClubsResponse {
 }
 /** tournoi rattaché à un club */
 export interface ClubRef { slug: string; name: string }
+/** Bataille de clubs (arena) : score d'un club = somme des points de ses `leaders` meilleurs joueurs */
+export interface TeamBattleView {
+  leaders: number;
+  teams: Array<ClubRef & { score: number; players: number; top: Array<{ userId: string; points: number }> }>;
+}
+export const TEAM_BATTLE_LIMITS = { minTeams: 2, maxTeams: 8, leaders: [3, 5, 10] } as const;
 
 /** Carte d'un tournoi pour la page « Tournois » (résumé léger d'un instantané). */
 export interface TournamentCard {
@@ -297,6 +307,8 @@ export interface TournamentCard {
   startsAt: string | null;
   repeatWeekly: boolean;
   club: ClubRef | null;
+  /** bataille de clubs : clubs et scores */
+  teams: Array<ClubRef & { score: number }> | null;
   arenaMinutes: number | null;
   arenaEndsAt: string | null;
   totalRounds: number | null;
@@ -349,6 +361,9 @@ export interface SngCreatePayload {
   repeatWeekly?: boolean;
   /** tournoi d'un club dont le créateur est membre (adresse du club) */
   clubSlug?: string;
+  /** bataille de clubs (arena) : adresses des clubs engagés (2 à 8) et nombre de joueurs qui comptent par club */
+  teamClubs?: string[];
+  teamLeaders?: number;
 }
 
 /** Partie terminée, telle qu'affichée dans l'historique d'un joueur. */

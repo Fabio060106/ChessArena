@@ -2,7 +2,7 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { performance } from "node:perf_hooks";
 import { Server, type Socket } from "socket.io";
 import pg from "pg";
-import { TIME_CONTROLS, type ChallengeAck, type ClubRef, type ChallengeView, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
+import { TIME_CONTROLS, type ChallengeAck, type ClubRef, TEAM_BATTLE_LIMITS, type ChallengeView, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "./config.js";
 import { authenticate, canPlay, type AuthUser } from "./auth.js";
 import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
@@ -668,12 +668,30 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
     socket.on("sng:create", guard(socket, async (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);
-      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown; arenaMinutes?: unknown; repeatWeekly?: unknown; clubSlug?: unknown } | null;
+      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown; arenaMinutes?: unknown; repeatWeekly?: unknown; clubSlug?: unknown; teamClubs?: unknown; teamLeaders?: unknown } | null;
       if (!p || typeof p !== "object" || typeof p.timeControl !== "string" || !(p.timeControl in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
       const blocked = canJoinTournament();
       if (blocked) return reply({ ok: false, code: blocked });
       const timeControl = p.timeControl as TimeControlId;
       const rating = (await repo.getRatings(user.userId))[timeControl].rating;
+      // bataille de clubs (arena) : 2 à 8 clubs existants, le créateur membre de l'un d'eux
+      let battle: { leaders: number; teams: ClubRef[]; creatorTeam: string } | null = null;
+      if (p.teamClubs !== undefined) {
+        const slugs = Array.isArray(p.teamClubs) ? [...new Set(p.teamClubs)] : [];
+        const leaders = p.teamLeaders === undefined ? 5 : p.teamLeaders;
+        if (p.system !== "arena" || slugs.length < TEAM_BATTLE_LIMITS.minTeams || slugs.length > TEAM_BATTLE_LIMITS.maxTeams || !slugs.every((x) => typeof x === "string")
+          || !(TEAM_BATTLE_LIMITS.leaders as readonly unknown[]).includes(leaders)) return reply({ ok: false, code: "BAD_PAYLOAD" });
+        const teams: ClubRef[] = [];
+        let creatorTeam: string | null = null;
+        for (const slug of slugs as string[]) {
+          const c = await clubs.get(slug).catch(() => null);
+          if (!c) return reply({ ok: false, code: "UNKNOWN_CLUB" });
+          teams.push({ slug: c.slug, name: c.name });
+          if (!creatorTeam && c.members.some((m) => m.userId === user.userId)) creatorTeam = c.slug;
+        }
+        if (!creatorTeam) return reply({ ok: false, code: "NOT_CLUB_MEMBER" });
+        battle = { leaders: leaders as number, teams, creatorTeam };
+      }
       // tournoi de club : réservé aux membres du club
       let club: ClubRef | null = null;
       if (p.clubSlug !== undefined) {
@@ -692,7 +710,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
             rounds: p.rounds === undefined ? undefined : (p.rounds as number),
             startsAt: p.startsAt === undefined ? undefined : (p.startsAt as string),
           },
-          user.userId, rating, club,
+          user.userId, rating, club, battle,
         );
         io.in(userRoom(user.userId)).socketsJoin(tournamentRoom(snapshot.id));
         reply({ ok: true, snapshot });
@@ -711,9 +729,15 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       const blocked = canJoinTournament();
       if (blocked) return reply({ ok: false, code: blocked });
       const rating = (await repo.getRatings(user.userId))[snap.timeControl].rating;
+      // bataille de clubs : on défend le premier des clubs engagés dont on est membre
+      let team: string | null = null;
+      if (snap.teamBattle) {
+        for (const t of snap.teamBattle.teams) if (await clubs.isMember(t.slug, user.userId).catch(() => false)) { team = t.slug; break; }
+        if (!team) return reply({ ok: false, code: "NOT_CLUB_MEMBER" });
+      }
       try {
         io.in(userRoom(user.userId)).socketsJoin(tournamentRoom(snap.id));
-        reply({ ok: true, snapshot: await tournaments.registerById(snap.id, user.userId, rating) });
+        reply({ ok: true, snapshot: await tournaments.registerById(snap.id, user.userId, rating, team) });
       } catch (e) {
         reply(customError(e));
       }

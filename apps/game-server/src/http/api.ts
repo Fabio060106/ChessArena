@@ -496,7 +496,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
           if (!club) throw new HttpError(404, "UNKNOWN_CLUB");
           // tournois du club : à venir et en cours (en mémoire), terminés (base)
           const live = d.tournaments?.showcase?.() ?? { upcoming: [], running: [] };
-          const ofClub = (s: SngSnapshot) => s.club?.slug === slug;
+          const ofClub = (s: SngSnapshot) => s.club?.slug === slug || !!s.teamBattle?.teams.some((t) => t.slug === slug);
           const finished = d.tournaments ? await d.tournaments.store.recentFinished(10, slug) : [];
           send(200, {
             club, member: club.members.some((m) => m.userId === claims.sub),
