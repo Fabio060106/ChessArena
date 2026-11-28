@@ -54,6 +54,18 @@ describe.skipIf(!pgAvailable())("PgClubStore — clubs en base", () => {
     await expect(clubs.leave(a.slug, "marie")).rejects.toMatchObject({ code: "NOT_MEMBER" });
   });
 
+  it("le fondateur modifie la description ; l'organisateur du site supprime un club (membres en cascade)", async () => {
+    const c = await clubs.create("zed", "Club Zed", "");
+    await clubs.join(c.slug, "yan");
+    await clubs.describe(c.slug, "zed", "Blitz le jeudi");
+    expect((await clubs.get(c.slug))!.description).toBe("Blitz le jeudi");
+    await expect(clubs.describe(c.slug, "yan", "piraté")).rejects.toMatchObject({ code: "NOT_MEMBER" });
+    expect(await clubs.remove(c.slug)).toBe(true);
+    expect(await clubs.get(c.slug)).toBeNull();
+    expect(await clubs.mine("yan")).toEqual([]);
+    expect(await clubs.remove(c.slug)).toBe(false);
+  });
+
   it("2 clubs créés au plus par joueur", async () => {
     await clubs.create("max", "Club Un", "");
     await clubs.create("max", "Club Deux", "");

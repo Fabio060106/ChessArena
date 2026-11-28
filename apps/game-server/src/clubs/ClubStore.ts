@@ -41,6 +41,10 @@ export interface ClubStore {
   join(slug: string, userId: string): Promise<void>;
   leave(slug: string, userId: string): Promise<void>;
   isMember(slug: string, userId: string): Promise<boolean>;
+  /** le fondateur modifie la description */
+  describe(slug: string, userId: string, description: string): Promise<void>;
+  /** organisateur du site : suppression (contenu inapproprié) */
+  remove(slug: string): Promise<boolean>;
 }
 
 interface Row { slug: string; name: string; description: string; created_by: string; created_at: Date; member_count: string | number }
@@ -113,6 +117,13 @@ export class PgClubStore implements ClubStore {
     const r = await this.pool.query("SELECT 1 FROM club_members m JOIN clubs c ON c.id = m.club_id WHERE c.slug = $1 AND m.user_id = $2", [slug, userId]);
     return !!r.rowCount;
   }
+  async describe(slug: string, userId: string, description: string): Promise<void> {
+    const r = await this.pool.query("UPDATE clubs SET description = $3 WHERE slug = $1 AND created_by = $2", [slug, userId, description]);
+    if (!r.rowCount) throw new ClubError("NOT_MEMBER");
+  }
+  async remove(slug: string): Promise<boolean> {
+    return !!(await this.pool.query("DELETE FROM clubs WHERE slug = $1", [slug])).rowCount; // membres supprimés en cascade
+  }
 }
 
 /** Même comportement, en mémoire (serveur sans base, tests). */
@@ -153,4 +164,10 @@ export class InMemoryClubStore implements ClubStore {
     this.clubs.get(slug)!.members.delete(userId);
   }
   async isMember(slug: string, userId: string) { return !!this.clubs.get(slug)?.members.has(userId); }
+  async describe(slug: string, userId: string, description: string) {
+    const c = this.clubs.get(slug);
+    if (!c || c.createdBy !== userId) throw new ClubError("NOT_MEMBER");
+    c.description = description;
+  }
+  async remove(slug: string) { return this.clubs.delete(slug); }
 }

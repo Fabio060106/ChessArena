@@ -266,6 +266,13 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
             send(200, { ok: true, userId: target, muted });
             return true;
           }
+          // ─── clubs : suppression d'un club au contenu inapproprié ───
+          if (url.pathname === "/auth/admin/club-delete") {
+            if (!d.clubs) throw new HttpError(503, "UNAVAILABLE");
+            if (!(await d.clubs.remove(str(b.target).toLowerCase()))) throw new HttpError(404, "UNKNOWN_CLUB");
+            send(200, { ok: true });
+            return true;
+          }
           // ─── retransmissions (DGT / LiveChessCloud) ───
           if (url.pathname === "/auth/admin/relays") {
             send(200, { relays: d.relays?.list() ?? [] });
@@ -486,7 +493,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       }
       return true;
     }
-    const cm = url.pathname.match(/^\/account\/clubs\/([a-z0-9-]{2,48})(?:\/(join|leave))?$/);
+    const cm = url.pathname.match(/^\/account\/clubs\/([a-z0-9-]{2,48})(?:\/(join|leave|describe))?$/);
     if (cm) {
       const c = need(d.clubs);
       const slug = cm[1]!;
@@ -506,6 +513,12 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
         }
         if (cm[2] === "join" && req.method === "POST") { await c.join(slug, claims.sub); send(200, { ok: true }); return true; }
         if (cm[2] === "leave" && req.method === "POST") { await c.leave(slug, claims.sub); send(200, { ok: true }); return true; }
+        if (cm[2] === "describe" && req.method === "POST") {
+          const b = await body(req, 4096);
+          await c.describe(slug, claims.sub, cleanDescription(b.description)); // réservé au fondateur
+          send(200, { ok: true });
+          return true;
+        }
       } catch (e) {
         if (e instanceof ClubError) throw new HttpError(e.code === "UNKNOWN_CLUB" ? 404 : 409, e.code);
         throw e;

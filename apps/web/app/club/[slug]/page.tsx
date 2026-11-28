@@ -54,7 +54,9 @@ function Club() {
                   <div className="pointer-events-none absolute -right-12 -top-12 size-40 rounded-full bg-gold/15 blur-3xl" />
                   <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-gold">Club · {club.memberCount} membre{club.memberCount > 1 ? "s" : ""}</p>
                   <h1 className="font-display text-2xl font-bold">{club.name}</h1>
-                  {club.description && <p className="mt-1 max-w-[60ch] text-sm text-muted">{club.description}</p>}
+                  {club.createdBy === me?.userId
+                    ? <EditDescription slug={club.slug} initial={club.description} onSaved={load} />
+                    : club.description && <p className="mt-1 max-w-[60ch] text-sm text-muted">{club.description}</p>}
                   <p className="mt-1 text-xs text-muted">Fondé par <a href={`/profil/${encodeURIComponent(club.createdBy)}`} className="hover:text-text">{club.createdBy}</a></p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {!member && <button type="button" disabled={busy} onClick={() => act("join")} className="neon-btn rounded-xl px-4 py-2.5 font-semibold">{busy ? "…" : "Rejoindre le club"}</button>}
@@ -103,5 +105,38 @@ function Club() {
           })()}
       </div>
     </main>
+  );
+}
+
+/** Le fondateur modifie la description du club. */
+function EditDescription({ slug, initial, onSaved }: { slug: string; initial: string; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(false);
+  if (!editing) {
+    return (
+      <p className="mt-1 max-w-[60ch] text-sm text-muted">
+        {initial || <span className="italic">Pas encore de description.</span>}{" "}
+        <button type="button" onClick={() => setEditing(true)} className="text-xs text-neon hover:underline">modifier</button>
+      </p>
+    );
+  }
+  const save = async () => {
+    setBusy(true); setErr(false);
+    const r = await fetch(`/api/clubs/${slug}/describe`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ description: text }) }).catch(() => null);
+    setBusy(false);
+    if (r?.ok) { setEditing(false); onSaved(); } else setErr(true);
+  };
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      <textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={280} rows={2} aria-label="Description du club"
+        className="rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-text outline-none focus:border-neon/60" />
+      <div className="flex items-center gap-2">
+        <button type="button" disabled={busy} onClick={save} className="neon-btn rounded-lg px-3 py-1.5 text-sm font-semibold">{busy ? "…" : "Enregistrer"}</button>
+        <button type="button" onClick={() => { setEditing(false); setText(initial); }} className="text-sm text-muted">Annuler</button>
+        {err && <span role="alert" className="text-sm text-danger">Enregistrement impossible (280 caractères au plus).</span>}
+      </div>
+    </div>
   );
 }

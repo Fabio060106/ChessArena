@@ -5,7 +5,7 @@ import { callAuth } from "../../../lib/authService";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const ACTIONS = new Set(["check", "reset-code", "reports", "report-done", "mute", "fairplay", "game", "fairplay-review", "suspend", "relays", "relay-add", "relay-remove"]);
+const ACTIONS = new Set(["check", "reset-code", "reports", "report-done", "mute", "fairplay", "game", "fairplay-review", "suspend", "relays", "relay-add", "relay-remove", "club-delete"]);
 
 /**
  * Espace organisateur : { action, ... }. Le pseudo connecté est transmis au serveur de jeu, qui seul

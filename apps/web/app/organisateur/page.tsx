@@ -25,7 +25,7 @@ export default function OrganizerPage() {
       <div className="mx-auto flex max-w-[760px] flex-col gap-3 px-2 pb-8 sm:px-3">
         {admin === null && <p className="panel p-4 text-sm text-muted">Chargement…</p>}
         {admin === false && <p className="panel p-4 text-sm text-danger">Cette page est réservée aux organisateurs.</p>}
-        {admin && <><Relays /><FairPlay /><ResetCode /><Moderation /></>}
+        {admin && <><Relays /><FairPlay /><ResetCode /><Moderation /><ClubModeration /></>}
       </div>
     </main>
   );
@@ -262,5 +262,32 @@ function FairCaseRow({ c, onDone }: { c: FairCase; onDone: () => Promise<void> }
         <button type="button" disabled={busy} onClick={() => void decide("cheat")} className="rounded-lg border border-danger/60 px-2.5 py-1 text-xs text-danger hover:bg-danger/10">Triche : suspendre le compte</button>
       </div>
     </li>
+  );
+}
+
+/** Clubs : supprimer un club au nom ou à la description inappropriés (adresse /club/…). */
+function ClubModeration() {
+  const [slug, setSlug] = useState("");
+  const [confirm, setConfirm] = useState(false);
+  const [res, setRes] = useState<{ ok: boolean; text: string } | null>(null);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!confirm) { setConfirm(true); return; }
+    setRes(null);
+    const r = await call("club-delete", { target: slug }).catch(() => null);
+    setConfirm(false);
+    setRes(r?.ok ? { ok: true, text: `Club « ${slug} » supprimé.` } : { ok: false, text: r?.status === 404 ? "Aucun club à cette adresse." : "Suppression impossible (serveur indisponible ?)." });
+    if (r?.ok) setSlug("");
+  };
+  return (
+    <section className="panel p-4">
+      <h2 className="font-semibold">Clubs : modération</h2>
+      <p className="mt-1 text-sm text-muted">Supprime un club au contenu inapproprié. Indique son adresse : la fin du lien, par exemple « les-fous-du-roi » pour /club/les-fous-du-roi. Les membres sont retirés ; c'est définitif.</p>
+      <form onSubmit={submit} className="mt-3 flex gap-2">
+        <input value={slug} onChange={(e) => { setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "")); setConfirm(false); }} placeholder="adresse du club" required maxLength={48} className={input} />
+        <button type="submit" className={`shrink-0 rounded-lg px-3 py-2 text-sm font-semibold ${confirm ? "border border-danger bg-danger/15 text-danger" : "neon-btn"}`}>{confirm ? "Confirmer la suppression" : "Supprimer"}</button>
+      </form>
+      {res && <p role={res.ok ? "status" : "alert"} className={`mt-3 text-sm ${res.ok ? "text-muted" : "text-danger"}`}>{res.text}</p>}
+    </section>
   );
 }
