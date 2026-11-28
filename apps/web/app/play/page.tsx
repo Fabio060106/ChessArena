@@ -164,6 +164,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
   const myTurn = isMyTurn(view) && view.premoves.length === 0;
   const mat = useMemo(() => material(fen), [fen]);
   const inTournament = !!sng.current && (sng.current.status === "running" || sng.current.players.some((p) => p.userId === userId && p.status === "registered"));
+  const lobbyFirst = (view.phase === "idle" || view.phase === "queued" || view.phase === "connecting") && !inTournament;
   const lobby = (
     <Lobby
       queued={view.queue?.timeControl ?? null}
@@ -235,6 +236,8 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
       {!playing && <RelayBanner className="mx-auto mb-3 max-w-[1400px] px-2 sm:px-3 lg:px-6" />}
 
       <div className="mx-auto grid max-w-[1400px] gap-4 px-2 pb-6 sm:px-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:px-6">
+        {/* mobile, hors partie : le choix de cadence d'abord, l'échiquier ensuite */}
+        {lobbyFirst && <div className="panel p-3 lg:hidden">{lobby}</div>}
         {/* ─── Zone de jeu : la taille du plateau suit la hauteur ET la largeur disponibles ─── */}
         <section className="mx-auto flex w-full flex-col gap-1.5" style={{ maxWidth: "min(100%, max(320px, calc(100dvh - 200px)))" }}>
           {card(top)}
@@ -326,7 +329,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
         {/* ─── HUD latéral (sous le plateau sur mobile) ─── */}
         <aside className="flex w-full flex-col gap-3">
           {(view.phase === "idle" || view.phase === "queued" || view.phase === "connecting" || view.phase === "over") && !inTournament && (
-            <div className="panel p-3">
+            <div className={`panel p-3 ${lobbyFirst ? "hidden lg:block" : ""}`}>
               {view.phase === "over" && <p className="mb-2 text-xs text-muted">Nouvelle partie : même cadence, ou une autre.</p>}
               {lobby}
             </div>

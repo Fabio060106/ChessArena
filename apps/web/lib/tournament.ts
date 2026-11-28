@@ -310,3 +310,19 @@ export function swissCrosstable(s: SngSnapshot): Array<{ row: SwissRow; cells: C
     }),
   }));
 }
+
+/** Filtres de la vitrine des tournois. */
+export interface TournamentFilter { system: "all" | "swiss" | "arena" | "ko"; pace: "all" | "bullet" | "blitz" | "rapid"; open: boolean }
+export const NO_FILTER: TournamentFilter = { system: "all", pace: "all", open: false };
+
+export function paceOf(tc: string): "bullet" | "blitz" | "rapid" {
+  return tc.startsWith("bullet") ? "bullet" : tc.startsWith("blitz") ? "blitz" : "rapid";
+}
+
+/** `open` : seulement les tournois où il reste une place (l'Arena n'est jamais complète tant qu'elle n'est pas finie). */
+export function filterTournaments<T extends { system: string; timeControl: string; size: number; players: number; status: string }>(list: readonly T[], f: TournamentFilter): T[] {
+  return list.filter((c) =>
+    (f.system === "all" || c.system === f.system)
+    && (f.pace === "all" || paceOf(c.timeControl) === f.pace)
+    && (!f.open || c.system === "arena" || (c.status === "registering" && c.players < c.size)));
+}

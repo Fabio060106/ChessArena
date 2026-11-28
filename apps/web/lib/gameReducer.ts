@@ -174,7 +174,7 @@ export function sessionBanner(m: SessionModeEvent | null): string | null {
   if (!m || m.mode === "REAL_MONEY") return null;
   if (m.mode === "LOCKED") return "Auto-exclusion en cours : le jeu est suspendu. Vous pouvez consulter votre compte et retirer votre solde.";
   switch (m.reason) {
-    case "REAL_MONEY_DISABLED": return "Le jeu en argent réel est momentanément indisponible. Parties en jetons uniquement.";
+    case "REAL_MONEY_DISABLED": return null; // bêta en jetons : déjà dit dans le choix de mise
     case "JURISDICTION_BLOCKED":
     case "RESIDENCE_BLOCKED": return "Le jeu en argent réel n'est pas autorisé dans votre juridiction. Parties en jetons uniquement.";
     default: return "Localisation impossible à vérifier : parties en jetons uniquement.";

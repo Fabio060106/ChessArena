@@ -151,7 +151,7 @@ describe("mode de session", () => {
     const { gameReducer, initialView, sessionBanner } = await import("./gameReducer");
     const s = gameReducer(initialView, { type: "session_mode", session: { mode: "PLAY_MONEY_ONLY", reason: "REAL_MONEY_DISABLED" } });
     expect(s.session?.mode).toBe("PLAY_MONEY_ONLY");
-    expect(sessionBanner(s.session)).toMatch(/indisponible/);
+    expect(sessionBanner(s.session)).toBeNull(); // bêta en jetons : pas de bandeau
     expect(sessionBanner({ mode: "LOCKED", reason: "SELF_EXCLUDED" })).toMatch(/Auto-exclusion/);
     expect(sessionBanner({ mode: "REAL_MONEY", reason: "OK" })).toBeNull();
     const q = gameReducer({ ...initialView, phase: "queued" }, { type: "error", code: "LIMIT_EXCEEDED" });

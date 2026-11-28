@@ -4,6 +4,10 @@ import type { TournamentCard, TournamentsPageResponse } from "@chessarena/shared
 import { PageHeader } from "../../components/PageHeader";
 import { useMe } from "../../hooks/useMe";
 import { TournamentCardView as Card } from "../../components/TournamentCard";
+import { filterTournaments, NO_FILTER, type TournamentFilter } from "../../lib/tournament";
+
+const SYSTEMS: Array<[TournamentFilter["system"], string]> = [["all", "Tous"], ["swiss", "Suisse"], ["arena", "Arena"], ["ko", "Élimination"]];
+const PACES: Array<[TournamentFilter["pace"], string]> = [["all", "Toutes cadences"], ["bullet", "Bullet"], ["blitz", "Blitz"], ["rapid", "Rapide"]];
 
 /**
  * Vitrine des tournois : ceux qui vont commencer (on s'y inscrit en un clic), ceux qui se jouent
@@ -13,6 +17,9 @@ export default function TournamentsPage() {
   const me = useMe();
   const [data, setData] = useState<TournamentsPageResponse | null | "error">(null);
   const [now, setNow] = useState(() => Date.now());
+  const [filter, setFilter] = useState<TournamentFilter>(NO_FILTER);
+  const filtered = filter.system !== "all" || filter.pace !== "all" || filter.open;
+  const f = (l: TournamentCard[]) => filterTournaments(l, filter);
   useEffect(() => {
     if (!me) return;
     let alive = true;
@@ -43,10 +50,20 @@ export default function TournamentsPage() {
           : data === "error" ? <p className="panel p-4 text-sm text-danger">Impossible de charger les tournois (le serveur se réveille peut-être : réessaie dans une minute).</p>
           : (
             <>
-              <Section title="En cours" empty={null} list={data.running} now={now} />
-              <Section title="À venir" list={data.upcoming} now={now}
-                empty={<>Aucun tournoi ouvert pour l'instant. <a href="/play?onglet=tournoi" className="text-neon underline">Lance le premier</a> : ton club n'attend que ça.</>} />
-              <Section title="Terminés récemment" empty={null} list={data.finished} now={now} />
+              <div className="flex flex-col gap-1.5" role="group" aria-label="Filtrer les tournois">
+                <Chips options={SYSTEMS} value={filter.system} onChange={(system) => setFilter((x) => ({ ...x, system }))} />
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Chips options={PACES} value={filter.pace} onChange={(pace) => setFilter((x) => ({ ...x, pace }))} />
+                  <button type="button" aria-pressed={filter.open} onClick={() => setFilter((x) => ({ ...x, open: !x.open }))}
+                    className={chip(filter.open)}>Places libres</button>
+                  {filtered && <button type="button" onClick={() => setFilter(NO_FILTER)} className="px-2 text-xs text-muted underline hover:text-text">effacer</button>}
+                </div>
+              </div>
+              <Section title="En cours" empty={null} list={f(data.running)} now={now} />
+              <Section title="À venir" list={f(data.upcoming)} now={now} limit={8}
+                empty={filtered ? <>Aucun tournoi à venir avec ces filtres. <button type="button" className="text-neon underline" onClick={() => setFilter(NO_FILTER)}>Tout afficher</button></>
+                  : <>Aucun tournoi ouvert pour l'instant. <a href="/play?onglet=tournoi" className="text-neon underline">Lance le premier</a> : ton club n'attend que ça.</>} />
+              <Section title="Terminés récemment" empty={null} list={f(data.finished)} now={now} limit={6} />
             </>
           )}
       </div>
@@ -54,13 +71,34 @@ export default function TournamentsPage() {
   );
 }
 
-function Section({ title, list, now, empty }: { title: string; list: TournamentCard[]; now: number; empty: React.ReactNode }) {
+const chip = (on: boolean) => `rounded-full border px-3 py-1 text-xs font-semibold ${on ? "border-neon/60 bg-neon/10 text-neon" : "border-line text-muted hover:text-text"}`;
+
+function Chips<T extends string>({ options, value, onChange }: { options: Array<[T, string]>; value: T; onChange: (v: T) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map(([v, label]) => (
+        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)} className={chip(value === v)}>{label}</button>
+      ))}
+    </div>
+  );
+}
+
+function Section({ title, list, now, empty, limit }: { title: string; list: TournamentCard[]; now: number; empty: React.ReactNode; limit?: number }) {
+  const [all, setAll] = useState(false);
   if (!list.length && !empty) return null;
+  const shown = limit && !all ? list.slice(0, limit) : list;
   return (
     <section aria-label={title} className="flex flex-col gap-2">
       <h2 className="px-1 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">{title}{list.length ? ` (${list.length})` : ""}</h2>
       {list.length ? (
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">{list.map((c) => <li key={c.id}><Card c={c} now={now} /></li>)}</ul>
+        <>
+          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">{shown.map((c) => <li key={c.id}><Card c={c} now={now} /></li>)}</ul>
+          {shown.length < list.length && (
+            <button type="button" onClick={() => setAll(true)} className="panel p-2.5 text-sm font-semibold text-neon hover:border-neon/50">
+              Voir les {list.length - shown.length} autres
+            </button>
+          )}
+        </>
       ) : <p className="panel p-4 text-sm text-muted">{empty}</p>}
     </section>
   );
