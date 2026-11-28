@@ -674,7 +674,22 @@ function StartsBanner({ iso, weekly }: { iso: string; weekly: boolean }) {
       <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-gold">Tournoi programmé{weekly ? ` · 🔁 ${weeklyLabel(iso)}` : ""}</p>
       <p className="font-display text-lg font-bold">Départ {startsLabel(iso)}</p>
       <p className="tabular text-sm text-muted">{startsIn(iso, now)} · départ automatique avec au moins 3 inscrits. Sois sur la page Jouer à l'heure : ta première partie démarre toute seule.</p>
+      <NotifyButton />
     </div>
+  );
+}
+
+/** Autoriser les notifications du site (demandé seulement sur un clic) : « ta partie commence » même onglet caché. */
+function NotifyButton() {
+  const [perm, setPerm] = useState<NotificationPermission | "unsupported">("unsupported");
+  useEffect(() => { try { setPerm("Notification" in window ? Notification.permission : "unsupported"); } catch { setPerm("unsupported"); } }, []);
+  if (perm === "unsupported" || perm === "denied") return null;
+  if (perm === "granted") return <p className="mt-1 text-xs text-win">🔔 Tu seras prévenu au début de chaque partie, même si l'onglet est caché.</p>;
+  return (
+    <button type="button" onClick={() => void Notification.requestPermission().then(setPerm).catch(() => {})}
+      className="mt-2 rounded-lg border border-gold/50 px-3 py-1.5 text-xs font-semibold text-gold hover:bg-gold/10">
+      🔔 Me prévenir quand ma partie commence
+    </button>
   );
 }
 

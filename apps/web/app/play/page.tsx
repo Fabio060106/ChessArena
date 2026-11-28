@@ -19,6 +19,7 @@ import { TournamentHUD } from "../../components/TournamentHUD";
 import { MoveList } from "../../components/MoveList";
 import { MoveNav, usePlyKeys } from "../../components/MoveNav";
 import { replayFromSans } from "../../lib/replay";
+import { useAttention } from "../../hooks/useAttention";
 import { markWelcomed, WelcomeCard } from "../../components/WelcomeCard";
 import { LinkChallenge } from "../../components/LinkChallenge";
 import { OfficialBanner } from "../../components/OfficialBanner";
@@ -108,6 +109,8 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
   usePlyKeys(navPly, liveLast, go, !!view.start);
   useEffect(() => { setConfirmResign(false); setShowResult(true); }, [view.phase]);
   useEffect(() => { if (view.start) markWelcomed(); }, [view.start]); // première partie : plus de carte de bienvenue
+  // onglet en arrière-plan : titre qui clignote quand c'est à moi (et notification au début d'une partie si déjà autorisée)
+  useAttention({ myTurn: playing && isMyTurn(view), gameId: playing ? view.start?.gameId ?? null : null, opponent: (view.myColor === "w" ? view.start?.black.userId : view.start?.white.userId) ?? null });
   // nouvelle partie (tournoi qui démarre pendant qu'on lit le classement, sur mobile) : on remonte au plateau
   const gameId = view.start?.gameId;
   // Défilement INSTANTANÉ (et seulement si le plateau n'est pas entièrement visible) : un défilement animé
