@@ -2,7 +2,7 @@
 import { memo, useEffect, useState } from "react";
 import { SITE_NAME } from "../lib/site";
 import { ARENA_MINUTES, SNG_MAX_SIZE, SNG_MIN_SIZE, type SngCreatePayload, type SngSnapshot, type TimeControlId } from "@chessarena/shared";
-import { ARENA_RULES, arenaJoinable, arenaRows, isArena, remaining, defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
+import { weeklyLabel, ARENA_RULES, arenaJoinable, arenaRows, isArena, remaining, defaultStart, startsIn, startsLabel, KNOCKOUT_RULES, SWISS_RULES, fmtPoints, isSwiss, swissBoardScore, swissRows, swissRoundsFor, matchDetail, bracketInfo, currentPairings, fieldSize, formatMoney, liveStandings, prizeBreakdown, roundLabel, waitingInfo, type StandingRow } from "../lib/tournament";
 
 const TC_LABEL: Record<TimeControlId, string> = {
   bullet_1_0: "Bullet 1+0", blitz_3_0: "Blitz 3+0", blitz_3_2: "Blitz 3+2", rapid_5_0: "Rapide 5+0",
@@ -90,7 +90,7 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
         <a href={`/tournoi/${t.id}`} className="-mt-1 text-xs text-neon hover:underline">Page du tournoi : classement en direct, à partager à ton club →</a>
       )}
 
-      {t.status === "registering" && t.startsAt && <StartsBanner iso={t.startsAt} />}
+      {t.status === "registering" && t.startsAt && <StartsBanner iso={t.startsAt} weekly={!!t.repeatWeekly} />}
 
       {isArena(t) && t.status === "running" && me?.status === "playing" && <ArenaMe t={t} userId={p.userId} busy={p.busy === `pause:${t.id}`} onPause={(x) => p.onPause?.(t.id, x)} />}
 
@@ -254,7 +254,7 @@ function Lobby({ lobby, busy, error, onRegister, onJoin, onCreate, invite, userI
             <div className="min-w-0 flex-1">
               <p className="truncate font-semibold">{isCustom(t) ? titleOf(t) : `${TC_LABEL[t.timeControl]} · ${t.size} joueurs`}</p>
               <p className="text-xs text-muted">
-                {t.startsAt && <span className="block font-semibold text-gold">Départ {startsLabel(t.startsAt)}</span>}
+                {t.startsAt && <span className="block font-semibold text-gold">Départ {startsLabel(t.startsAt)}{t.repeatWeekly ? " · 🔁 chaque semaine" : ""}</span>}
                 {isCustom(t) ? `${TC_LABEL[t.timeControl]} · ${t.size} joueurs · ${formatOf(t)} · ` : ""}entrée {formatMoney(t.buyInCents, t.currency)} · cagnotte <span className="text-gold">{formatMoney(t.prizePoolCents, t.currency)}</span>
               </p>
               <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-2">
@@ -290,6 +290,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   const [rounds, setRounds] = useState(0);
   const [when, setWhen] = useState<"full" | "time">("full");
   const [startAt, setStartAt] = useState(defaultStart);
+  const [weekly, setWeekly] = useState(false);
   const pick = "rounded-lg px-2 py-1.5 text-sm font-semibold transition";
   const on = "bg-ink text-neon ring-1 ring-neon/50";
   const off = "text-muted hover:text-text";
@@ -303,7 +304,7 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
   }
   const pool = Math.floor(entry * size * 0.9);
   return (
-    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(system === "arena" ? { arenaMinutes: minutes } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString() } : {}) }); }}>
+    <form className="panel flex flex-col gap-3 p-3" onSubmit={(e) => { e.preventDefault(); onCreate({ size, timeControl: tc, buyInCents: entry, name: name.trim() || undefined, system, ...(system === "swiss" && rounds ? { rounds } : {}), ...(system === "arena" ? { arenaMinutes: minutes } : {}), ...(when === "time" ? { startsAt: new Date(startAt).toISOString(), ...(weekly ? { repeatWeekly: true } : {}) } : {}) }); }}>
       <div className="flex items-center justify-between">
         <h3 className="font-display text-base font-bold">Nouveau tournoi</h3>
         <button type="button" onClick={() => setOpen(false)} className="text-xs text-muted hover:text-text">Fermer</button>
@@ -365,6 +366,12 @@ function CreateForm({ busy, onCreate }: { busy: boolean; onCreate: (p: SngCreate
         {when === "time" && (
           <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} aria-label="Date et heure du départ" required
             className="mt-1 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-text outline-none focus:border-neon/60 [color-scheme:dark]" />
+        )}
+        {when === "time" && (
+          <label className="mt-1 flex items-center gap-2 text-sm text-text">
+            <input type="checkbox" checked={weekly} onChange={(e) => setWeekly(e.target.checked)} className="size-4 accent-[var(--neon,#22d3ee)]" />
+            Répéter chaque semaine{startAt ? ` (${weeklyLabel(new Date(startAt).toISOString())})` : ""}
+          </label>
         )}
       </div>
       <div className="flex flex-col gap-1 text-xs text-muted">
@@ -546,7 +553,7 @@ function SwissRounds({ t, userId }: { t: SngSnapshot; userId: string }) {
 }
 
 /** Tournoi programmé : heure de départ et compte à rebours (rafraîchi chaque seconde dans la dernière heure). */
-function StartsBanner({ iso }: { iso: string }) {
+function StartsBanner({ iso, weekly }: { iso: string; weekly: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   const soon = Date.parse(iso) - now < 60 * 60_000;
   useEffect(() => {
@@ -555,7 +562,7 @@ function StartsBanner({ iso }: { iso: string }) {
   }, [soon]);
   return (
     <div className="panel border-gold/40 p-3">
-      <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-gold">Tournoi programmé</p>
+      <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-gold">Tournoi programmé{weekly ? ` · 🔁 ${weeklyLabel(iso)}` : ""}</p>
       <p className="font-display text-lg font-bold">Départ {startsLabel(iso)}</p>
       <p className="tabular text-sm text-muted">{startsIn(iso, now)} · départ automatique avec au moins 3 inscrits. Sois sur la page Jouer à l'heure : ta première partie démarre toute seule.</p>
     </div>

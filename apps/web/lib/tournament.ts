@@ -282,3 +282,9 @@ export const ARENA_RULES = [
   "À l'heure de fin, plus de nouvelle partie : celles en cours comptent encore. Départage : victoires, puis moins de parties jouées.",
   "45 s pour jouer son premier coup : sinon 0 point et la série s'arrête (l'adversaire ne perd rien).",
 ];
+
+/** « chaque samedi à 20:00 » */
+export function weeklyLabel(iso: string): string {
+  const d = new Date(iso);
+  return `chaque ${d.toLocaleDateString("fr-FR", { weekday: "long" })} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+}

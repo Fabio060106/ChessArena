@@ -112,3 +112,40 @@ describe("reprise après redémarrage", () => {
     expect(m.restoreCustom({ ...snap, id: "x", status: "running" })).toBeNull();
   });
 });
+
+describe("séries hebdomadaires", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-28T10:00:00Z")); });
+  afterEach(() => vi.useRealTimers());
+  const next = (m: TournamentManager, not: string) => m.lobby().find((x) => x.id !== not && x.repeatWeekly);
+
+  it("au départ, le tournoi de la semaine suivante est programmé (mêmes réglages, créateur inscrit)", async () => {
+    const { m } = setup();
+    const s = await m.createCustom({ size: 8, timeControl: "blitz_3_0", buyInCents: 0, name: "Club du samedi", system: "swiss", rounds: 4, startsAt: "2026-11-28T19:00:00Z", repeatWeekly: true }, "a", 1500);
+    expect(s.repeatWeekly).toBe(true);
+    for (const u of ["b", "c"]) await m.registerById(s.id, u, 1500);
+    await vi.advanceTimersByTimeAsync(9 * H + 1_000);
+    await flush();
+    expect(m.get(s.id)!.state).toBe("running");
+    const n = next(m, s.id)!;
+    expect(n).toMatchObject({ name: "Club du samedi", system: "swiss", swissRounds: 4, startsAt: "2026-12-05T19:00:00.000Z", status: "registering", createdBy: "a" });
+    expect(n.players.map((p) => p.userId)).toEqual(["a"]);
+  });
+
+  it("faute d'inscrits à l'heure, la série continue ; annulé par le créateur, elle s'arrête", async () => {
+    const { m } = setup();
+    const s = await m.createCustom({ size: 8, timeControl: "blitz_3_0", buyInCents: 0, system: "arena", arenaMinutes: 45, startsAt: "2026-11-28T19:00:00Z", repeatWeekly: true }, "a", 1500);
+    await vi.advanceTimersByTimeAsync(9 * H + 1_000);
+    await flush();
+    const n = next(m, s.id)!;
+    expect(n).toMatchObject({ system: "arena", arenaMinutes: 45, startsAt: "2026-12-05T19:00:00.000Z" });
+    // le créateur quitte la semaine suivante : annulée, pas de troisième
+    await m.unregister(n.id, "a");
+    await flush();
+    expect(m.lobby().filter((x) => x.repeatWeekly)).toHaveLength(0);
+  });
+
+  it("une série sans heure de départ est refusée", async () => {
+    const { m } = setup();
+    await expect(m.createCustom({ size: 8, timeControl: "blitz_3_0", buyInCents: 0, repeatWeekly: true }, "a", 1500)).rejects.toBeInstanceOf(CustomTournamentError);
+  });
+});

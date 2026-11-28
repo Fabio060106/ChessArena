@@ -32,7 +32,7 @@ export function tournamentCard(s: SngSnapshot): TournamentCard {
       : [];
   return {
     id: s.id, name: s.name ?? null, createdBy: s.createdBy ?? null, system: s.system ?? "ko", timeControl: s.timeControl, status: s.status,
-    size: s.size, players: active.length, buyInCents: s.buyInCents, currency: s.currency, startsAt: s.startsAt ?? null,
+    size: s.size, players: active.length, buyInCents: s.buyInCents, currency: s.currency, startsAt: s.startsAt ?? null, repeatWeekly: !!s.repeatWeekly,
     arenaMinutes: s.arenaMinutes ?? null, arenaEndsAt: s.arenaEndsAt ?? null, totalRounds: s.totalRounds ?? null, currentRound: s.currentRound,
     createdAt: s.createdAt, finishedAt: s.finishedAt,
     leaders: (s.status === "registering" ? [] : ordered.slice(0, 3)).map((p) => ({ userId: p.userId, points: pts(p) })),

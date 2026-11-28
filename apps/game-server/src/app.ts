@@ -652,7 +652,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
 
     socket.on("sng:create", guard(socket, async (raw: unknown, ack: unknown) => {
       const reply = sngReply(ack);
-      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown; arenaMinutes?: unknown } | null;
+      const p = raw as { size?: unknown; timeControl?: unknown; buyInCents?: unknown; name?: unknown; system?: unknown; rounds?: unknown; startsAt?: unknown; arenaMinutes?: unknown; repeatWeekly?: unknown } | null;
       if (!p || typeof p !== "object" || typeof p.timeControl !== "string" || !(p.timeControl in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
       const blocked = canJoinTournament();
       if (blocked) return reply({ ok: false, code: blocked });
@@ -664,6 +664,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
             size: p.size as number, timeControl, buyInCents: p.buyInCents as number, name: typeof p.name === "string" ? p.name : undefined,
             system: p.system === "swiss" || p.system === "arena" ? p.system : p.system === undefined || p.system === "ko" ? "ko" : ("?" as "ko"),
             arenaMinutes: p.arenaMinutes === undefined ? undefined : (p.arenaMinutes as number),
+            repeatWeekly: p.repeatWeekly === undefined ? undefined : (p.repeatWeekly as boolean),
             rounds: p.rounds === undefined ? undefined : (p.rounds as number),
             startsAt: p.startsAt === undefined ? undefined : (p.startsAt as string),
           },

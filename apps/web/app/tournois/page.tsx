@@ -4,7 +4,7 @@ import type { TournamentCard, TournamentsPageResponse } from "@chessarena/shared
 import { PageHeader } from "../../components/PageHeader";
 import { useMe } from "../../hooks/useMe";
 import { TC_LABEL } from "../../lib/social";
-import { formatMoney, remaining, startsIn, startsLabel, swissRoundsFor } from "../../lib/tournament";
+import { formatMoney, remaining, startsIn, startsLabel, swissRoundsFor, weeklyLabel } from "../../lib/tournament";
 
 /**
  * Vitrine des tournois : ceux qui vont commencer (on s'y inscrit en un clic), ceux qui se jouent
@@ -79,6 +79,7 @@ function Card({ c, now }: { c: TournamentCard; now: number }) {
         <div className="min-w-0">
           <p className="truncate font-display text-base font-bold">{c.name ?? (c.createdBy ? `Tournoi de ${c.createdBy}` : "Tournoi")}</p>
           <p className="text-xs text-muted">{format} · {TC_LABEL[c.timeControl]} · {c.buyInCents > 0 ? `entrée ${formatMoney(c.buyInCents, c.currency)}` : "gratuit"}</p>
+          {c.repeatWeekly && c.startsAt && <p className="text-xs text-neon">🔁 {weeklyLabel(c.startsAt)}</p>}
         </div>
         <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${live ? "bg-neon/15 text-neon" : c.status === "registering" ? "bg-gold/15 text-gold" : "bg-surface-2 text-muted"}`}>
           {live ? (c.system === "arena" && c.arenaEndsAt ? `● ⏱ ${remaining(c.arenaEndsAt, now)}` : c.system === "swiss" ? `● Ronde ${c.currentRound}/${c.totalRounds}` : "● En cours")

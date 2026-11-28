@@ -235,6 +235,8 @@ export interface SngSnapshot {
   swissRounds?: number;
   /** tournoi programmé : départ automatique à cette heure (ISO) */
   startsAt?: string | null;
+  /** tournoi programmé répété chaque semaine (le suivant est créé au départ de celui-ci) */
+  repeatWeekly?: boolean;
   /** arena : durée (minutes) et heure de fin (une fois lancé) */
   arenaMinutes?: number;
   arenaEndsAt?: string;
@@ -264,6 +266,7 @@ export interface TournamentCard {
   buyInCents: Cents;
   currency: Currency;
   startsAt: string | null;
+  repeatWeekly: boolean;
   arenaMinutes: number | null;
   arenaEndsAt: string | null;
   totalRounds: number | null;
@@ -312,6 +315,8 @@ export interface SngCreatePayload {
   startsAt?: string;
   /** arena : durée en minutes (ARENA_MINUTES) */
   arenaMinutes?: number;
+  /** avec startsAt : le même tournoi chaque semaine */
+  repeatWeekly?: boolean;
 }
 
 /** Partie terminée, telle qu'affichée dans l'historique d'un joueur. */
