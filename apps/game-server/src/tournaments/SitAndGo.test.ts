@@ -660,3 +660,76 @@ describe("SitAndGo — organisateur", () => {
     await expect(t.sng.kick("u1")).rejects.toMatchObject({ code: "NOT_REGISTERING" });
   });
 });
+
+describe("SitAndGo — reprise d'un tournoi en cours après redémarrage", () => {
+  /** relance : nouvelle instance, même grand livre, à partir du dernier instantané */
+  const reboot = async (t: ReturnType<typeof setup>, extra: Record<string, unknown> = {}) => {
+    const snap = t.sng.snapshot();
+    const started: StartGameRequest[] = [];
+    const cfgBase = { id: "T1", formatId: "f", size: snap.size, timeControl: snap.timeControl, currency: snap.currency, buyInCents: snap.buyInCents, rakeBps: snap.rakeBps, payoutBps: snap.payoutBps };
+    const sng = new SitAndGo({ ...cfgBase, ...extra } as never, {
+      ledger: t.ledger, startGame: async (r) => { started.push(r); return r.gameId; }, persist: async () => {}, emit: () => {}, random: () => 0.1, arenaTickMs: 0,
+      ...(extra.clock ? { now: () => (extra.clock as { t: number }).t } : {}),
+    });
+    await sng.restoreRunning(snap);
+    const finish = (req: StartGameRequest, result: GameResult) => sng.onGameFinished({
+      gameId: req.gameId, white: req.white, black: req.black, timeControl: TIME_CONTROLS[req.timeControl], stake: { currency: "PLAY", buyInCents: 0 },
+      result, termination: result === "1/2-1/2" ? "agreement" : "resignation", pgn: "", moveTimesMs: [], focusLoss: { w: 0, b: 0 }, aborted: false, abortedBy: null,
+      rated: req.rated, tournament: req.tournament,
+    });
+    return { sng, started, finish };
+  };
+
+  it("suisse : ronde en cours reprise, partie terminée gardée, partie interrompue rejouée ; fin et gains normaux", async () => {
+    const t = setup(8, { swiss: 3, payoutBps: [5000, 3000, 2000] });
+    await t.fill(4);
+    await t.sng.startNow();
+    await t.finish(t.started[0]!, "1-0"); // une partie finie, l'autre interrompue par le redémarrage
+    const B = await reboot(t, { system: "swiss", swissRounds: 3 });
+    let s = B.sng.snapshot();
+    expect(s.status).toBe("running");
+    expect(s.rounds[0]!.filter((m) => m.status === "done")).toHaveLength(1);
+    expect(B.started).toHaveLength(1); // seule la partie interrompue est rejouée
+    expect(s.players.find((p) => p.userId === t.started[0]!.white.userId)!.points).toBe(1);
+    // on joue jusqu'au bout
+    for (let i = 0; i < 20 && B.sng.snapshot().status === "running"; i++) {
+      const done = new Set(B.sng.snapshot().rounds.flat().flatMap((m) => m.games.filter((g) => g.result).map((g) => g.gameId)));
+      for (const r of B.started.filter((x) => !done.has(x.gameId))) await B.finish(r, "1-0");
+    }
+    s = B.sng.snapshot();
+    expect(s.status).toBe("finished");
+    expect(s.rounds).toHaveLength(3);
+    for (const p of s.players) { const opp = s.rounds.flat().filter((m) => m.p2 && (m.p1 === p.userId || m.p2 === p.userId)).map((m) => (m.p1 === p.userId ? m.p2 : m.p1)); expect(new Set(opp).size).toBe(opp.length); }
+    expect(await t.ledger.balance(B.sng.escrowAccount, "PLAY")).toBe(0);
+  });
+
+  it("élimination directe : après une nulle, la partie rejouée est la revanche", async () => {
+    const t = setup(4, { buyIn: 0 });
+    await t.fill(4);
+    const first = t.started[0]!;
+    await t.finish(first, "1/2-1/2"); // nulle → revanche en cours, interrompue
+    const B = await reboot(t);
+    const replay = B.started.find((r) => [r.white.userId, r.black.userId].includes(first.white.userId))!;
+    expect(replay.tournament.kind).toBe("rematch");
+  });
+
+  it("arena : reprise avec le temps restant, parties interrompues sans effet, fin à l'heure", async () => {
+    const clock = { t: Date.parse("2026-11-28T20:00:00Z") };
+    const t = setup(8, { arena: 30, clock, buyIn: 0 });
+    await t.fill(4);
+    await t.sng.startNow();
+    await t.finish(t.started[0]!, "1-0");
+    clock.t += 5 * 60_000;
+    const B = await reboot(t, { system: "arena", arenaMinutes: 30, clock });
+    let s = B.sng.snapshot();
+    expect(s.arenaEndsAt).toBe("2026-11-28T20:30:00.000Z");
+    expect(s.rounds[0]!.filter((m) => m.status === "done" && m.result === null)).toHaveLength(1); // l'interrompue : annulée, sans points
+    expect(s.players.reduce((a, p) => a + (p.points ?? 0), 0)).toBe(2);
+    expect(B.started.length).toBeGreaterThan(0); // nouveaux appariements tout de suite
+    clock.t = Date.parse("2026-11-28T20:30:01Z");
+    for (const r of [...B.started]) await B.finish(r, "1/2-1/2");
+    await B.sng.arenaTick();
+    s = B.sng.snapshot();
+    expect(s.status).toBe("finished");
+  });
+});

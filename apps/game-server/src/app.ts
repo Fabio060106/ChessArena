@@ -1139,8 +1139,12 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     for (const s of await store.loadOpenCustom()) {
       try { if (tournaments.restoreCustom(s)) restored.push(s.id); } catch (e) { console.error(`[recover] reprise du tournoi ${s.id} impossible`, e); }
     }
+    // tournois de joueurs EN COURS : repris (parties interrompues rejouées ; arena : temps restant)
+    for (const s of await store.loadRunningCustom()) {
+      try { if (await tournaments.restoreRunningCustom(s)) restored.push(s.id); } catch (e) { console.error(`[recover] reprise du tournoi en cours ${s.id} impossible : il sera annulé et remboursé`, e); }
+    }
     const cancelled = await store.cancelInterrupted("server_restart", restored);
-    if (restored.length) console.log(`[recover] ${restored.length} tournoi(s) en inscription repris`);
+    if (restored.length) console.log(`[recover] ${restored.length} tournoi(s) repris (en inscription ou en cours)`);
     const refunded = await refundOrphanedEscrows(ledger, (acc) => {
       const id = acc.split(":")[1] ?? "";
       return games.hasGame(id) || tournaments.ownsEscrow(acc);

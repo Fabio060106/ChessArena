@@ -167,6 +167,25 @@ export class TournamentManager {
    * Reprise d'un tournoi créé par un joueur, encore en inscription, après un redémarrage du serveur
    * (mise en ligne d'une nouvelle version) : mêmes réglages, mêmes inscrits, l'escrow est resté en base.
    */
+  /** Reprise d'un tournoi de joueur EN COURS (voir SitAndGo.restoreRunning). */
+  async restoreRunningCustom(s: SngSnapshot): Promise<SitAndGo | null> {
+    if (s.status !== "running" || !s.createdBy || this.byId.has(s.id)) return null;
+    const id = s.id;
+    const t = this.makeTable(
+      { id: `custom:${id}`, size: s.size, timeControl: s.timeControl, currency: s.currency, buyInCents: s.buyInCents },
+      (x) => this.onCustomChanged(id, x),
+      { id, createdBy: s.createdBy, name: s.name ?? null, system: s.system ?? "ko", swissRounds: s.swissRounds ?? 0, startsAt: s.startsAt ?? null, createdAt: s.createdAt, arenaMinutes: s.arenaMinutes ?? 0, repeatWeekly: false, club: s.club ?? null,
+        teamBattle: s.teamBattle ? { leaders: s.teamBattle.leaders, teams: s.teamBattle.teams.map((t) => ({ slug: t.slug, name: t.name })) } : null },
+    );
+    try {
+      await t.restoreRunning(s);
+    } catch (e) {
+      this.byId.delete(id); // reprise impossible : le tournoi sera annulé et remboursé comme avant
+      throw e;
+    }
+    return t;
+  }
+
   restoreCustom(s: SngSnapshot): SitAndGo | null {
     if (s.status !== "registering" || !s.createdBy || this.byId.has(s.id)) return null;
     const id = s.id;
@@ -297,6 +316,7 @@ export class TournamentManager {
         startGame: (r) => this.deps.startGame(r),
         persist: (s) => this.deps.store.save(s),
         swissPauseMs: SWISS_PAUSE_MS,
+        resumeDelayMs: 20_000,
         emit: (s) => {
           this.deps.emitTournament(s);
           onChange(s);

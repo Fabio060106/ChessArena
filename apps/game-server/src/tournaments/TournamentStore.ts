@@ -13,6 +13,8 @@ export interface TournamentStore {
   cancelInterrupted(reason: string, keep?: readonly string[]): Promise<string[]>;
   /** Tournois créés par des joueurs encore en inscription (repris au démarrage). */
   loadOpenCustom(): Promise<SngSnapshot[]>;
+  /** Tournois créés par des joueurs en cours (repris au démarrage). */
+  loadRunningCustom(): Promise<SngSnapshot[]>;
   /** Dernier instantané enregistré (null si inconnu). */
   load(id: string): Promise<SngSnapshot | null>;
   /** Tournois d'un joueur, les plus récents d'abord (inscrits, joués, annulés ; pas les désinscriptions). */
@@ -145,6 +147,14 @@ export class PgTournamentStore implements TournamentStore {
     return r.rows.map((x) => x.snapshot);
   }
 
+  async loadRunningCustom(): Promise<SngSnapshot[]> {
+    if (!(await this.hasSnapshot())) return [];
+    const r = await this.pool.query<{ snapshot: SngSnapshot }>(
+      `SELECT snapshot FROM tournaments WHERE status = 'running' AND snapshot IS NOT NULL
+          AND snapshot->>'createdBy' IS NOT NULL AND snapshot->>'status' = 'running'`);
+    return r.rows.map((x) => x.snapshot);
+  }
+
   async loadOpenCustom(): Promise<SngSnapshot[]> {
     if (!(await this.hasSnapshot())) return [];
     const r = await this.pool.query<{ snapshot: SngSnapshot }>(
@@ -183,6 +193,9 @@ export class InMemoryTournamentStore implements TournamentStore {
     return [];
   }
   async loadOpenCustom(): Promise<SngSnapshot[]> {
+    return [];
+  }
+  async loadRunningCustom(): Promise<SngSnapshot[]> {
     return [];
   }
   async recentFinished(limit: number, clubSlug?: string): Promise<SngSnapshot[]> {

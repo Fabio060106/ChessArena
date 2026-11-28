@@ -107,6 +107,8 @@ export interface SitAndGoPorts {
   swissPauseMs?: number;
   /** arena : intervalle des vagues d'appariement (défaut 3 s ; 0 = seulement via arenaTick(), pour les tests) */
   arenaTickMs?: number;
+  /** reprise après redémarrage : délai avant de relancer les parties (le temps que les joueurs se reconnectent) */
+  resumeDelayMs?: number;
 }
 
 /** inscriptions comptées (bataille de clubs : effectifs des clubs) */
@@ -273,6 +275,76 @@ export class SitAndGo {
   // ═══════════════════════════════════════════════════════════════════════════
   // Inscriptions
   // ═══════════════════════════════════════════════════════════════════════════
+  /**
+   * Reprise d'un tournoi EN COURS après un redémarrage du serveur (mise en ligne) : classement, rondes et parties
+   * terminées sont repris de l'instantané ; les parties interrompues (perdues avec le serveur) sont rejouées
+   * (suisse, KO) ou annulées sans effet (arena, qui reprend avec le temps restant). L'escrow est intact en base.
+   */
+  async restoreRunning(s: SngSnapshot): Promise<void> {
+    if (this.status !== "registering" || this.entries.size || s.status !== "running") throw new SngError("INVALID_CONFIG", "reprise d'un tournoi en cours uniquement");
+    const base = Math.floor(this.now() / 1000) * 10;
+    this.attemptBase = base;
+    this.status = "running";
+    this.startedAt = s.startedAt;
+    const flat = s.rounds.flat();
+    for (const p of s.players) {
+      if (p.status !== "playing" && p.status !== "eliminated" && p.status !== "winner") continue;
+      const mine = flat.filter((m) => m.p1 === p.userId || m.p2 === p.userId);
+      this.entries.set(p.userId, {
+        userId: p.userId, rating: p.rating, status: p.status === "winner" ? "playing" : p.status, attempt: base, registeredSeq: ++this.seq,
+        seed: p.seed, eliminatedRound: p.eliminatedRound, finalRank: null, payoutCents: 0,
+        opponents: mine.filter((m) => m.p2).map((m) => (m.p1 === p.userId ? m.p2! : m.p1!)),
+        colors: mine.map((m) => (!m.p2 ? "-" : m.p1 === p.userId ? "w" : "b")),
+        hadBye: mine.some((m) => m.result === "bye"), team: p.team ?? null, paused: p.paused, withdrawn: p.withdrawn, forfeits: 0,
+      });
+    }
+    this.entrants = [...this.entries.values()].filter((e) => e.seed !== null).length;
+    this.lateSeed = Math.max(0, ...[...this.entries.values()].map((e) => e.seed ?? 0));
+    const ko = this.cfg.system === "ko";
+    this.rounds = s.rounds.map((r) => r.map((m): Match => {
+      const games: GameRec[] = m.games.filter((g) => g.result).map((g) => ({ gameId: g.gameId, white: g.white, black: g.black, kind: g.kind, result: g.result, termination: g.termination }));
+      const done = ko ? m.status === "done" : m.result !== null && m.result !== undefined;
+      return { round: m.round, slot: m.slot, p1: m.p1, p2: m.p2, winner: m.winner, status: done ? "done" : "pending", games, result: m.result ?? null };
+    }));
+    if (this.cfg.system === "swiss") this.totalRounds = s.totalRounds ?? this.plannedRounds(this.entrants);
+    this.audit("restore_running", { rounds: this.rounds.length, players: this.entries.size });
+    if (this.cfg.system === "arena") this.arenaEndAt = s.arenaEndsAt ? Date.parse(s.arenaEndsAt) : this.now();
+    await this.persistNow();
+    this.emit();
+    const delay = this.ports.resumeDelayMs ?? 0;
+    if (delay > 0) {
+      setTimeout(() => void this.resumeAfterRestore().catch((e) => console.error(`[sng ${this.id}] reprise`, e)), delay).unref?.();
+      return;
+    }
+    await this.resumeAfterRestore();
+  }
+
+  private async resumeAfterRestore(): Promise<void> {
+    if (this.status !== "running") return;
+    const ko = this.cfg.system === "ko";
+    if (this.cfg.system === "arena") {
+      // parties interrompues : annulées sans effet (personne ne perd de points ni sa série)
+      for (const m of this.rounds[0] ?? []) if (m.status === "pending") { m.status = "done"; m.result = null; }
+      const every = this.ports.arenaTickMs ?? 3_000;
+      if (every > 0) {
+        this.arenaTimer = setInterval(() => void this.arenaTick().catch((e) => console.error(`[sng ${this.id}] arena`, e)), every);
+        this.arenaTimer.unref?.();
+      }
+      this.changed();
+      return this.arenaTick();
+    }
+    // suisse et KO : on rejoue les parties interrompues (KO : la suite logique du match — revanche, Armageddon)
+    const cur = this.cfg.system === "swiss" ? this.rounds.at(-1) ?? [] : this.rounds.flat();
+    for (const m of cur) {
+      if (m.status !== "pending" || !m.p1 || !m.p2) continue;
+      const last = m.games.at(-1);
+      const kind: SngGameKind = !ko || !last ? "main" : last.kind === "main" ? "rematch" : "armageddon";
+      await this.startGame(m, kind);
+    }
+    this.changed();
+    await this.advance();
+  }
+
   /** joueurs retirés par l'organisateur : plus d'inscription possible à ce tournoi */
   private readonly kicked = new Set<string>();
 
