@@ -38,10 +38,23 @@ export function SiteNav({ active }: { active?: (typeof LINKS)[number][0] }) {
     return () => window.removeEventListener("keydown", esc);
   }, [more]);
   const inMore = !!active && !TABS.some(([h]) => h === active);
+  // la barre d'onglets s'efface quand on descend dans la page et revient dès qu'on remonte (ou en haut de page)
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    let last = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (Math.abs(y - last) < 6) return;
+      setHidden(y > last && y > 80 && y + window.innerHeight < document.documentElement.scrollHeight - 4);
+      last = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
   return (
     <nav aria-label="Navigation" className="mx-auto max-w-[1400px] px-2 pb-2 sm:overflow-x-auto sm:px-3 lg:px-6">
       {/* téléphone : barre d'onglets fixe en bas */}
-      <ul className="fixed inset-x-0 bottom-0 z-[80] flex border-t border-line bg-ink/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden" aria-label="Onglets">
+      <ul className={`fixed inset-x-0 bottom-0 z-[80] flex border-t border-line bg-ink/95 pb-[env(safe-area-inset-bottom)] backdrop-blur transition-transform duration-200 sm:hidden ${hidden && !more ? "pointer-events-none translate-y-full" : ""}`} aria-label="Onglets">
         {TABS.map(([href, label, icon]) => (
           <li key={href} className="flex-1">
             <a href={href} aria-current={active === href ? "page" : undefined}
