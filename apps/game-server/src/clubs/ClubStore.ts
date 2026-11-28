@@ -47,11 +47,16 @@ export interface ClubStore {
   remove(slug: string): Promise<boolean>;
 }
 
-interface Row { slug: string; name: string; description: string; created_by: string; created_at: Date; member_count: string | number }
+interface Row { slug: string; name: string; description: string; created_by: string; created_at: Date; member_count: string | number; avg_blitz?: string | number | null; battles_won?: string | number | null }
 const summary = (r: Row): ClubSummary => ({
   slug: r.slug, name: r.name, description: r.description, createdBy: r.created_by, createdAt: new Date(r.created_at).toISOString(), memberCount: Number(r.member_count),
+  avgBlitz: Math.round(Number(r.avg_blitz ?? 1500)), battlesWon: Number(r.battles_won ?? 0),
 });
-const SELECT = `SELECT c.slug, c.name, c.description, c.created_by, c.created_at, (SELECT count(*) FROM club_members m WHERE m.club_id = c.id) AS member_count FROM clubs c`;
+const SELECT = `SELECT c.slug, c.name, c.description, c.created_by, c.created_at,
+  (SELECT count(*) FROM club_members m WHERE m.club_id = c.id) AS member_count,
+  (SELECT avg(coalesce(r.rating, 1500)) FROM club_members m LEFT JOIN ratings r ON r.user_id = m.user_id AND r.time_control = 'blitz_3_0' WHERE m.club_id = c.id) AS avg_blitz,
+  (SELECT count(*) FROM tournaments t WHERE t.status = 'finished' AND t.snapshot->'teamBattle'->'teams'->0->>'slug' = c.slug) AS battles_won
+  FROM clubs c`;
 
 export class PgClubStore implements ClubStore {
   constructor(private readonly pool: pg.Pool) {}

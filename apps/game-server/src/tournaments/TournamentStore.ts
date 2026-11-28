@@ -91,7 +91,7 @@ export class PgTournamentStore implements TournamentStore {
            ranking = EXCLUDED.ranking, sponsor_added_cents = EXCLUDED.sponsor_added_cents,
            started_at = EXCLUDED.started_at, finished_at = EXCLUDED.finished_at`,
         [s.id, s.size, s.timeControl, s.currency, s.buyInCents, s.sponsorAddedCents, s.rakeBps, s.payoutBps,
-          s.status, s.cancelReason, ranking, s.createdAt, s.startedAt, s.finishedAt, s.system === "swiss" ? "swiss" : "sit_and_go", ...(snap ? [JSON.stringify(s)] : [])],
+          s.status, s.cancelReason, ranking, s.createdAt, s.startedAt, s.finishedAt, s.system === "swiss" ? "swiss" : s.system === "arena" ? "arena" : "sit_and_go", ...(snap ? [JSON.stringify(s)] : [])],
       );
       for (const p of s.players) {
         await c.query(

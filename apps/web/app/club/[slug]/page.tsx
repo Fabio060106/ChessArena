@@ -52,7 +52,7 @@ function Club() {
               <>
                 <section className="panel relative overflow-hidden p-4">
                   <div className="pointer-events-none absolute -right-12 -top-12 size-40 rounded-full bg-gold/15 blur-3xl" />
-                  <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-gold">Club · {club.memberCount} membre{club.memberCount > 1 ? "s" : ""}</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-gold">Club · {club.memberCount} membre{club.memberCount > 1 ? "s" : ""} · Elo moyen {club.avgBlitz ?? 1500}{club.battlesWon ? ` · ⚔️ ${club.battlesWon} victoire${club.battlesWon > 1 ? "s" : ""}` : ""}</p>
                   <h1 className="font-display text-2xl font-bold">{club.name}</h1>
                   {club.createdBy === me?.userId
                     ? <EditDescription slug={club.slug} initial={club.description} onSaved={load} />

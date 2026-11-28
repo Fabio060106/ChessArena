@@ -39,7 +39,7 @@ export default function ClubsPage() {
           : (
             <>
               {data.mine.length > 0 && <List title="Mes clubs" list={data.mine} />}
-              <List title="Tous les clubs" list={data.all} empty="Aucun club pour l'instant : crée le premier !" />
+              <List title="Classement des clubs" list={data.all} sortable empty="Aucun club pour l'instant : crée le premier !" />
             </>
           )}
       </div>
@@ -47,21 +47,37 @@ export default function ClubsPage() {
   );
 }
 
-function List({ title, list, empty }: { title: string; list: ClubSummary[]; empty?: string }) {
+const SORTS = { members: "Membres", elo: "Elo moyen", battles: "Batailles gagnées" } as const;
+
+function List({ title, list, empty, sortable }: { title: string; list: ClubSummary[]; empty?: string; sortable?: boolean }) {
+  const [sort, setSort] = useState<keyof typeof SORTS>("members");
+  const sorted = !sortable ? list : [...list].sort((a, b) =>
+    sort === "elo" ? (b.avgBlitz ?? 0) - (a.avgBlitz ?? 0) || b.memberCount - a.memberCount
+      : sort === "battles" ? (b.battlesWon ?? 0) - (a.battlesWon ?? 0) || b.memberCount - a.memberCount
+        : b.memberCount - a.memberCount || (b.avgBlitz ?? 0) - (a.avgBlitz ?? 0));
   return (
     <section aria-label={title} className="flex flex-col gap-2">
-      <h2 className="px-1 text-[11px] font-semibold uppercase tracking-[.14em] text-muted">{title}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[.14em] text-muted">{title}</h2>
+        {sortable && list.length > 1 && (
+          <div className="flex gap-1 rounded-lg bg-surface-2 p-0.5 text-xs" role="group" aria-label="Trier les clubs">
+            {(Object.keys(SORTS) as Array<keyof typeof SORTS>).map((k) => (
+              <button key={k} type="button" aria-pressed={sort === k} onClick={() => setSort(k)} className={`rounded-md px-2 py-1 font-semibold ${sort === k ? "bg-surface text-text" : "text-muted"}`}>{SORTS[k]}</button>
+            ))}
+          </div>
+        )}
+      </div>
       {list.length ? (
         <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {list.map((c) => (
+          {sorted.map((c, i) => (
             <li key={c.slug}>
               <a href={`/club/${c.slug}`} className="panel flex h-full flex-col gap-1 p-3 hover:border-neon/60">
                 <span className="flex items-baseline justify-between gap-2">
-                  <span className="truncate font-display text-base font-bold">{c.name}</span>
+                  <span className="truncate font-display text-base font-bold">{sortable && <span className="tabular mr-1.5 text-sm text-muted">{i + 1}.</span>}{c.name}</span>
                   <span className="tabular shrink-0 text-xs text-muted">{c.memberCount} membre{c.memberCount > 1 ? "s" : ""}</span>
                 </span>
                 {c.description && <span className="line-clamp-2 text-sm text-muted">{c.description}</span>}
-                <span className="mt-auto text-xs text-muted">fondé par {c.createdBy}</span>
+                <span className="mt-auto text-xs text-muted">Elo moyen {c.avgBlitz ?? 1500}{c.battlesWon ? ` · ⚔️ ${c.battlesWon} bataille${c.battlesWon > 1 ? "s" : ""} gagnée${c.battlesWon > 1 ? "s" : ""}` : ""} · fondé par {c.createdBy}</span>
               </a>
             </li>
           ))}

@@ -45,6 +45,15 @@ describe.skipIf(!pgAvailable())("PgClubStore — clubs en base", () => {
     expect(club.memberCount).toBe(2);
     expect(club.members.find((m) => m.userId === "marie")).toMatchObject({ role: "member", blitz: 1520, rapid: 1500, games: 1 });
     expect(club.members.find((m) => m.userId === "fabio")).toMatchObject({ role: "owner", blitz: 1500 });
+    expect(club.avgBlitz).toBe(1510); // (1520 + 1500) / 2
+    // bataille gagnée : premier club de l'instantané final
+    await db.pool.query(`INSERT INTO tournaments (id, format, time_control, currency, buy_in_cents, rake_bps, size, payout_structure_bps, status, snapshot, finished_at)
+      VALUES ($1, 'arena', 'blitz_3_0', 'PLAY', 0, 1000, 8, '{10000}', 'finished', $2, now())`,
+      [randomUUID(), JSON.stringify({ teamBattle: { leaders: 3, teams: [{ slug: a.slug, name: "x", score: 9 }, { slug: b.slug, name: "y", score: 2 }] } })]).catch(async (e) => {
+        // schéma minimal différent : on ne teste que ce qui est faisable
+        console.warn("insertion de tournoi simplifiée impossible", (e as Error).message);
+      });
+    expect((await clubs.list(10)).find((c) => c.slug === a.slug)!.battlesWon).toBe(1);
     expect((await clubs.mine("marie")).map((c) => c.slug)).toEqual([a.slug]);
     expect(await clubs.isMember(a.slug, "marie")).toBe(true);
     expect((await clubs.list(10))[0]!.slug).toBe(a.slug); // le plus de membres en tête

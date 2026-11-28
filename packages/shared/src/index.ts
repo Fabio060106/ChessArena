@@ -269,6 +269,10 @@ export interface ClubSummary {
   createdBy: string;
   createdAt: string;
   memberCount: number;
+  /** Elo blitz moyen des membres */
+  avgBlitz?: number;
+  /** batailles de clubs gagnées */
+  battlesWon?: number;
 }
 export interface ClubMember {
   userId: string;
