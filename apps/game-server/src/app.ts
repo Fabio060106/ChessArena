@@ -51,6 +51,11 @@ import { KycService, type KycProvider } from "./auth/kyc.js";
 import { DepositService } from "./settlement/deposits.js";
 import { RegulatoryExporter } from "./audit/regulatoryExport.js";
 import { fetchLichessExport, ImportService } from "./imports/lichessImport.js";
+import { InMemoryBetStore, PgBetStore, type Bet, type BetStore } from "./odds/BetStore.js";
+import { BetError, PredictionService } from "./odds/PredictionService.js";
+import { defaultEngineCommand, WdlEngine, type Evaluate } from "./odds/wdlEngine.js";
+import { monthOf } from "./clubs/season.js";
+import type { BetPlaceAck, BetView, OddsView, PredictionPick, PredictionsMine, RelayGameView } from "@chessarena/shared";
 
 /** place gardée dans la file après la perte de connexion */
 const QUEUE_GRACE_MS = 20_000;
@@ -90,6 +95,9 @@ export interface GameServerDeps {
   kycProvider?: KycProvider;
   /** retransmissions : stockage et lecture de la source (tests : faux LiveChessCloud) */
   relayStore?: RelayStore;
+  /** pronostics : stockage des paris et moteur (null = pas de cotes) ; par défaut Stockfish en sous-processus */
+  betStore?: BetStore;
+  oddsEvaluate?: Evaluate | null;
   relayFetch?: FetchJson;
   relayFetchText?: FetchText;
   /** import de parties Lichess (tests : faux téléchargement) */
@@ -316,13 +324,30 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
     save: (u, g) => repo.saveImportedGames(u, g),
     lichess: deps.relayLichess ?? (process.env.LICHESS_URL || undefined),
   });
+  // ─── Pronostics en jetons sur les parties retransmises (cotes Stockfish) ───
+  const wdlCmd = deps.oddsEvaluate === undefined && process.env.NODE_ENV !== "test" && process.env.PREDICTIONS !== "0" ? defaultEngineCommand() : null;
+  const wdlEngine = wdlCmd ? new WdlEngine(wdlCmd) : null;
+  const betStore = deps.betStore ?? (pool ? new PgBetStore(pool) : new InMemoryBetStore());
+  const betStoreLeaders = (since: string) => betStore.leaders(since, 10).catch(() => []);
+  const betView = (b: Bet): BetView => ({ id: b.id, market: b.market, relayId: b.relayId, pick: b.pick, stakeCents: b.stakeCents, odds: b.odds, ply: b.ply, label: b.label, status: b.status, payoutCents: b.payoutCents, createdAt: b.createdAt, settledAt: b.settledAt });
+  const predictions = new PredictionService({
+    ledger,
+    store: betStore,
+    evaluate: deps.oddsEvaluate !== undefined ? deps.oddsEvaluate : wdlEngine?.evaluate ?? null,
+    emitOdds: (v) => io.to(relayRoom(v.relayId)).emit("relay:odds", v),
+    notify: (u, b) => io.to(userRoom(u)).emit("bet:settled", betView(b)),
+  });
+  const feedPredictions = (relayId: string, round: number, g: RelayGameView) => {
+    void predictions.onGame(relayId, round, g).catch((e) => console.error("[pronostics]", e));
+  };
+
   const relays = new RelayService({
     store: deps.relayStore ?? (pool ? new PgRelayStore(pool) : new InMemoryRelayStore()),
     // LCC_POOL_URL : faux LiveChessCloud pour les essais locaux
     fetchJson: deps.relayFetch, fetchText: deps.relayFetchText, lichess: deps.relayLichess ?? (process.env.LICHESS_URL || undefined), pool: deps.relayPool ?? (process.env.LCC_POOL_URL || undefined), intervals: deps.relayIntervals,
     watchers: (id) => io.of("/").adapter.rooms.get(relayRoom(id))?.size ?? 0,
-    onRound: (r) => io.to(relayRoom(r.id)).emit("relay:round", r),
-    onGame: (relayId, round, game) => io.to(relayRoom(relayId)).emit("relay:game", { relayId, round, game }),
+    onRound: (r) => { io.to(relayRoom(r.id)).emit("relay:round", r); if (r.currentRound) for (const g of r.gameList) feedPredictions(r.id, r.currentRound, g); },
+    onGame: (relayId, round, game) => { io.to(relayRoom(relayId)).emit("relay:game", { relayId, round, game }); feedPredictions(relayId, round, game); },
   });
   const rematches = new RematchService();
   // défis directs (amis) : sans réponse en 60 s, le défi expire
@@ -890,6 +915,34 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       socket.emit("chat:history", { gameId: `relay:${id}`, messages: chat.history(`relay:${id}`, ["spectators"]) });
       reply({ ok: true, round: v });
     }));
+    // ─── Pronostics ──────────────────────────────────────────────────────────
+    socket.on("odds:list", guard(socket, (raw: unknown, ack?: unknown) => {
+      const id = (raw as { relayId?: unknown } | null)?.relayId;
+      if (typeof ack === "function") (ack as (r: OddsView[]) => void)(typeof id === "string" ? predictions.marketsOf(id) : []);
+    }));
+    socket.on("bet:place", guard(socket, async (raw: unknown, ack?: unknown) => {
+      const reply = (r: BetPlaceAck) => { if (typeof ack === "function") (ack as (x: BetPlaceAck) => void)(r); };
+      const p = raw as { relayId?: unknown; round?: unknown; index?: unknown; pick?: unknown; stakeCents?: unknown; version?: unknown } | null;
+      if (!p || typeof p.relayId !== "string" || typeof p.round !== "number" || typeof p.index !== "number" || typeof p.pick !== "string"
+        || typeof p.stakeCents !== "number" || typeof p.version !== "number") return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const gate = canPlay(user, "PLAY", socket.data.mode);
+      if (!gate.ok) return reply({ ok: false, code: gate.code });
+      try {
+        const r = await predictions.place(user.userId, { relayId: p.relayId, round: p.round, index: p.index, pick: p.pick as PredictionPick, stakeCents: p.stakeCents, version: p.version });
+        reply({ ok: true, bet: betView(r.bet), balanceCents: r.balanceCents });
+      } catch (e) {
+        if (e instanceof BetError) return reply({ ok: false, code: e.code });
+        console.error("[pronostics] mise", e);
+        reply({ ok: false, code: "INTERNAL" });
+      }
+    }));
+    socket.on("bet:mine", guard(socket, async (ack?: unknown) => {
+      if (typeof ack !== "function") return;
+      const mine = await predictions.mine(user.userId);
+      const since = new Date(monthOf(Date.now()).start).toISOString();
+      (ack as (r: PredictionsMine) => void)({ bets: mine.bets.map(betView), balanceCents: mine.balanceCents, leaders: await betStoreLeaders(since) });
+    }));
+
     socket.on("relay:roundView", guard(socket, async (raw: unknown, ack?: unknown) => {
       const reply = (r: { ok: true; round: import("@chessarena/shared").RelayRoundView } | { ok: false; code: string }) => { if (typeof ack === "function") (ack as (x: typeof r) => void)(r); };
       const p = raw as { relayId?: unknown; round?: unknown } | null;
@@ -1278,6 +1331,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       if (games.pendingRecords > 0) await games.flushUnrecorded().catch(() => {});
       if (withdrawalTimer) clearInterval(withdrawalTimer);
       stopOfficial?.();
+      wdlEngine?.close();
       await verdictWorker?.close();
       await analysisProducer?.close();
       matchmaker.close();

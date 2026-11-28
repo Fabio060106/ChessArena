@@ -691,6 +691,43 @@ export interface RelayRoundView extends RelaySummary {
   gameList: RelayGameView[];
 }
 
+/** Pronostics en jetons sur une partie retransmise : cotes 1 / N / 2 calculées par Stockfish après chaque coup. */
+export type PredictionPick = "white" | "draw" | "black";
+export interface OddsView {
+  relayId: string;
+  round: number;
+  index: number;
+  /** une mise cite la version des cotes qu'elle a vues (refusée si un coup est arrivé entre-temps) */
+  version: number;
+  ply: number;
+  odds: { white: number; draw: number; black: number } | null;
+  probs: { white: number; draw: number; black: number } | null;
+  suspended: boolean;
+  closed: boolean;
+  result: string | null;
+}
+export interface BetView {
+  id: string;
+  market: string;
+  relayId: string;
+  pick: PredictionPick;
+  stakeCents: Cents;
+  odds: number;
+  ply: number;
+  label: string;
+  status: "open" | "won" | "lost" | "void";
+  payoutCents: Cents;
+  createdAt: string;
+  settledAt: string | null;
+}
+export type BetPlaceAck = { ok: true; bet: BetView; balanceCents: Cents } | { ok: false; code: string };
+export interface PredictionsMine {
+  bets: BetView[];
+  balanceCents: Cents;
+  /** meilleurs pronostiqueurs du mois : gain net en jetons */
+  leaders: Array<{ userId: string; netCents: Cents; bets: number; won: number }>;
+}
+
 export interface ServerToClientEvents {
   "queue:joined": (p: { timeControl: TimeControlId; stake: Stake }) => void;
   "queue:left": () => void;
@@ -722,6 +759,10 @@ export interface ServerToClientEvents {
   /** retransmission : toute la ronde (arrivée, changement de ronde) puis chaque partie qui bouge */
   "relay:round": (r: RelayRoundView) => void;
   "relay:game": (p: { relayId: string; round: number; game: RelayGameView }) => void;
+  /** nouvelles cotes d'une partie retransmise (après chaque coup) */
+  "relay:odds": (v: OddsView) => void;
+  /** un de mes pronostics est réglé */
+  "bet:settled": (b: BetView) => void;
 }
 
 export interface ClientToServerEvents {
@@ -778,6 +819,9 @@ export interface ClientToServerEvents {
   "link:cancel": () => void;
   "link:accept": (p: { code: string }, ack: (r: { ok: boolean; code?: string }) => void) => void;
   /** suivre une retransmission (chat : gameId « relay:<id> ») */
+  "odds:list": (p: { relayId: string }, ack: (r: OddsView[]) => void) => void;
+  "bet:place": (p: { relayId: string; round: number; index: number; pick: PredictionPick; stakeCents: Cents; version: number }, ack: (r: BetPlaceAck) => void) => void;
+  "bet:mine": (ack: (r: PredictionsMine) => void) => void;
   "relay:watch": (p: { relayId: string }, ack: (r: { ok: true; round: RelayRoundView } | { ok: false; code: string }) => void) => void;
   "relay:unwatch": (p: { relayId: string }) => void;
   /** une ronde précise (déjà jouée) : envoyée une fois, sans suivi en direct */

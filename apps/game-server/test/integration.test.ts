@@ -40,6 +40,8 @@ beforeAll(async () => {
     // faux LiveChessCloud (retransmissions)
     relayFetch: async (u: string) => (fakeLcc.has(u) ? structuredClone(fakeLcc.get(u)) : null),
     relayPool: "http://lcc.test", relayIntervals: { watched: 40, idle: 40, finished: 40 },
+    // pronostics : moteur factice (WDL fixe)
+    oddsEvaluate: async () => ({ wdl: { w: 400, d: 450, l: 150 }, cp: null, depth: 12 }),
     // faux export Lichess (import de parties)
     importFetch: async (u: string) => (u.includes("/api/games/user/Baron_Test?") ? [
       JSON.stringify({ id: "IMPORT01", variant: "standard", speed: "blitz", createdAt: 1, status: "mate", winner: "white", players: { white: { user: { name: "Baron_Test", id: "baron_test" }, rating: 1800 }, black: { user: { name: "B", id: "b" }, rating: 1700 } }, opening: { name: "Italian Game: Giuoco Piano" }, moves: "e4 e5 Nf3 Nc6 Bc4 Bc5" }),
@@ -898,6 +900,19 @@ describe("retransmissions DGT / LiveChessCloud", () => {
     expect(g.game.sans).toEqual(["e4", "e5"]);
     expect(g.game.turn).toBe("w");
 
+    // pronostics en jetons : cotes recalculées après le coup, mise à la cote vue, réglée au résultat
+    let odds: import("@chessarena/shared").OddsView[] = [];
+    for (let i = 0; i < 60; i++) {
+      odds = await new Promise((r) => c.emit("odds:list", { relayId: relay.id }, r));
+      if (odds[0]?.odds && odds[0].ply === 2) break;
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    expect(odds[0]).toMatchObject({ round: 1, index: 1, ply: 2, closed: false, suspended: false, odds: { white: 2.35, draw: 2.09, black: 6.28 } });
+    const placed = await new Promise<import("@chessarena/shared").BetPlaceAck>((r) => c.emit("bet:place", { relayId: relay.id, round: 1, index: 1, pick: "white", stakeCents: 1_000, version: odds[0]!.version }, r));
+    expect(placed).toMatchObject({ ok: true, bet: { pick: "white", odds: 2.35, stakeCents: 1_000, label: "Javokhir Sindarov – Gukesh D, ronde 1" } });
+    expect(await new Promise((r) => c.emit("bet:place", { relayId: relay.id, round: 1, index: 1, pick: "draw", stakeCents: 1_000, version: odds[0]!.version - 1 }, r))).toEqual({ ok: false, code: "ODDS_CHANGED" });
+    const settled = once(c, "bet:settled", 8_000);
+
     // analyse partagée : refusée tant que la partie n'est pas finie ; ensuite gardée et servie à tous
     const review = { version: 6, summary: "Victoire des Blancs.", moves: ["e4", "e5"].map((san, i) => ({ ply: i + 1, san })) };
     // envoi par HTTP (une analyse dépasse la taille maximale d'un message websocket)
@@ -916,6 +931,10 @@ describe("retransmissions DGT / LiveChessCloud", () => {
     fakeLcc.set(`${base}/round-1/index.json`, { pairings: [{ live: false, white: sd, black: gk, result: "1-0" }] });
     fakeLcc.set(`${base}/round-1/game-1.json`, { moves: ["e4 7200", "e5 7195"], result: "1-0" });
     await ended;
+    expect(await settled).toMatchObject({ status: "won", payoutCents: 2_350 });
+    const mine = await new Promise<import("@chessarena/shared").PredictionsMine>((r) => c.emit("bet:mine", r));
+    expect(mine.bets.map((b) => b.status)).toEqual(["won"]);
+    expect(mine.leaders[0]).toMatchObject({ userId: "spectateur-cm", netCents: 1_350, bets: 1, won: 1 });
     expect(await save(review, ["e4", "e6"])).toEqual({ ok: false, status: 409 });
     expect(await save({ ...review, version: 1 })).toEqual({ ok: false, status: 400 });
     expect(await save(review)).toEqual({ ok: true, saved: true });

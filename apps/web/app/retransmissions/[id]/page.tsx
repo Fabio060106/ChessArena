@@ -7,6 +7,9 @@ import { GameBoard } from "../../../components/GameBoard";
 import { MoveList } from "../../../components/MoveList";
 import { MoveNav, usePlyKeys } from "../../../components/MoveNav";
 import { ChatPanel } from "../../../components/ChatPanel";
+import { PredictionPanel } from "../../../components/PredictionPanel";
+import { usePredictions } from "../../../hooks/usePredictions";
+import { formatMoney } from "../../../lib/tournament";
 import { GameReviewPanel } from "../../../components/GameReviewPanel";
 import { FlipButton } from "../../../components/SiteNav";
 import { useGameAuth, useMe } from "../../../hooks/useMe";
@@ -34,6 +37,7 @@ export default function RelayPage() {
 function Relay({ relayId, me }: { relayId: string; me: string }) {
   const getAuth = useGameAuth();
   const { round: liveRound, missing, connected, chat, sendChat, reportChat, loadRound } = useRelay(relayId, getAuth);
+  const pred = usePredictions(relayId, getAuth);
   const [pick, setPick] = useState<number | null>(null);
   // ronde déjà jouée choisie par le spectateur (null = la ronde en direct)
   const [past, setPast] = useState<{ n: number; view: RelayRoundView | null } | null>(null);
@@ -100,7 +104,20 @@ function Relay({ relayId, me }: { relayId: string; me: string }) {
       </div>
     );
   }
-  return <RelayGame key={`${shownNo}-${game.index}`} relayId={relayId} roundNo={shownNo} game={game} header={header} chatPanel={chatPanel} chatCount={chat.length} />;
+  // pronostics : seulement sur la ronde en direct (une ronde passée est déjà réglée)
+  const odds = !past && shownNo ? pred.oddsFor(shownNo, game.index) : null;
+  const predictionPanel = !past && shownNo && (game.live || odds) ? (
+    <PredictionPanel game={game} round={shownNo} odds={odds} mine={pred.mine}
+      onPlace={(pick, stake, version) => pred.place(shownNo, game.index, pick, stake, version)} />
+  ) : null;
+  const settled = pred.lastSettled && (
+    <button type="button" onClick={pred.dismissSettled} role="status"
+      className={`fixed inset-x-2 bottom-20 z-[90] mx-auto max-w-[360px] rounded-xl border p-3 text-left text-sm shadow-2xl sm:bottom-4 ${pred.lastSettled.status === "won" ? "border-win/60 bg-ink text-win" : "border-line bg-ink text-muted"}`}>
+      {pred.lastSettled.status === "won" ? `🎉 Pronostic gagné : +${formatMoney(pred.lastSettled.payoutCents - pred.lastSettled.stakeCents, "PLAY")}` : pred.lastSettled.status === "lost" ? "Pronostic perdu" : "Pronostic remboursé"}
+      <span className="block text-xs text-muted">{pred.lastSettled.label}</span>
+    </button>
+  );
+  return <>{settled}<RelayGame key={`${shownNo}-${game.index}`} relayId={relayId} roundNo={shownNo} game={game} header={header} chatPanel={chatPanel} chatCount={chat.length} predictionPanel={predictionPanel} /></>;
 }
 
 /** Score du match (ou tête du classement) et heure de la prochaine partie, à l'heure du spectateur. */
@@ -135,8 +152,8 @@ function MatchInfo({ round }: { round: RelayRoundView }) {
 const short = (n: string) => (n.length > 18 ? n.split(" ").at(-1) ?? n : n);
 
 /** Une partie retransmise : pendules, navigation dans les coups, évaluation, lien vers l'analyse, chat. */
-function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
-  relayId: string; roundNo: number | null; game: RelayGameView; header: React.ReactNode; chatPanel: React.ReactNode; chatCount: number;
+function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount, predictionPanel }: {
+  relayId: string; roundNo: number | null; game: RelayGameView; header: React.ReactNode; chatPanel: React.ReactNode; chatCount: number; predictionPanel?: React.ReactNode;
 }) {
   const [settings] = useSettings();
   const getAuth = useGameAuth();
@@ -226,6 +243,7 @@ function RelayGame({ relayId, roundNo, game, header, chatPanel, chatCount }: {
         </section>
       </div>
       <aside className="flex w-full min-w-0 flex-col gap-3">
+        {predictionPanel}
         {game.result && game.sans.length > 0 && (
           <GameReviewPanel relayId={relayId} round={roundNo ?? 0} index={game.index} sans={game.sans} ucis={game.ucis} getAuth={getAuth}
             names={{ w: game.white.name, b: game.black.name }} result={game.result} onGo={go} ply={ply} />
