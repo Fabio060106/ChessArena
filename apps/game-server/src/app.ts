@@ -183,7 +183,7 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const http = createServer((req, res) => {
     if (/^\/(admin|wallet|account|kyc|auth)\//.test(req.url ?? "")) {
       void handleApi(req, res, { imports, relays, reviews, parseRelaySource, cfg, moderation, withdrawals, limits, kyc, deposits, killSwitch, geo, exporter, pool, repo, accounts, liveGameOf: (u) => games.activeGameOf(u)?.id ?? null, chatMuted,
-        tournaments: { live: (id) => tournaments.get(id)?.snapshot() ?? null, store, showcase: () => tournaments.showcase() }, memoryReports,
+        tournaments: { live: (id) => tournaments.get(id)?.snapshot() ?? null, store, showcase: () => tournaments.showcase(), mine: (u) => tournaments.activeFor(u)[0]?.snapshot() ?? null }, memoryReports,
       fairplayMem, isOnline: (u) => (io.of("/").adapter.rooms.get(userRoom(u))?.size ?? 0) > 0, kickUser: (u) => { for (const sk of io.of("/").sockets.values()) if (sk.data.user?.userId === u) sk.disconnect(true); } });
       return;
     }

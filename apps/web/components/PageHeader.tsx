@@ -1,5 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
+import { TournamentReminder } from "./TournamentReminder";
 import { SiteNav } from "./SiteNav";
 import { Logo } from "./Logo";
 
@@ -13,6 +14,7 @@ export function PageHeader({ title, active, children }: { title: string; active?
         <div className="ml-auto flex items-center gap-1.5">{children}</div>
       </header>
       <SiteNav active={active} />
+      <TournamentReminder />
     </>
   );
 }

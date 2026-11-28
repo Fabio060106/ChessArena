@@ -70,7 +70,7 @@ export interface ApiDeps {
   /** comptes joueurs (pseudo + mot de passe) */
   accounts?: AccountService | null;
   /** tournois : instantané en direct (en mémoire) ou enregistré, historique d'un joueur */
-  tournaments?: { live(id: string): SngSnapshot | null; store: TournamentStore; showcase?(): { upcoming: SngSnapshot[]; running: SngSnapshot[] } };
+  tournaments?: { live(id: string): SngSnapshot | null; store: TournamentStore; showcase?(): { upcoming: SngSnapshot[]; running: SngSnapshot[] }; mine?(userId: string): SngSnapshot | null };
   /** partie en cours d'un joueur (profil : bouton « Regarder ») */
   liveGameOf?: (userId: string) => string | null;
   /** modération du chat : privés de chat (mis à jour à chaud) */
@@ -466,6 +466,12 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
     }
 
     // ─── Tournois : page d'un tournoi (direct ou terminé), historique d'un joueur ──────
+    // mon tournoi du moment (bandeau « ton tournoi commence dans… » sur toutes les pages)
+    if (url.pathname === "/account/my-tournament" && req.method === "GET") {
+      const s = d.tournaments?.mine?.(claims.sub) ?? null;
+      send(200, { tournament: s ? tournamentCard(s) : null, inGame: !!d.liveGameOf?.(claims.sub) });
+      return true;
+    }
     if (url.pathname === "/account/tournaments" && req.method === "GET") {
       const t = need(d.tournaments);
       const live = t.showcase?.() ?? { upcoming: [], running: [] };
