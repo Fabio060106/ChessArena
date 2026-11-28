@@ -55,6 +55,20 @@ export function settleDuel(
  * sponsor, NON soumise au rake). Répartition par pourcentages en bps sur le net.
  * Le reliquat d'arrondi va au 1er.
  */
+/**
+ * Structure de gains ramenée au nombre de classés : une arena payée sur 3 places mais finie à 2 joueurs
+ * paie 2 places, au prorata (la somme reste 100 %, l'arrondi va au premier). 0 classé : rien.
+ */
+export function fitStructure(structureBps: readonly number[], ranked: number): number[] {
+  if (ranked >= structureBps.length) return [...structureBps];
+  if (ranked <= 0) return [];
+  const kept = structureBps.slice(0, ranked);
+  const sum = kept.reduce((a, b) => a + b, 0);
+  const scaled = kept.map((b) => Math.floor((b * 10_000) / sum));
+  scaled[0]! += 10_000 - scaled.reduce((a, b) => a + b, 0);
+  return scaled;
+}
+
 export function settleTournament(
   buyInCents: Cents,
   entrants: number,

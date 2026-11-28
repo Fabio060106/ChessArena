@@ -8,7 +8,7 @@ import { ARENA_MINUTES } from "@chessarena/shared";
 import { defaultSwissRounds, pairRound, swissStandings, type SwissResult, type SwissStanding } from "./swiss.js";
 import type { FinishedGame, Seat, TournamentGameRef } from "../game/GameRoom.js";
 import { acct, applySettlement, InsufficientFundsError, type Ledger } from "../settlement/ledger.js";
-import { computeRake, settleTournament } from "../settlement/rake.js";
+import { computeRake, fitStructure, settleTournament } from "../settlement/rake.js";
 import type { AuditSink } from "../audit/auditLog.js";
 
 /**
@@ -480,11 +480,15 @@ export class SitAndGo {
     this.changed();
   }
 
-  /** Départ anticipé (tournoi incomplet) : au moins 3 inscrits, aucune inscription en cours de paiement. */
-  async startNow(): Promise<void> {
+  /**
+   * Départ anticipé (tournoi incomplet) : au moins 3 inscrits, aucune inscription en cours de paiement.
+   * `minPlayers` : une Arena officielle part à l'heure même avec moins d'inscrits (on la rejoint en cours de route).
+   */
+  async startNow(minPlayers = SNG_MIN_SIZE): Promise<void> {
     if (this.status !== "registering") throw new SngError("NOT_REGISTERING");
     if (this.pendingLocks.size > 0) throw new SngError("BUSY");
-    if (this.countStatus("registered") < SNG_MIN_SIZE) throw new SngError("NOT_ENOUGH_PLAYERS");
+    if (minPlayers < SNG_MIN_SIZE && this.cfg.system !== "arena") throw new SngError("NOT_ENOUGH_PLAYERS");
+    if (this.countStatus("registered") < minPlayers) throw new SngError("NOT_ENOUGH_PLAYERS");
     this.audit("start_early", { registered: this.countStatus("registered"), size: this.cfg.size });
     await this.start();
   }
@@ -761,11 +765,13 @@ export class SitAndGo {
   }
 
   private async finishArena(): Promise<void> {
+    // personne n'a joué (Arena officielle restée vide, joueur seul) : annulée, entrées remboursées
+    if (!this.arenaGames().some((g) => g.result === "1-0" || g.result === "0-1" || g.result === "1/2-1/2")) return this.cancel("aucune partie jouée");
     const ratings = new Map([...this.entries.values()].map((e) => [e.userId, e.rating]));
     const players = [...this.entries.values()].filter((e) => e.status === "playing").map((e) => e.userId);
     const scores = arenaScores(players, this.arenaGames());
     const ranking = arenaRanking(new Map(players.map((u) => [u, scores.get(u)!])), ratings);
-    const plan = settleTournament(this.cfg.buyInCents, this.entrants, ranking, this.cfg.payoutBps.slice(0, Math.min(this.cfg.payoutBps.length, ranking.length)), this.cfg.rakeBps, this.cfg.sponsorAddedCents);
+    const plan = settleTournament(this.cfg.buyInCents, this.entrants, ranking, fitStructure(this.cfg.payoutBps, ranking.length), this.cfg.rakeBps, this.cfg.sponsorAddedCents);
     if (plan.potCents > 0) {
       for (let attempt = 1; ; attempt++) {
         try {

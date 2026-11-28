@@ -583,6 +583,39 @@ describe("SitAndGo — Arena", () => {
     expect(s.rounds[0]![0]!.games[0]).toMatchObject({ berserk: { w: true, b: false }, plies: 20 });
   });
 
+  it("Arena officielle : part sans inscrit, on la rejoint en cours ; finie à 2 joueurs : gains ajustés ; vide : annulée", async () => {
+    const clock = { t: Date.parse("2026-11-28T20:00:00Z") };
+    const t = setup(128, { arena: 20, clock, buyIn: 100, payoutBps: [5000, 3000, 2000] });
+    await expect(t.sng.startNow()).rejects.toBeInstanceOf(SngError); // règle normale : 3 inscrits
+    await t.sng.startNow(0);
+    expect(t.sng.state).toBe("running");
+    for (const u of ["a", "b"]) { await t.fund(u); await t.sng.register(u, 1500); }
+    clock.t += MIN;
+    await t.sng.arenaTick();
+    const [g] = live(t);
+    await t.finish(g!, "1-0");
+    clock.t += 25 * MIN;
+    await t.sng.arenaTick();
+    const s = t.sng.snapshot();
+    expect(s.status).toBe("finished");
+    expect(s.players.map((p) => p.finalRank).sort()).toEqual([1, 2]);
+    // pot 200 − 10 % = 180 : 62,5 % / 37,5 %
+    expect(s.players.find((p) => p.finalRank === 1)!.payoutCents).toBe(113);
+    expect(s.players.find((p) => p.finalRank === 2)!.payoutCents).toBe(67);
+
+    const c2 = { t: Date.parse("2026-11-28T20:00:00Z") };
+    const e2 = setup(128, { arena: 20, clock: c2, buyIn: 0 });
+    await e2.sng.startNow(0);
+    c2.t += 21 * MIN;
+    await e2.sng.arenaTick();
+    expect(e2.sng.snapshot()).toMatchObject({ status: "cancelled", cancelReason: "aucune partie jouée" });
+  });
+
+  it("départ à moins de 3 refusé hors Arena", async () => {
+    const t = setup(8, { swiss: 3 });
+    await expect(t.sng.startNow(0)).rejects.toBeInstanceOf(SngError);
+  });
+
   it("refuse une durée d'arena non proposée", () => {
     expect(() => setup(8, { arena: 17 })).toThrow(SngError);
   });

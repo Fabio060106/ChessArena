@@ -1,4 +1,4 @@
-import { test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import assert from "node:assert/strict";
 import { computeRake, settleDuel, settleTournament, SIT_AND_GO_STRUCTURES } from "./rake.js";
 
@@ -35,4 +35,16 @@ test("Sit & Go 8 joueurs à 5 € + dotation streamer 20 € non rakée", () => 
 
 test("structure ≠ 100 % rejetée", () => {
   assert.throws(() => settleTournament(500, 4, ["a", "b", "c", "d"], [5000, 4000], 1000));
+});
+
+describe("structure de gains ajustée au nombre de classés", () => {
+  it("3 places payées mais 2 classés : prorata, total 100 % ; 1 classé : tout ; 0 : rien", async () => {
+    const { fitStructure } = await import("./rake.js");
+    expect(fitStructure([5000, 3000, 2000], 5)).toEqual([5000, 3000, 2000]);
+    expect(fitStructure([5000, 3000, 2000], 2)).toEqual([6250, 3750]);
+    expect(fitStructure([6500, 3500], 1)).toEqual([10000]);
+    expect(fitStructure([5000, 3000, 2000], 0)).toEqual([]);
+    const f = fitStructure([4000, 3500, 2500], 2);
+    expect(f.reduce((a, b) => a + b, 0)).toBe(10000);
+  });
 });

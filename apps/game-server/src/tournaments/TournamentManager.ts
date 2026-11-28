@@ -145,14 +145,17 @@ export class TournamentManager {
     const fire = async (waitedMs = 0): Promise<void> => {
       if (t.state !== "registering") return;
       if (at === null) { await t.cancel("non complet à temps"); this.deps.emitLobby(this.lobby()); return; }
-      const players = t.snapshot().players.filter((p) => p.status === "registered").map((p) => p.userId);
-      if (players.length < SNG_MIN_SIZE) { await t.cancel("pas assez d'inscrits à l'heure du départ"); this.deps.emitLobby(this.lobby()); return; }
+      const snap = t.snapshot();
+      const players = snap.players.filter((p) => p.status === "registered").map((p) => p.userId);
+      // Arena officielle : elle part à l'heure quoi qu'il arrive (on la rejoint en cours de route)
+      const openArena = snap.createdBy === OFFICIAL_CREATOR && snap.system === "arena";
+      if (players.length < SNG_MIN_SIZE && !openArena) { await t.cancel("pas assez d'inscrits à l'heure du départ"); this.deps.emitLobby(this.lobby()); return; }
       if (waitedMs < CUSTOM_LIMITS.maxWaitMs && players.some((u) => this.deps.isInGame?.(u))) {
         const again = setTimeout(() => void fire(waitedMs + 15_000).catch((e) => console.error(`[sng ${t.id}] départ programmé`, e)), 15_000);
         again.unref?.();
         return;
       }
-      await t.startNow().catch(async (e) => {
+      await t.startNow(openArena ? 0 : SNG_MIN_SIZE).catch(async (e) => {
         if ((e as { code?: string }).code === "BUSY") { setTimeout(() => void fire(waitedMs + 1_000), 1_000).unref?.(); return; }
         throw e;
       });

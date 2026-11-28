@@ -184,4 +184,17 @@ describe("tournois officiels", () => {
     const next = m.ensureOfficial(Date.now(), [spec]);
     expect(next.map((x) => x.startsAt)).toEqual(["2026-11-29T19:00:00.000Z"]);
   });
+
+  it("Arena officielle avec un seul inscrit : elle part quand même à l'heure ; un suisse officiel sans 3 inscrits est annulé", async () => {
+    const { m } = setup();
+    const swiss: OfficialSpec = { name: "Grand Suisse", system: "swiss", timeControl: "blitz_3_2", rounds: 5, size: 128, hour: 20, minute: 0 };
+    const [a, s] = m.ensureOfficial(Date.now(), [spec, { ...swiss, minute: 5 }]);
+    await m.registerById(a!.id, "solo", 1500);
+    await m.registerById(s!.id, "solo2", 1500);
+    await vi.advanceTimersByTimeAsync(9 * 3600_000 + 10 * 60_000);
+    await flush();
+    expect(m.get(a!.id)!.state).toBe("running");
+    expect(m.get(s!.id)!.snapshot().status).toBe("cancelled");
+  });
 });
+
