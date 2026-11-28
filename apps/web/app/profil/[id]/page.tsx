@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { GameHistoryItem, TournamentHistoryItem } from "@chessarena/shared";
+import type { ClubSummary, GameHistoryItem, TournamentHistoryItem } from "@chessarena/shared";
 import { useParams } from "next/navigation";
 import type { PlayerProfile } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
@@ -135,6 +135,7 @@ function Profile({ p, mine }: { p: PlayerProfile; mine: boolean }) {
         ) : <p className="text-sm text-muted">Pas encore de partie terminée.</p>}
       </section>
 
+      <Clubs userId={p.userId} />
       <Tournaments userId={p.userId} />
 
       <section className="panel p-4">
@@ -206,6 +207,31 @@ function Tournaments({ userId }: { userId: string }) {
                 </span>
               </span>
               {x.points !== null && x.status !== "cancelled" && <span className="tabular shrink-0 text-xs font-semibold">{fmtPts(x.points)} pt{x.points > 1 ? "s" : ""}</span>}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Clubs du joueur : liens vers leurs pages. */
+function Clubs({ userId }: { userId: string }) {
+  const [list, setList] = useState<ClubSummary[] | null>(null);
+  useEffect(() => {
+    fetch(`/api/players/${encodeURIComponent(userId)}/clubs`, { cache: "no-store" })
+      .then(async (r) => setList(r.ok ? ((await r.json()) as { clubs: ClubSummary[] }).clubs : []))
+      .catch(() => setList([]));
+  }, [userId]);
+  if (!list?.length) return null;
+  return (
+    <section className="panel p-4" aria-label="Clubs">
+      <h2 className="mb-2 text-sm font-semibold">Club{list.length > 1 ? "s" : ""}</h2>
+      <ul className="flex flex-wrap gap-2">
+        {list.map((c) => (
+          <li key={c.slug}>
+            <a href={`/club/${c.slug}`} className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-3 py-1 text-sm text-gold hover:bg-gold/20">
+              {c.name}{c.createdBy === userId && <span className="text-xs opacity-80">· fondateur</span>}
             </a>
           </li>
         ))}

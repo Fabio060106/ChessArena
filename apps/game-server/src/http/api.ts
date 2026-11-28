@@ -534,6 +534,15 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       send(200, snap);
       return true;
     }
+    const pcm = url.pathname.match(/^\/account\/players\/([^/]{1,200})\/clubs$/);
+    if (pcm && req.method === "GET") {
+      let pseudo: string;
+      try { pseudo = decodeURIComponent(pcm[1]!); } catch { throw new HttpError(400, "BAD_PSEUDO"); }
+      const p = await need(d.repo).getProfile(pseudo);
+      if (!p) throw new HttpError(404, "NOT_FOUND");
+      send(200, { clubs: await need(d.clubs).mine(p.userId) });
+      return true;
+    }
     const ptm = url.pathname.match(/^\/account\/players\/([^/]{1,200})\/tournaments$/);
     if (ptm && req.method === "GET") {
       let pseudo: string;
