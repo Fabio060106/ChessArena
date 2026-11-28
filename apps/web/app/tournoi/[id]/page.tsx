@@ -8,6 +8,7 @@ import { useGameAuth, useMe } from "../../../hooks/useMe";
 import { useTournament } from "../../../hooks/useTournament";
 import { getSocket } from "../../../lib/socket";
 import { arenaJoinable } from "../../../lib/tournament";
+import { TournamentTV } from "../../../components/TournamentTV";
 
 export default function TournamentPage() {
   return <Suspense><Page /></Suspense>;
@@ -29,7 +30,7 @@ function Page() {
   }, [me, id]);
   return (
     <main className="arena-app">
-      <PageHeader title="Tournoi" active="/play" />
+      <PageHeader title="Tournoi" active="/tournois" />
       <div className="mx-auto flex max-w-[760px] flex-col gap-3 px-2 pb-8 sm:px-3">
         {snap === null ? <p className="panel p-4 text-sm text-muted">Chargement…</p>
           : snap === "none" ? <p className="panel p-4 text-sm text-danger">Ce tournoi n'existe pas (ou plus). <a href="/play" className="text-neon underline">Voir les tournois ouverts</a></p>
@@ -85,6 +86,7 @@ function Live({ initial, userId }: { initial: SngSnapshot; userId: string }) {
           {t.status === "running" ? "Aller jouer ma partie →" : "Page de jeu (tes parties démarreront là) →"}
         </a>
       )}
+      <TournamentTV t={t} userId={userId} />
       <TournamentHUD userId={userId} current={t} lobby={[]} busy={sng.busy} error={sng.error}
         onRegister={() => {}} onUnregister={sng.unregister} onCreate={() => {}} onJoin={sng.join} onStart={sng.start} onPause={sng.pause} onWithdraw={sng.withdraw} invite={null} pageLink={false} />
     </>
