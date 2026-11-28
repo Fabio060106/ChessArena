@@ -349,8 +349,9 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     expect(await sng(outsider, "sng:create", { size: 8, timeControl: "blitz_3_0", buyInCents: 0, clubSlug: club.slug } as never)).toMatchObject({ ok: false, code: "NOT_CLUB_MEMBER" });
     const t = await sng(owner, "sng:create", { size: 8, timeControl: "blitz_3_0", buyInCents: 0, system: "swiss", clubSlug: club.slug } as never);
     expect(t).toMatchObject({ ok: true, snapshot: { club: { slug: club.slug, name: "Les Fous du Roi" } } });
-    const page = (await (await api("cl-out", `/account/clubs/${club.slug}`)).json()) as { club: import("@chessarena/shared").ClubDetail; member: boolean; tournaments: import("@chessarena/shared").TournamentsPageResponse };
+    const page = (await (await api("cl-out", `/account/clubs/${club.slug}`)).json()) as { club: import("@chessarena/shared").ClubDetail; member: boolean; tournaments: import("@chessarena/shared").TournamentsPageResponse; season: import("@chessarena/shared").ClubSeason };
     expect(page.member).toBe(false);
+    expect(page.season).toMatchObject({ month: new Date().toISOString().slice(0, 7), tournaments: 0, rows: [] }); // aucun tournoi du club terminé
     expect(page.club.members.map((m) => m.userId).sort()).toEqual(["cl-mate", "cl-owner"]);
     expect(page.tournaments.upcoming.map((c) => c.club?.slug)).toEqual([club.slug]);
     expect((await api("cl-out", "/account/clubs/inconnu")).status).toBe(404);

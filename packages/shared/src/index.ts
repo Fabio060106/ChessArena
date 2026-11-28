@@ -299,6 +299,17 @@ export interface ClubDetail extends ClubSummary {
   /** annonces du fondateur, les plus récentes d'abord (10 au plus) */
   posts: ClubPost[];
 }
+/** Classement du mois d'un club : points de place cumulés sur ses tournois terminés ce mois-ci. */
+export interface ClubSeason {
+  /** « 2026-11 » */
+  month: string;
+  tournaments: number;
+  rows: Array<{ userId: string; points: number; played: number; wins: number; podiums: number }>;
+}
+/** barème : 1er 10, 2e 7, 3e 5, 4e 4, 5e 3, toute autre participation 2 */
+export const SEASON_POINTS = [10, 7, 5, 4, 3] as const;
+export const SEASON_PARTICIPATION = 2;
+
 export interface ClubsResponse {
   mine: ClubSummary[];
   all: ClubSummary[];

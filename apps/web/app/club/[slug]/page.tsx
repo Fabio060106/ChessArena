@@ -1,12 +1,12 @@
 "use client";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import type { ClubDetail, ClubPost, TournamentsPageResponse } from "@chessarena/shared";
+import { SEASON_PARTICIPATION, SEASON_POINTS, type ClubDetail, type ClubPost, type ClubSeason, type TournamentsPageResponse } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
 import { TournamentCardView } from "../../../components/TournamentCard";
 import { useMe } from "../../../hooks/useMe";
 
-interface ClubPage { club: ClubDetail; member: boolean; tournaments: TournamentsPageResponse }
+interface ClubPage { club: ClubDetail; member: boolean; tournaments: TournamentsPageResponse; season?: ClubSeason }
 
 export default function Page() {
   return <Suspense><Club /></Suspense>;
@@ -45,7 +45,7 @@ function Club() {
           : data === "none" ? <p className="panel p-4 text-sm text-danger">Ce club n'existe pas. <a href="/clubs" className="text-neon underline">Voir les clubs</a></p>
           : data === "error" ? <p className="panel p-4 text-sm text-danger">Impossible de charger le club (le serveur se réveille peut-être : réessaie dans une minute).</p>
           : (() => {
-            const { club, member, tournaments } = data;
+            const { club, member, tournaments, season } = data;
             const ranked = [...club.members].sort((a, b) => b[tc] - a[tc] || b.games - a.games);
             const has = tournaments.upcoming.length + tournaments.running.length + tournaments.finished.length > 0;
             return (
@@ -79,6 +79,8 @@ function Club() {
                     </ul>
                   </section>
                 ) : member && <p className="panel p-4 text-sm text-muted">Pas encore de tournoi du club. <a href={`/play?onglet=tournoi&club=${club.slug}`} className="text-neon underline">Programme le premier</a> (par exemple chaque samedi à 20 h).</p>}
+
+                {season && <Season season={season} me={me?.userId} />}
 
                 <section aria-label="Classement du club" className="panel p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -181,6 +183,39 @@ function Posts({ slug, posts, owner, onChange }: { slug: string; posts: ClubPost
           ))}
         </ul>
       )}
+    </section>
+  );
+}
+
+const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+
+/** Classement du mois : points de place cumulés sur les tournois du club terminés ce mois-ci. */
+function Season({ season, me }: { season: ClubSeason; me?: string }) {
+  const [y, m] = season.month.split("-").map(Number);
+  const label = `${MONTHS[(m ?? 1) - 1]} ${y}`;
+  return (
+    <section aria-label="Classement du mois" className="panel relative overflow-hidden p-3">
+      <div className="pointer-events-none absolute -right-10 -top-10 size-32 rounded-full bg-gold/10 blur-2xl" />
+      <h2 className="text-[11px] font-semibold uppercase tracking-[.14em] text-muted">Classement du mois · {label}</h2>
+      {season.rows.length === 0 ? (
+        <p className="mt-2 text-sm text-muted">Pas encore de tournoi du club terminé ce mois-ci : le premier tournoi lance la course au titre du mois.</p>
+      ) : (
+        <ol className="mt-2 flex flex-col">
+          {season.rows.slice(0, 15).map((r, i) => (
+            <li key={r.userId}>
+              <a href={`/profil/${encodeURIComponent(r.userId)}`} className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-surface-2 ${r.userId === me ? "bg-neon/10" : ""}`}>
+                <span className="tabular w-6 text-muted">{["🥇", "🥈", "🥉"][i] ?? i + 1}</span>
+                <span className="min-w-0 flex-1 truncate">{r.userId}</span>
+                <span className="tabular text-xs text-muted">{r.played} tournoi{r.played > 1 ? "s" : ""}{r.wins ? ` · ${r.wins} 🏆` : ""}</span>
+                <span className="tabular w-12 text-right font-semibold">{r.points} pts</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      )}
+      <p className="mt-2 text-[11px] text-muted">
+        {season.tournaments} tournoi{season.tournaments > 1 ? "s" : ""} ce mois-ci. Barème : {SEASON_POINTS.map((p, i) => `${i + 1}${i ? "e" : "er"} ${p}`).join(", ")}, toute autre participation {SEASON_PARTICIPATION}.
+      </p>
     </section>
   );
 }

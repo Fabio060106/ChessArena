@@ -20,6 +20,7 @@ import { TokenBucket } from "../net/rateLimiter.js";
 import { AccountError, type AccountService } from "../auth/accounts.js";
 import { tournamentCard, type TournamentStore } from "../tournaments/TournamentStore.js";
 import { ClubError, cleanDescription, cleanName, cleanPost, type ClubStore } from "../clubs/ClubStore.js";
+import { clubSeason } from "../clubs/season.js";
 import type { SngSnapshot } from "@chessarena/shared";
 
 /** Audience du jeton de service émis par le serveur web pour les routes /auth/* (jamais par un navigateur). */
@@ -504,10 +505,11 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
           // tournois du club : à venir et en cours (en mémoire), terminés (base)
           const live = d.tournaments?.showcase?.() ?? { upcoming: [], running: [] };
           const ofClub = (s: SngSnapshot) => s.club?.slug === slug || !!s.teamBattle?.teams.some((t) => t.slug === slug);
-          const finished = d.tournaments ? await d.tournaments.store.recentFinished(10, slug) : [];
+          const finished = d.tournaments ? await d.tournaments.store.recentFinished(50, slug) : [];
           send(200, {
             club, member: club.members.some((m) => m.userId === claims.sub),
-            tournaments: { upcoming: live.upcoming.filter(ofClub).map(tournamentCard), running: live.running.filter(ofClub).map(tournamentCard), finished: finished.map(tournamentCard) },
+            tournaments: { upcoming: live.upcoming.filter(ofClub).map(tournamentCard), running: live.running.filter(ofClub).map(tournamentCard), finished: finished.slice(0, 10).map(tournamentCard) },
+            season: clubSeason(finished, slug),
           });
           return true;
         }
