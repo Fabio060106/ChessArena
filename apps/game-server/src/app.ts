@@ -188,6 +188,20 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       return;
     }
     if (req.url === "/health") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+    // aperçu public d'un tournoi (lien partagé sur WhatsApp, Messenger… : titre, format, heure) — aucun nom de joueur
+    const pub = /^\/public\/tournaments\/([0-9a-f-]{36})$/i.exec(req.url ?? "");
+    if (pub && req.method === "GET") {
+      void (async () => {
+        const s = tournaments.get(pub[1]!)?.snapshot() ?? await store.load(pub[1]!).catch(() => null);
+        if (!s) return void res.writeHead(404, { "content-type": "application/json" }).end("{}");
+        const players = s.players.filter((p) => p.status !== "unregistered" && p.status !== "refunded").length;
+        res.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=60" }).end(JSON.stringify({
+          name: s.name ?? null, createdBy: s.createdBy ?? null, system: s.system ?? "ko", timeControl: s.timeControl, status: s.status,
+          size: s.size, players, startsAt: s.startsAt ?? null, arenaMinutes: s.arenaMinutes ?? null, totalRounds: s.totalRounds ?? null,
+        }));
+      })().catch(() => res.writeHead(500).end());
+      return;
+    }
     if (req.url === "/metrics") {
       const body = metrics.snapshot({
         activeGames: games.activeGames,

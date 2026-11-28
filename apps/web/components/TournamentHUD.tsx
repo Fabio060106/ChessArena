@@ -9,7 +9,7 @@ const TC_LABEL: Record<TimeControlId, string> = {
 };
 
 /** Codes renvoyés par sng:register / sng:unregister (game-server). */
-const SNG_ERRORS: Record<string, string> = {
+export const SNG_ERRORS: Record<string, string> = {
   INSUFFICIENT_FUNDS: "Solde insuffisant pour cette entrée.",
   ALREADY_REGISTERED: "Vous êtes déjà inscrit à cette table.",
   IN_GAME: "Terminez votre partie en cours.",
@@ -53,9 +53,9 @@ interface Props {
   onPause?: (tournamentId: string, paused: boolean) => void;
 }
 
-/** Lien d'invitation d'un tournoi (page de jeu avec ?t=<id>). */
+/** Lien d'invitation d'un tournoi : sa page publique (aperçu riche quand on le partage), d'où l'on s'inscrit en un clic. */
 export function inviteLink(tournamentId: string): string {
-  return typeof window === "undefined" ? `/play?t=${tournamentId}` : `${window.location.origin}/play?t=${tournamentId}`;
+  return typeof window === "undefined" ? `/tournoi/${tournamentId}` : `${window.location.origin}/tournoi/${tournamentId}`;
 }
 
 const isCustom = (t: SngSnapshot) => t.formatId.startsWith("custom:");

@@ -3,7 +3,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import type { SngSnapshot } from "@chessarena/shared";
 import { PageHeader } from "../../../components/PageHeader";
-import { TournamentHUD } from "../../../components/TournamentHUD";
+import { SNG_ERRORS, TournamentHUD } from "../../../components/TournamentHUD";
 import { useGameAuth, useMe } from "../../../hooks/useMe";
 import { useTournament } from "../../../hooks/useTournament";
 import { getSocket } from "../../../lib/socket";
@@ -58,13 +58,28 @@ function Live({ initial, userId }: { initial: SngSnapshot; userId: string }) {
       socket.emit("sng:unwatch", { tournamentId: initial.id });
     };
   }, [socket, initial.id]);
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
+  // « Rejoindre » : inscription ici, puis page de jeu (où les parties démarrent)
+  const join = () => {
+    setJoining(true);
+    setJoinError(null);
+    socket.emit("sng:join", { tournamentId: t.id }, (r) => {
+      if (r.ok) { window.location.href = `/play?t=${t.id}`; return; }
+      setJoining(false);
+      setJoinError(SNG_ERRORS[r.code] ?? "Inscription impossible pour le moment.");
+    });
+  };
   const mine = t.players.some((p) => p.userId === userId && p.status !== "unregistered" && p.status !== "refunded");
   const live = t.status === "running" || t.status === "registering";
   return (
     <>
       {(t.status === "registering" || arenaJoinable(t)) && !mine && (
-        <a href={`/play?t=${t.id}`} className="neon-btn rounded-xl px-4 py-3 text-center font-display text-lg font-bold">{arenaJoinable(t) ? "Rejoindre l'arena en cours" : "Rejoindre le tournoi"}</a>
+        <button type="button" disabled={joining} onClick={join} className="neon-btn rounded-xl px-4 py-3 text-center font-display text-lg font-bold">
+          {joining ? "Inscription…" : arenaJoinable(t) ? "Rejoindre l'arena en cours" : "Rejoindre le tournoi"}
+        </button>
       )}
+      {joinError && <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">{joinError}</p>}
       {mine && live && (
         <a href={`/play?t=${t.id}`} className="rounded-xl border border-neon/50 px-4 py-2.5 text-center text-sm font-semibold text-neon">
           {t.status === "running" ? "Aller jouer ma partie →" : "Page de jeu (tes parties démarreront là) →"}
