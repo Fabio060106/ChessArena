@@ -230,6 +230,11 @@ describe.skipIf(!pgAvailable())("PgGameRepository — parties et Elo persistés"
     expect(ids.indexOf("Lb_Top")).toBeLessThan(ids.indexOf("lb_low"));
     expect(lb.entries[0]!.rank).toBe(1);
     expect(lb.me).toMatchObject({ userId: "lb_low", rank: ids.indexOf("lb_low") + 1 });
+    // par pays (drapeau affiché) : seuls les joueurs FR, rangs recalculés entre eux ; « moi » hors pays : null
+    const fr = await repo.leaderboard("blitz_3_0", 100, "lb_low", "FR");
+    expect(fr.entries.map((e) => [e.userId, e.rank])).toEqual([["Lb_Top", 1]]);
+    expect(fr.me).toBeNull();
+    expect((await repo.leaderboard("blitz_3_0", 100, "Lb_Top", "FR")).me).toMatchObject({ userId: "Lb_Top", rank: 1 });
     const small = await repo.leaderboard("blitz_3_0", 1, "lb_low");
     expect(small.entries).toHaveLength(1);
     expect(small.me!.rank).toBe(lb.me!.rank); // calculée même hors du top affiché

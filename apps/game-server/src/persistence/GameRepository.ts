@@ -55,7 +55,8 @@ export interface GameRepository {
   exportPgns(userId: string, max: number): Promise<string[]>;
   /** parties (terminées, non annulées) d'un tournoi : identifiant et PGN */
   tournamentPgns(tournamentId: string): Promise<Array<{ gameId: string; pgn: string }>>;
-  leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }>;
+  /** `country` : code ISO du drapeau affiché (« FR ») pour un classement par pays */
+  leaderboard(tc: TimeControlId, limit: number, me?: string, country?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }>;
   /** Liste d'amis (comptes suspendus ou clôturés exclus), par ordre alphabétique. */
   listFriends(userId: string): Promise<Array<{ userId: string; flag: string | null; rating: number }>>;
   /** Ajoute un ami ; "full" au-delà de FRIENDS_MAX. Déjà présent : sans effet. */
@@ -270,14 +271,15 @@ export class PgGameRepository implements GameRepository {
     return r.rows.map((x) => x.pgn);
   }
 
-  async leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }> {
+  async leaderboard(tc: TimeControlId, limit: number, me?: string, country?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }> {
     const n = Math.min(Math.max(1, Math.floor(limit)), 200);
+    const cc = country && /^[A-Z]{2}$/.test(country) ? country : null;
     const r = await this.pool.query<{ user_id: string; rating: number; games: number; peak: number; display_flag: string | null; rank: string }>(
       `SELECT r.user_id, r.rating, r.games, r.peak, u.display_flag,
               rank() OVER (ORDER BY r.rating DESC) AS rank
          FROM ratings r JOIN users u ON u.id = r.user_id
-        WHERE r.time_control = $1 AND r.games > 0 AND u.state <> ALL($2::account_state[])
-        ORDER BY r.rating DESC, r.games DESC, r.user_id LIMIT $3`, [tc, HIDDEN_STATES, n],
+        WHERE r.time_control = $1 AND r.games > 0 AND u.state <> ALL($2::account_state[]) AND ($4::text IS NULL OR u.display_flag = $4)
+        ORDER BY r.rating DESC, r.games DESC, r.user_id LIMIT $3`, [tc, HIDDEN_STATES, n, cc],
     );
     const entries = r.rows.map((x) => ({ rank: Number(x.rank), userId: x.user_id, flag: x.display_flag, rating: x.rating, games: x.games, peak: x.peak }));
     let mine = me ? entries.find((e) => e.userId === me) ?? null : null;
@@ -285,8 +287,10 @@ export class PgGameRepository implements GameRepository {
       const m = await this.pool.query<{ rating: number; games: number; peak: number; display_flag: string | null; better: string }>(
         `SELECT r.rating, r.games, r.peak, u.display_flag,
                 (SELECT count(*) FROM ratings o JOIN users ou ON ou.id = o.user_id
-                  WHERE o.time_control = $2 AND o.games > 0 AND o.rating > r.rating AND ou.state <> ALL($3::account_state[])) AS better
-           FROM ratings r JOIN users u ON u.id = r.user_id WHERE r.user_id = $1 AND r.time_control = $2 AND r.games > 0`, [me, tc, HIDDEN_STATES],
+                  WHERE o.time_control = $2 AND o.games > 0 AND o.rating > r.rating AND ou.state <> ALL($3::account_state[])
+                    AND ($4::text IS NULL OR ou.display_flag = $4)) AS better
+           FROM ratings r JOIN users u ON u.id = r.user_id
+          WHERE r.user_id = $1 AND r.time_control = $2 AND r.games > 0 AND ($4::text IS NULL OR u.display_flag = $4)`, [me, tc, HIDDEN_STATES, cc],
       );
       const x = m.rows[0];
       if (x) mine = { rank: Number(x.better) + 1, userId: me, flag: x.display_flag, rating: x.rating, games: x.games, peak: x.peak };
@@ -584,7 +588,8 @@ export class InMemoryGameRepository implements GameRepository {
       .slice(0, max).map((e) => e.game.pgn);
   }
 
-  async leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }> {
+  async leaderboard(tc: TimeControlId, limit: number, me?: string, country?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }> {
+    if (country) return { entries: [], me: null }; // pas de drapeaux en mémoire
     const rows = [...this.ratings.entries()]
       .filter(([k, r]) => k.endsWith(`|${tc}`) && r.games > 0 && !HIDDEN_STATES.includes(this.states.get(k.split("|")[0]!) ?? "active"))
       .map(([k, r]) => ({ userId: k.split("|")[0]!, ...r }))

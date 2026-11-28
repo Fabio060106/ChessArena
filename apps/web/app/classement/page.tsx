@@ -4,7 +4,7 @@ import { useSearchParams } from "next/navigation";
 import type { LeaderboardEntry, LeaderboardResponse, TimeControlId } from "@chessarena/shared";
 import { PageHeader } from "../../components/PageHeader";
 import { useMe } from "../../hooks/useMe";
-import { flagEmoji } from "../../lib/profile";
+import { countryName, flagEmoji } from "../../lib/profile";
 import { TC_LABEL, TC_ORDER } from "../../lib/social";
 import { fetchWake } from "../../lib/wake";
 
@@ -19,16 +19,18 @@ function Leaderboard() {
   const initial = params.get("tc");
   const [tc, setTc] = useState<TimeControlId>(initial && (TC_ORDER as string[]).includes(initial) ? (initial as TimeControlId) : "blitz_3_0");
   const [data, setData] = useState<LeaderboardResponse | null>(null);
+  const [country, setCountry] = useState<boolean>(params.get("pays") !== null);
+  const cc = country && me?.flag ? me.flag : null;
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     if (!me) return;
     setData(null); setErr(null);
-    window.history.replaceState(null, "", `/classement?tc=${tc}`);
-    fetchWake(`/api/leaderboard?tc=${tc}`)
+    window.history.replaceState(null, "", `/classement?tc=${tc}${cc ? `&pays=${cc}` : ""}`);
+    fetchWake(`/api/leaderboard?tc=${tc}${cc ? `&pays=${cc}` : ""}`)
       .then(async (r) => (r?.ok ? setData((await r.json()) as LeaderboardResponse) : setErr("Impossible de charger le classement (le serveur se réveille peut-être : réessaie dans une minute).")))
       .catch(() => setErr("Impossible de charger le classement."));
-  }, [me, tc]);
+  }, [me, tc, cc]);
 
   const meInTop = !!data?.me && data.entries.some((e) => e.userId === data.me!.userId);
   return (
@@ -43,9 +45,17 @@ function Leaderboard() {
             </button>
           ))}
         </div>
+        {me?.flag && (
+          <div className="flex gap-1.5" role="group" aria-label="Classement mondial ou par pays">
+            {([[false, "🌍 Monde"], [true, `${flagEmoji(me.flag)} ${countryName(me.flag) ?? me.flag}`]] as const).map(([v, label]) => (
+              <button key={String(v)} type="button" aria-pressed={country === v} onClick={() => setCountry(v)}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold ${country === v ? "border-neon/60 bg-neon/10 text-neon" : "border-line text-muted hover:text-text"}`}>{label}</button>
+            ))}
+          </div>
+        )}
         {err && <p role="alert" className="panel p-4 text-sm text-danger">{err}</p>}
         {!err && !data && <p className="panel p-4 text-sm text-muted">Chargement…</p>}
-        {data && data.entries.length === 0 && <p className="panel p-4 text-sm text-muted">Personne n'a encore joué de partie classée en {TC_LABEL[tc]}. <a href="/play" className="text-neon underline">Sois le premier</a> !</p>}
+        {data && data.entries.length === 0 && <p className="panel p-4 text-sm text-muted">Personne{cc ? ` (${countryName(cc) ?? cc})` : ""} n'a encore joué de partie classée en {TC_LABEL[tc]}. <a href="/play" className="text-neon underline">Sois le premier</a> !</p>}
         {data && data.entries.length > 0 && (
           <div className="panel overflow-hidden">
             <table className="w-full text-sm">

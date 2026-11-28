@@ -690,8 +690,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
     if (url.pathname === "/account/leaderboard" && req.method === "GET") {
       const tc = url.searchParams.get("tc") ?? "blitz_3_0";
       if (!(tc in TIME_CONTROLS)) throw new HttpError(400, "BAD_TIME_CONTROL");
-      const r = await need(d.repo).leaderboard(tc as TimeControlId, 100, claims.sub);
-      send(200, { timeControl: tc, ...r });
+      const country = url.searchParams.get("pays") ?? "";
+      if (country && !/^[A-Z]{2}$/.test(country)) throw new HttpError(400, "BAD_COUNTRY");
+      const r = await need(d.repo).leaderboard(tc as TimeControlId, 100, claims.sub, country || undefined);
+      send(200, { timeControl: tc, ...(country ? { country } : {}), ...r });
       return true;
     }
 

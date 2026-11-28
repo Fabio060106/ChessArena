@@ -9,5 +9,7 @@ export const maxDuration = 60;
 export async function GET(req: NextRequest) {
   const tc = req.nextUrl.searchParams.get("tc") ?? "blitz_3_0";
   if (!(tc in TIME_CONTROLS)) return NextResponse.json({ error: "cadence inconnue" }, { status: 400 });
-  return proxyToGameServer(req, `/account/leaderboard?tc=${tc}`);
+  const pays = req.nextUrl.searchParams.get("pays") ?? "";
+  if (pays && !/^[A-Z]{2}$/.test(pays)) return NextResponse.json({ error: "pays inconnu" }, { status: 400 });
+  return proxyToGameServer(req, `/account/leaderboard?tc=${tc}${pays ? `&pays=${pays}` : ""}`);
 }
