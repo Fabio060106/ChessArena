@@ -64,6 +64,16 @@ export class TournamentManager {
   }
 
   /** Tables ouvertes : d'abord les tournois créés par des joueurs (les plus récents d'abord), puis les tables permanentes. */
+  /** Tournois de joueurs vivants : à venir (inscriptions) et en cours (page « Tournois »). */
+  showcase(): { upcoming: SngSnapshot[]; running: SngSnapshot[] } {
+    const custom = [...this.byId.values()].map((t) => t.snapshot()).filter((s) => s.createdBy);
+    const startKey = (s: SngSnapshot) => s.startsAt ?? "9999"; // programmés d'abord, par heure de départ
+    return {
+      upcoming: custom.filter((s) => s.status === "registering").sort((a, b) => startKey(a).localeCompare(startKey(b)) || b.createdAt.localeCompare(a.createdAt)),
+      running: custom.filter((s) => s.status === "running").sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? "")),
+    };
+  }
+
   lobby(): SngSnapshot[] {
     const custom = [...this.customOpen.values()].map((c) => c.t.snapshot()).reverse();
     return [...custom, ...[...this.open.values()].map((t) => t.snapshot())];

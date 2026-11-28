@@ -318,6 +318,12 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     expect(page).toMatchObject({ id: t.id, system: "swiss", status: "running", name: "Club" });
     expect(page.rounds[0]!.some((m) => m.result === "bye")).toBe(true);
     expect((await get("/account/tournaments/00000000-0000-0000-0000-000000000000")).status).toBe(404);
+    // page « Tournois » : le tournoi est listé en cours, avec ses meneurs (résumé léger)
+    const list = (await (await get("/account/tournaments")).json()) as import("@chessarena/shared").TournamentsPageResponse;
+    const card = list.running.find((c) => c.id === t.id)!;
+    expect(card).toMatchObject({ name: "Club", system: "swiss", status: "running", players: 3, totalRounds: 2, currentRound: 1 });
+    expect(card.leaders).toHaveLength(3);
+    expect(JSON.stringify(card)).not.toContain("rounds\":[");
     for (const c of cs) c.emit("sng:unregister", { tournamentId: t.id }, () => {});
   });
 

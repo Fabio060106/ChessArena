@@ -566,7 +566,7 @@ describe("SitAndGo — Arena", () => {
     const [g2] = live(t);
     await t.finish(g2!, "1/2-1/2", { aborted: true, abortedBy: null, termination: "aborted" });
     p = t.sng.snapshot().players.find((x) => x.userId === g2!.white.userId)!;
-    expect(p.sheet.length).toBeLessThanOrEqual(1);
+    expect(p.sheet!.length).toBeLessThanOrEqual(1);
     expect(t.sng.snapshot().players.reduce((a, x) => a + (x.points ?? 0), 0)).toBe(0);
   });
 

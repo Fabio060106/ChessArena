@@ -251,6 +251,35 @@ export interface SngSnapshot {
   finishedAt: string | null;
 }
 
+/** Carte d'un tournoi pour la page « Tournois » (résumé léger d'un instantané). */
+export interface TournamentCard {
+  id: string;
+  name: string | null;
+  createdBy: string | null;
+  system: SngSystem;
+  timeControl: TimeControlId;
+  status: SngStatus;
+  size: number;
+  players: number;
+  buyInCents: Cents;
+  currency: Currency;
+  startsAt: string | null;
+  arenaMinutes: number | null;
+  arenaEndsAt: string | null;
+  totalRounds: number | null;
+  currentRound: number;
+  createdAt: string;
+  finishedAt: string | null;
+  /** les trois premiers (en cours : classement provisoire ; terminé : podium) */
+  leaders: Array<{ userId: string; points: number | null }>;
+}
+
+export interface TournamentsPageResponse {
+  upcoming: TournamentCard[];
+  running: TournamentCard[];
+  finished: TournamentCard[];
+}
+
 /** Un tournoi dans l'historique d'un joueur (profil). */
 export interface TournamentHistoryItem {
   id: string;

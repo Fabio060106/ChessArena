@@ -60,7 +60,7 @@ function Play() {
   }, [devUser, router]);
   if (!me) return <main className="arena-app grid place-items-center text-sm text-muted">Chargement…</main>;
   const invite = params.get("t");
-  return <Arena userId={me.userId} flag={me.flag ?? ""} dev={!!devUser} inviteId={invite && /^[0-9a-f-]{36}$/i.test(invite) ? invite : null} />;
+  return <Arena userId={me.userId} flag={me.flag ?? ""} dev={!!devUser} inviteId={invite && /^[0-9a-f-]{36}$/i.test(invite) ? invite : null} wantTournament={params.get("onglet") === "tournoi"} />;
 }
 
 const REMATCH_ERRORS: Record<string, string> = {
@@ -74,7 +74,7 @@ const REMATCH_ERRORS: Record<string, string> = {
 
 const TC_NAME = { bullet_1_0: "Bullet 1+0", blitz_3_0: "Blitz 3+0", blitz_3_2: "Blitz 3+2", rapid_5_0: "Rapide 5+0" } as const;
 
-function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; dev: boolean; inviteId: string | null }) {
+function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId: string; flag: string; dev: boolean; inviteId: string | null; wantTournament?: boolean }) {
   const getAuth = useCallback(async () => {
     const url = dev ? `/api/dev-token?${new URLSearchParams({ u: userId, ...(flag ? { flag } : {}) })}` : "/api/token";
     const r = await fetch(url, { cache: "no-store" });
@@ -88,7 +88,7 @@ function Arena({ userId, flag, dev, inviteId }: { userId: string; flag: string; 
   const subscribe = useClockTicker(view.server, sync, !playing);
   const graceLeft = useCountdown(view.opponentPresence?.graceMs ?? null, view.opponentPresence);
   const [confirmResign, setConfirmResign] = useState(false);
-  const [tab, setTab] = useState<"tournament" | "moves" | "chat">(inviteId ? "tournament" : "moves");
+  const [tab, setTab] = useState<"tournament" | "moves" | "chat">(inviteId || wantTournament ? "tournament" : "moves");
   const [showResult, setShowResult] = useState(true);
   // navigation dans les coups (comme Lichess) : null = position en direct
   const [browse, setBrowse] = useState<number | null>(null);

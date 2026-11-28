@@ -18,7 +18,7 @@ import type { GeoFilter, KillSwitch } from "../net/geoFilter.js";
 import { ExportError, type RegulatoryExporter } from "../audit/regulatoryExport.js";
 import { TokenBucket } from "../net/rateLimiter.js";
 import { AccountError, type AccountService } from "../auth/accounts.js";
-import type { TournamentStore } from "../tournaments/TournamentStore.js";
+import { tournamentCard, type TournamentStore } from "../tournaments/TournamentStore.js";
 import type { SngSnapshot } from "@chessarena/shared";
 
 /** Audience du jeton de service émis par le serveur web pour les routes /auth/* (jamais par un navigateur). */
@@ -70,7 +70,7 @@ export interface ApiDeps {
   /** comptes joueurs (pseudo + mot de passe) */
   accounts?: AccountService | null;
   /** tournois : instantané en direct (en mémoire) ou enregistré, historique d'un joueur */
-  tournaments?: { live(id: string): SngSnapshot | null; store: TournamentStore };
+  tournaments?: { live(id: string): SngSnapshot | null; store: TournamentStore; showcase?(): { upcoming: SngSnapshot[]; running: SngSnapshot[] } };
   /** partie en cours d'un joueur (profil : bouton « Regarder ») */
   liveGameOf?: (userId: string) => string | null;
   /** modération du chat : privés de chat (mis à jour à chaud) */
@@ -466,6 +466,14 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
     }
 
     // ─── Tournois : page d'un tournoi (direct ou terminé), historique d'un joueur ──────
+    if (url.pathname === "/account/tournaments" && req.method === "GET") {
+      const t = need(d.tournaments);
+      const live = t.showcase?.() ?? { upcoming: [], running: [] };
+      const liveIds = new Set([...live.upcoming, ...live.running].map((s) => s.id));
+      const finished = (await t.store.recentFinished(12)).filter((s) => !liveIds.has(s.id));
+      send(200, { upcoming: live.upcoming.map(tournamentCard), running: live.running.map(tournamentCard), finished: finished.map(tournamentCard) });
+      return true;
+    }
     const tm = url.pathname.match(/^\/account\/tournaments\/([0-9a-f-]{36})$/i);
     if (tm && req.method === "GET") {
       const t = need(d.tournaments);
