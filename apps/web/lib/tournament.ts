@@ -1,4 +1,4 @@
-import type { Cents, Currency, SngMatchView, SngPlayerView, SngSnapshot } from "@chessarena/shared";
+import { isOfficial, type Cents, type Currency, type SngMatchView, type SngPlayerView, type SngSnapshot, type TournamentCard, type TournamentsPageResponse } from "@chessarena/shared";
 
 /**
  * Vues dérivées d'un Sit & Go pour le HUD — pures, testées.
@@ -326,3 +326,12 @@ export function filterTournaments<T extends { system: string; timeControl: strin
     && (f.pace === "all" || paceOf(c.timeControl) === f.pace)
     && (!f.open || c.system === "arena" || (c.status === "registering" && c.players < c.size)));
 }
+
+/** Le prochain tournoi officiel (ou l'Arena officielle en cours, qu'on peut rejoindre) : un rendez-vous toujours visible. */
+export function pickOfficial(d: TournamentsPageResponse, now: number): TournamentCard | null {
+  const live = d.running.find((c) => isOfficial(c.createdBy) && c.system === "arena" && c.arenaEndsAt && Date.parse(c.arenaEndsAt) - now > 3 * 60_000);
+  if (live) return live;
+  return d.upcoming.filter((c) => isOfficial(c.createdBy) && c.startsAt && Date.parse(c.startsAt) - now < 12 * 3_600_000)
+    .sort((a, b) => a.startsAt!.localeCompare(b.startsAt!))[0] ?? null;
+}
+
