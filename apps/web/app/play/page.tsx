@@ -19,6 +19,7 @@ import { TournamentHUD } from "../../components/TournamentHUD";
 import { MoveList } from "../../components/MoveList";
 import { MoveNav, usePlyKeys } from "../../components/MoveNav";
 import { replayFromSans } from "../../lib/replay";
+import { LinkChallenge } from "../../components/LinkChallenge";
 import { OfficialBanner } from "../../components/OfficialBanner";
 import { RelayBanner } from "../../components/RelayBanner";
 import { Lobby } from "../../components/Lobby";
@@ -239,7 +240,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
 
       <div className="mx-auto grid max-w-[1400px] gap-4 px-2 pb-6 sm:px-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:px-6">
         {/* mobile, hors partie : le choix de cadence d'abord, l'échiquier ensuite */}
-        {lobbyFirst && <div className="panel p-3 lg:hidden">{lobby}</div>}
+        {lobbyFirst && <div className="flex flex-col gap-3 lg:hidden"><div className="panel p-3">{lobby}</div><LinkChallenge /></div>}
         {/* ─── Zone de jeu : la taille du plateau suit la hauteur ET la largeur disponibles ─── */}
         <section className="mx-auto flex w-full flex-col gap-1.5" style={{ maxWidth: "min(100%, max(320px, calc(100dvh - 200px)))" }}>
           {card(top)}
@@ -331,9 +332,12 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
         {/* ─── HUD latéral (sous le plateau sur mobile) ─── */}
         <aside className="flex w-full flex-col gap-3">
           {(view.phase === "idle" || view.phase === "queued" || view.phase === "connecting" || view.phase === "over") && !inTournament && (
-            <div className={`panel p-3 ${lobbyFirst ? "hidden lg:block" : ""}`}>
-              {view.phase === "over" && <p className="mb-2 text-xs text-muted">Nouvelle partie : même cadence, ou une autre.</p>}
-              {lobby}
+            <div className={`flex flex-col gap-3 ${lobbyFirst ? "hidden lg:flex" : ""}`}>
+              <div className="panel p-3">
+                {view.phase === "over" && <p className="mb-2 text-xs text-muted">Nouvelle partie : même cadence, ou une autre.</p>}
+                {lobby}
+              </div>
+              <LinkChallenge />
             </div>
           )}
 

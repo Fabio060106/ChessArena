@@ -775,6 +775,47 @@ describe("amis et défis directs", () => {
     a.disconnect();
     expect(await cancelled).toEqual({ id: c3.id, status: "cancelled", reason: "OFFLINE" });
   });
+
+  it("défi par lien : aperçu public, refus à soi-même, premier qui accepte joue, lien consommé", async () => {
+    for (const p of ["Lien_A", "Lien_B", "Lien_C"]) await signup(p);
+    const a = client({ token: token({ sub: "Lien_A" }) });
+    const b = client({ token: token({ sub: "Lien_B" }) });
+    const c = client({ token: token({ sub: "Lien_C" }) });
+    await Promise.all([connected(a), connected(b), connected(c)]);
+    expect(await new Promise((r) => a.emit("link:create", { timeControl: "nimporte" as never }, r))).toEqual({ ok: false, code: "BAD_PAYLOAD" });
+    const made = (await new Promise((r) => a.emit("link:create", { timeControl: "blitz_3_2" }, r))) as { ok: true; link: { code: string; expiresAt: number } };
+    expect(made).toMatchObject({ ok: true, link: { from: "Lien_A", timeControl: "blitz_3_2" } });
+    const code = made.link.code;
+    // aperçu public (page du lien, carte WhatsApp)
+    expect(await (await fetch(`${url}/public/challenges/${code}`)).json()).toMatchObject({ code, from: "Lien_A", timeControl: "blitz_3_2" });
+    expect((await fetch(`${url}/public/challenges/zzzzzzzz`)).status).toBe(404);
+    expect(await new Promise((r) => a.emit("link:accept", { code }, r))).toEqual({ ok: false, code: "SELF" });
+    // B accepte : partie classée sans mise, le créateur est prévenu
+    const starts = Promise.all([once(a, "game:start"), once(b, "game:start")]);
+    const upd = once(a, "challenge:update");
+    expect(await new Promise((r) => b.emit("link:accept", { code }, r))).toEqual({ ok: true });
+    expect(await upd).toMatchObject({ id: code, status: "accepted" });
+    const [s] = (await starts) as [GameStartEvent, GameStartEvent];
+    expect([s.white.userId, s.black.userId].sort()).toEqual(["Lien_A", "Lien_B"]);
+    expect(s.timeControl.id).toBe("blitz_3_2");
+    // déjà pris
+    expect(await new Promise((r) => c.emit("link:accept", { code }, r))).toEqual({ ok: false, code: "EXPIRED" });
+    expect((await fetch(`${url}/public/challenges/${code}`)).status).toBe(404);
+    const over = once(a, "game:over");
+    b.emit("game:resign", { gameId: s.gameId });
+    await over;
+    // nouveau lien puis annulation ; créateur hors ligne : le lien attend son retour
+    const again = (await new Promise((r) => a.emit("link:create", { timeControl: "bullet_1_0" }, r))) as { ok: true; link: { code: string } };
+    a.emit("link:cancel");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await new Promise((r) => c.emit("link:accept", { code: again.link.code }, r))).toEqual({ ok: false, code: "EXPIRED" });
+    const third = (await new Promise((r) => a.emit("link:create", { timeControl: "bullet_1_0" }, r))) as { ok: true; link: { code: string } };
+    a.disconnect();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await new Promise((r) => c.emit("link:accept", { code: third.link.code }, r))).toEqual({ ok: false, code: "OFFLINE" });
+    expect((await fetch(`${url}/public/challenges/${third.link.code}`)).status).toBe(200);
+    b.disconnect(); c.disconnect();
+  });
 });
 
 describe("file d'attente : coupure de connexion et compteurs", () => {

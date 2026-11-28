@@ -12,7 +12,7 @@ const flagEmoji = (c: string) => (c ? String.fromCodePoint(...[...c].map((x) => 
 function nextPath(): string {
   if (typeof window === "undefined") return "/play";
   const n = new URLSearchParams(window.location.search).get("next") ?? "";
-  return /^\/(play|history|repertoire|direct|classement|profil|partie|amis|retransmissions|tournoi|tournois|club|clubs|analyse)(\/[\w-]{1,64})?(\?[\w=&%,-]*)?$/.test(n) ? n : "/play";
+  return /^\/(play|history|repertoire|direct|classement|profil|partie|amis|retransmissions|tournoi|tournois|club|clubs|analyse|defi)(\/[\w-]{1,64})?(\?[\w=&%,-]*)?$/.test(n) ? n : "/play";
 }
 
 const KNOWN = "arena_has_account"; // ce navigateur a déjà un compte : on propose « Se connecter » d'abord
@@ -35,14 +35,14 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [slow, setSlow] = useState(false);
-  const [invited, setInvited] = useState<"tournament" | "club" | null>(null);
+  const [invited, setInvited] = useState<"tournament" | "club" | "duel" | null>(null);
   const slowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     fetch("/api/session", { cache: "no-store" }).then((r) => { if (r.ok) router.replace(nextPath()); }, () => {});
     try { if (localStorage.getItem(KNOWN)) setMode("login"); } catch { /* navigation privée */ }
     const next = nextPath();
-    setInvited(/^\/play\?t=|^\/tournoi\//.test(next) ? "tournament" : /^\/club\//.test(next) ? "club" : null);
+    setInvited(/^\/play\?t=|^\/tournoi\//.test(next) ? "tournament" : /^\/club\//.test(next) ? "club" : /^\/defi\//.test(next) ? "duel" : null);
   }, [router]);
 
   const submit = async (e: FormEvent) => {
@@ -73,7 +73,7 @@ export default function Home() {
         <div className="mb-4 text-center">
           <h1 className="font-display text-4xl font-bold tracking-tight"><Logo /></h1>
           <p className="mt-1 text-sm text-muted">Duels et tournois d'échecs · bêta en jetons, sans valeur</p>
-          {invited && <p className="mt-2 rounded-lg border border-neon/30 bg-neon/10 px-3 py-2 text-sm text-neon">{invited === "club" ? "Tu es invité à rejoindre un club" : "Tu es invité à un tournoi"} : crée ton compte (30 secondes) pour le rejoindre.</p>}
+          {invited && <p className="mt-2 rounded-lg border border-neon/30 bg-neon/10 px-3 py-2 text-sm text-neon">{invited === "club" ? "Tu es invité à rejoindre un club : crée ton compte (30 secondes) pour le rejoindre." : invited === "duel" ? "On te défie aux échecs : crée ton compte (30 secondes) et la partie commence." : "Tu es invité à un tournoi : crée ton compte (30 secondes) pour le rejoindre."}</p>}
         </div>
 
         <form onSubmit={submit} className="panel flex flex-col gap-4 p-6">

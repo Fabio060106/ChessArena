@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { FriendView } from "@chessarena/shared";
 import { PageHeader } from "../../components/PageHeader";
 import { ChallengeButton } from "../../components/ChallengeButton";
+import { LinkChallenge } from "../../components/LinkChallenge";
 import { useMe } from "../../hooks/useMe";
 import { flagEmoji } from "../../lib/profile";
 
@@ -66,6 +67,8 @@ export default function FriendsPage() {
           <button type="submit" className="neon-btn rounded-lg px-4 py-2 text-sm font-semibold">Ajouter</button>
           {msg && <p role="status" className={`w-full text-sm ${msg.ok ? "text-neon" : "text-danger"}`}>{msg.text}</p>}
         </form>
+
+        <LinkChallenge />
 
         <section className="panel p-4" aria-label="Mes amis">
           <h1 className="mb-1 font-display text-lg font-bold">Mes amis{friends ? ` (${friends.length})` : ""}</h1>

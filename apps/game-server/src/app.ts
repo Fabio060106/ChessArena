@@ -2,7 +2,7 @@ import { createServer, type Server as HttpServer } from "node:http";
 import { performance } from "node:perf_hooks";
 import { Server, type Socket } from "socket.io";
 import pg from "pg";
-import { TIME_CONTROLS, type ChallengeAck, type ClubRef, TEAM_BATTLE_LIMITS, type ChallengeView, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
+import { TIME_CONTROLS, type ChallengeAck, type ClubRef, TEAM_BATTLE_LIMITS, type ChallengeView, type LinkChallengeAck, type LinkChallengeView, type ChatAck, type ClientToServerEvents, type LiveGameView, type RematchAck, type WatchAck, type ErrorCode, type ServerToClientEvents, type SessionModeEvent, type SngAck, type TimeControlId } from "@chessarena/shared";
 import type { GameServerConfig } from "./config.js";
 import { authenticate, canPlay, type AuthUser } from "./auth.js";
 import { parseDrawAction, parseGameRef, parseMove, parseQueueJoin, parseSignal } from "./validation.js";
@@ -21,6 +21,7 @@ function parseRelaySource(raw: string): { source: "lcc" | "lichess"; id: string;
   return li ? { source: "lichess", id: encodeLichess(li), round: 0 } : null;
 }
 import { CHALLENGE_TTL_MS, ChallengeService, type Challenge } from "./social/ChallengeService.js";
+import { LINK_CODE_RE, OpenChallengeService, type OpenChallenge } from "./social/OpenChallengeService.js";
 import { InMemoryLedger, PgLedger, lockStakes, refundOrphanedEscrows, type Ledger } from "./settlement/ledger.js";
 import { ChatService } from "./social/ChatService.js";
 import { basicSignals, type BasicSignal } from "./fairplay/basicSignals.js";
@@ -205,6 +206,13 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
       }).catch(() => res.writeHead(500).end());
       return;
     }
+    // défi par lien : qui défie, à quelle cadence (page /defi/<code> et aperçu du lien partagé)
+    const pubLink = /^\/public\/challenges\/([a-z0-9]{8})$/.exec(req.url ?? "");
+    if (pubLink && req.method === "GET") {
+      const c = links.get(pubLink[1]!);
+      if (!c) return void res.writeHead(404, { "content-type": "application/json" }).end("{}");
+      return void res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(linkView(c)));
+    }
     // aperçu public d'un tournoi (lien partagé sur WhatsApp, Messenger… : titre, format, heure) — aucun nom de joueur
     const pub = /^\/public\/tournaments\/([0-9a-f-]{36})$/i.exec(req.url ?? "");
     if (pub && req.method === "GET") {
@@ -309,6 +317,8 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
   const challenges = new ChallengeService((c) => {
     io.to([userRoom(c.from), userRoom(c.to)]).emit("challenge:update", { id: c.id, status: "expired" });
   });
+  const links = new OpenChallengeService();
+  const linkView = (c: OpenChallenge): LinkChallengeView => ({ code: c.code, from: c.from, timeControl: c.timeControl, expiresAt: links.expiresAt(c) });
   const challengeView = (c: Challenge): ChallengeView => ({ id: c.id, from: c.from, to: c.to, timeControl: c.timeControl, expiresAt: c.createdAt + CHALLENGE_TTL_MS });
   const spectatorCount = (gameId: string) => io.of("/").adapter.rooms.get(spectatorRoom(gameId))?.size ?? 0;
   const withdrawRematches = (userId: string) => {
@@ -1099,20 +1109,58 @@ export function createGameServer(cfg: GameServerConfig, deps: GameServerDeps = {
         return reply({ ok: false, code: busy });
       }
       if (!challenges.remove(c.id)) return reply({ ok: false, code: "EXPIRED" }); // déjà traité (double clic, 2e onglet)
-      for (const u of [c.from, c.to]) {
+      await startFriendly(c.from, c.to, c.timeControl, c.id);
+      reply({ ok: true });
+    }));
+
+    /** Partie amicale classée, sans mise (défi accepté, lien de défi) : couleurs au hasard ; les deux pages de jeu la reprennent. */
+    async function startFriendly(a: string, b: string, tc: TimeControlId, updateId: string): Promise<void> {
+      for (const u of [a, b]) {
         if (matchmaker.dequeue(u)) io.to(userRoom(u)).emit("queue:left");
         withdrawRematches(u);
         // ses autres défis tombent : il est en partie
         for (const o of challenges.involving(u)) if (challenges.remove(o.id)) io.to([userRoom(o.from), userRoom(o.to)]).emit("challenge:update", { id: o.id, status: "cancelled", reason: "IN_GAME" });
+        const l = links.of(u);
+        if (l) links.remove(l.code);
       }
-      const [white, black] = Math.random() < 0.5 ? [c.from, c.to] : [c.to, c.from];
+      const [white, black] = Math.random() < 0.5 ? [a, b] : [b, a];
       const [rw, rb] = await Promise.all([repo.getRatings(white), repo.getRatings(black)]);
       const gameId = randomUUID();
-      io.to(both).emit("challenge:update", { id: c.id, status: "accepted", gameId });
+      io.to([userRoom(a), userRoom(b)]).emit("challenge:update", { id: updateId, status: "accepted", gameId });
       await games.createGame({
-        gameId, timeControl: c.timeControl, stake: { currency: "PLAY", buyInCents: 0 }, rated: true,
-        white: { userId: white, rating: rw[c.timeControl].rating }, black: { userId: black, rating: rb[c.timeControl].rating },
+        gameId, timeControl: tc, stake: { currency: "PLAY", buyInCents: 0 }, rated: true,
+        white: { userId: white, rating: rw[tc].rating }, black: { userId: black, rating: rb[tc].rating },
       });
+    }
+
+    // ─── Défis par lien ──────────────────────────────────────────────────────
+    socket.on("link:create", guard(socket, (raw: unknown, ack?: unknown) => {
+      const reply = (r: LinkChallengeAck) => { if (typeof ack === "function") (ack as (r: LinkChallengeAck) => void)(r); };
+      const tc = (raw as { timeControl?: unknown } | null)?.timeControl;
+      if (typeof tc !== "string" || !(tc in TIME_CONTROLS)) return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const gate = canPlay(user, "PLAY", socket.data.mode);
+      if (!gate.ok) return reply({ ok: false, code: gate.code });
+      reply({ ok: true, link: linkView(links.create(user.userId, tc as TimeControlId)) });
+    }));
+
+    socket.on("link:cancel", guard(socket, () => {
+      const c = links.of(user.userId);
+      if (c) links.remove(c.code);
+    }));
+
+    socket.on("link:accept", guard(socket, async (raw: unknown, ack?: unknown) => {
+      const reply = (r: { ok: boolean; code?: string }) => { if (typeof ack === "function") (ack as (r: { ok: boolean; code?: string }) => void)(r); };
+      const code = (raw as { code?: unknown } | null)?.code;
+      if (typeof code !== "string" || !LINK_CODE_RE.test(code)) return reply({ ok: false, code: "BAD_PAYLOAD" });
+      const c = links.get(code);
+      if (!c) return reply({ ok: false, code: "EXPIRED" });
+      if (c.from === user.userId) return reply({ ok: false, code: "SELF" });
+      const gate = canPlay(user, "PLAY", socket.data.mode);
+      if (!gate.ok) return reply({ ok: false, code: gate.code });
+      const busy = busyCode(user.userId) ?? (busyCode(c.from) ? "OPPONENT_BUSY" : null) ?? (isOnline(c.from) ? null : "OFFLINE");
+      if (busy) return reply({ ok: false, code: busy }); // le lien reste valable (le créateur reviendra peut-être)
+      if (!links.remove(code)) return reply({ ok: false, code: "EXPIRED" }); // un autre a été plus rapide
+      await startFriendly(c.from, user.userId, c.timeControl, code);
       reply({ ok: true });
     }));
 

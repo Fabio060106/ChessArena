@@ -601,6 +601,10 @@ export interface ChallengeUpdate {
 
 export type ChallengeAck = { ok: true; challenge: ChallengeView } | { ok: false; code: string };
 
+/** Défi par lien (« Joue contre moi ») : public, sans le nom de celui qui l'ouvre. */
+export interface LinkChallengeView { code: string; from: string; timeControl: TimeControlId; expiresAt: number }
+export type LinkChallengeAck = { ok: true; link: LinkChallengeView } | { ok: false; code: string };
+
 /** Retransmission d'un tournoi officiel (échiquiers électroniques DGT / LiveChessCloud). */
 export interface RelayPlayer {
   name: string;
@@ -749,6 +753,10 @@ export interface ClientToServerEvents {
   "challenge:send": (p: { to: string; timeControl: TimeControlId }, ack: (r: ChallengeAck) => void) => void;
   "challenge:answer": (p: { id: string; accept: boolean }, ack?: (r: { ok: boolean; code?: string }) => void) => void;
   "challenge:cancel": (p: { id: string }) => void;
+  /** défi par lien : créer (remplace le précédent), annuler, accepter (celui qui a ouvert le lien) */
+  "link:create": (p: { timeControl: TimeControlId }, ack: (r: LinkChallengeAck) => void) => void;
+  "link:cancel": () => void;
+  "link:accept": (p: { code: string }, ack: (r: { ok: boolean; code?: string }) => void) => void;
   /** suivre une retransmission (chat : gameId « relay:<id> ») */
   "relay:watch": (p: { relayId: string }, ack: (r: { ok: true; round: RelayRoundView } | { ok: false; code: string }) => void) => void;
   "relay:unwatch": (p: { relayId: string }) => void;
