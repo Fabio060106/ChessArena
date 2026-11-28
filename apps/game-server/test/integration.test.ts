@@ -783,7 +783,7 @@ describe("amis et défis directs", () => {
     const c = client({ token: token({ sub: "Lien_C" }) });
     await Promise.all([connected(a), connected(b), connected(c)]);
     expect(await new Promise((r) => a.emit("link:create", { timeControl: "nimporte" as never }, r))).toEqual({ ok: false, code: "BAD_PAYLOAD" });
-    const made = (await new Promise((r) => a.emit("link:create", { timeControl: "blitz_3_2" }, r))) as { ok: true; link: { code: string; expiresAt: number } };
+    const made = (await new Promise<unknown>((r) => a.emit("link:create", { timeControl: "blitz_3_2" }, r))) as { ok: true; link: { code: string; expiresAt: number } };
     expect(made).toMatchObject({ ok: true, link: { from: "Lien_A", timeControl: "blitz_3_2" } });
     const code = made.link.code;
     // aperçu public (page du lien, carte WhatsApp)
@@ -805,11 +805,11 @@ describe("amis et défis directs", () => {
     b.emit("game:resign", { gameId: s.gameId });
     await over;
     // nouveau lien puis annulation ; créateur hors ligne : le lien attend son retour
-    const again = (await new Promise((r) => a.emit("link:create", { timeControl: "bullet_1_0" }, r))) as { ok: true; link: { code: string } };
+    const again = (await new Promise<unknown>((r) => a.emit("link:create", { timeControl: "bullet_1_0" }, r))) as { ok: true; link: { code: string } };
     a.emit("link:cancel");
     await new Promise((r) => setTimeout(r, 100));
     expect(await new Promise((r) => c.emit("link:accept", { code: again.link.code }, r))).toEqual({ ok: false, code: "EXPIRED" });
-    const third = (await new Promise((r) => a.emit("link:create", { timeControl: "bullet_1_0" }, r))) as { ok: true; link: { code: string } };
+    const third = (await new Promise<unknown>((r) => a.emit("link:create", { timeControl: "bullet_1_0" }, r))) as { ok: true; link: { code: string } };
     a.disconnect();
     await new Promise((r) => setTimeout(r, 200));
     expect(await new Promise((r) => c.emit("link:accept", { code: third.link.code }, r))).toEqual({ ok: false, code: "OFFLINE" });
