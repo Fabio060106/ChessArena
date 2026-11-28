@@ -318,6 +318,10 @@ describe("tournois créés par les joueurs, historique, HUD", () => {
     expect(page).toMatchObject({ id: t.id, system: "swiss", status: "running", name: "Club" });
     expect(page.rounds[0]!.some((m) => m.result === "bye")).toBe(true);
     expect((await get("/account/tournaments/00000000-0000-0000-0000-000000000000")).status).toBe(404);
+    // export PGN du tournoi (aucune partie terminée pour l'instant : fichier vide mais valide)
+    const pgn = await get(`/account/tournaments/${t.id}/pgn`);
+    expect(pgn.status).toBe(200);
+    expect(pgn.headers.get("content-type")).toContain("chess-pgn");
     // page « Tournois » : le tournoi est listé en cours, avec ses meneurs (résumé léger)
     const list = (await (await get("/account/tournaments")).json()) as import("@chessarena/shared").TournamentsPageResponse;
     const card = list.running.find((c) => c.id === t.id)!;

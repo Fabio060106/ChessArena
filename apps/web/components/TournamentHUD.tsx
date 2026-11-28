@@ -98,6 +98,9 @@ export const TournamentHUD = memo(function TournamentHUD(p: Props) {
         <StatusChip t={t} registered={registered} />
       </header>
       {t.club && <a href={`/club/${t.club.slug}`} className="-mt-2 text-xs text-gold hover:underline">Club : {t.club.name} →</a>}
+      {(t.status === "running" || t.status === "finished") && t.rounds.flat().some((m) => m.games.some((g) => g.result)) && (
+        <a href={`/api/tournaments/${t.id}/pgn`} download className="-mt-1 text-xs text-muted hover:text-text">⬇ Télécharger les parties (PGN, pour ChessBase)</a>
+      )}
       {p.pageLink !== false && t.status !== "cancelled" && (
         <a href={`/tournoi/${t.id}`} className="-mt-1 text-xs text-neon hover:underline">Page du tournoi : classement en direct, à partager à ton club →</a>
       )}

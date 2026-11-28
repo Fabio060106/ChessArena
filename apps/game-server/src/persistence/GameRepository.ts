@@ -53,6 +53,8 @@ export interface GameRepository {
   /** Classement d'une cadence (joueurs ayant au moins une partie classée) + la place de `me`. */
   /** Toutes les parties terminées d'un joueur (PGN), de la plus ancienne à la plus récente : export complet. */
   exportPgns(userId: string, max: number): Promise<string[]>;
+  /** parties (terminées, non annulées) d'un tournoi : identifiant et PGN */
+  tournamentPgns(tournamentId: string): Promise<Array<{ gameId: string; pgn: string }>>;
   leaderboard(tc: TimeControlId, limit: number, me?: string): Promise<{ entries: LeaderboardEntry[]; me: LeaderboardEntry | null }>;
   /** Liste d'amis (comptes suspendus ou clôturés exclus), par ordre alphabétique. */
   listFriends(userId: string): Promise<Array<{ userId: string; flag: string | null; rating: number }>>;
@@ -235,6 +237,12 @@ export class PgGameRepository implements GameRepository {
       totals: { games: Number(t.games), wins: Number(t.wins), draws: Number(t.draws), losses: Number(t.losses) },
       recent: recent.filter((g) => g.outcome !== "aborted"),
     };
+  }
+
+  async tournamentPgns(tournamentId: string): Promise<Array<{ gameId: string; pgn: string }>> {
+    const r = await this.pool.query<{ id: string; pgn: string }>(
+      "SELECT id, pgn FROM games WHERE tournament_id = $1 AND termination <> 'aborted' AND pgn <> '' ORDER BY ended_at ASC LIMIT 5000", [tournamentId]);
+    return r.rows.map((x) => ({ gameId: x.id, pgn: x.pgn }));
   }
 
   async exportPgns(userId: string, max: number): Promise<string[]> {
@@ -534,6 +542,11 @@ export class InMemoryGameRepository implements GameRepository {
       totals: { games: all.length, wins: all.filter((g) => g.outcome === "win").length, draws: all.filter((g) => g.outcome === "draw").length, losses: all.filter((g) => g.outcome === "loss").length },
       recent: all.slice(0, 10),
     };
+  }
+
+  async tournamentPgns(tournamentId: string): Promise<Array<{ gameId: string; pgn: string }>> {
+    return [...this.games.values()].filter((x) => x.game.tournament?.tournamentId === tournamentId && x.game.termination !== "aborted" && x.game.pgn)
+      .map((x) => ({ gameId: x.game.gameId, pgn: x.game.pgn }));
   }
 
   async exportPgns(userId: string, max: number): Promise<string[]> {

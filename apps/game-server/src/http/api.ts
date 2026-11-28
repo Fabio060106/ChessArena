@@ -551,6 +551,28 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, d: Ap
       send(200, { upcoming: live.upcoming.map(tournamentCard), running: live.running.map(tournamentCard), finished: finished.map(tournamentCard) });
       return true;
     }
+    // toutes les parties d'un tournoi en un PGN (ChessBase…) : Event = nom du tournoi, Round = ronde.échiquier
+    const tpm = url.pathname.match(/^\/account\/tournaments\/([0-9a-f-]{36})\/pgn$/i);
+    if (tpm && req.method === "GET") {
+      const t = need(d.tournaments);
+      const snap = t.live(tpm[1]!) ?? await t.store.load(tpm[1]!);
+      if (!snap) throw new HttpError(404, "NOT_FOUND");
+      const where = new Map<string, string>();
+      snap.rounds.forEach((r, ri) => r.forEach((m) => m.games.forEach((g, gi) => {
+        // arena : une seule « ronde » ; KO : revanche / Armageddon numérotés .2, .3
+        where.set(g.gameId, snap.system === "arena" ? `${m.slot + 1}` : `${ri + 1}.${m.slot + 1}${m.games.length > 1 ? `.${gi + 1}` : ""}`);
+      })));
+      const event = (snap.name ?? (snap.club ? `Tournoi ${snap.club.name}` : snap.createdBy ? `Tournoi de ${snap.createdBy}` : "Tournoi")).replace(/["\\]/g, "");
+      const games = (await need(d.repo).tournamentPgns(snap.id)).filter((g) => where.has(g.gameId));
+      const order = [...where.keys()];
+      games.sort((a, b) => order.indexOf(a.gameId) - order.indexOf(b.gameId));
+      const out = games.map((g) => g.pgn.trim()
+        .replace(/^\[Round "[^"]*"\]\r?\n?/m, "")
+        .replace(/^\[Event "[^"]*"\]/m, `[Event "${event}"]\n[Round "${where.get(g.gameId)}"]`));
+      res.writeHead(200, { "content-type": "application/x-chess-pgn; charset=utf-8", "cache-control": "no-store" });
+      res.end(out.join("\n\n") + (out.length ? "\n" : ""));
+      return true;
+    }
     const tm = url.pathname.match(/^\/account\/tournaments\/([0-9a-f-]{36})$/i);
     if (tm && req.method === "GET") {
       const t = need(d.tournaments);
