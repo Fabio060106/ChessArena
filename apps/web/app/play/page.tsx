@@ -19,6 +19,7 @@ import { TournamentHUD } from "../../components/TournamentHUD";
 import { MoveList } from "../../components/MoveList";
 import { MoveNav, usePlyKeys } from "../../components/MoveNav";
 import { replayFromSans } from "../../lib/replay";
+import { markWelcomed, WelcomeCard } from "../../components/WelcomeCard";
 import { LinkChallenge } from "../../components/LinkChallenge";
 import { OfficialBanner } from "../../components/OfficialBanner";
 import { RelayBanner } from "../../components/RelayBanner";
@@ -106,6 +107,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
   }, [liveLast]);
   usePlyKeys(navPly, liveLast, go, !!view.start);
   useEffect(() => { setConfirmResign(false); setShowResult(true); }, [view.phase]);
+  useEffect(() => { if (view.start) markWelcomed(); }, [view.start]); // première partie : plus de carte de bienvenue
   // nouvelle partie (tournoi qui démarre pendant qu'on lit le classement, sur mobile) : on remonte au plateau
   const gameId = view.start?.gameId;
   // Défilement INSTANTANÉ (et seulement si le plateau n'est pas entièrement visible) : un défilement animé
@@ -239,6 +241,7 @@ function Arena({ userId, flag, dev, inviteId, wantTournament = false }: { userId
       <SiteNav active="/play" />
       {!playing && <RelayBanner className="mx-auto mb-3 max-w-[1400px] px-2 sm:px-3 lg:px-6" />}
       {!playing && !inTournament && <OfficialBanner className="mx-auto mb-3 max-w-[1400px] px-2 sm:px-3 lg:px-6" />}
+      {view.phase === "idle" && !inTournament && <WelcomeCard className="mx-auto mb-3 max-w-[1400px] px-2 sm:px-3 lg:px-6" />}
 
       <div className="mx-auto grid max-w-[1400px] gap-4 px-2 pb-6 sm:px-3 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:px-6">
         {/* mobile, hors partie : le choix de cadence d'abord, l'échiquier ensuite */}
